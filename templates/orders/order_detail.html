@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}{{ order.order_number }}{% endblock %}
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-8">
+        <div class="content-card p-4 mb-4">
+            <div class="d-flex flex-column flex-md-row justify-content-between gap-3 mb-3">
+                <div>
+                    <span class="eyebrow">Order Details</span>
+                    <h1 class="h3 mt-2 mb-1">{{ order.order_number }}</h1>
+                    <p class="text-secondary mb-0">{{ order.created_at|date:"M d, Y H:i" }}</p>
+                </div>
+                <div class="text-md-end">
+                    <span class="badge text-bg-light">{{ order.get_status_display }}</span>
+                    <div class="small text-secondary mt-2">Last update: {{ order.last_status_update|date:"M d, Y H:i" }}</div>
+                </div>
+            </div>
+
+            {% if order.status == "requested" %}
+                <div class="alert alert-info">Your request has been sent to {{ order.agent_requests.count }} nearby agent{{ order.agent_requests.count|pluralize }} from {{ order.company.name }}.</div>
+            {% elif order.status == "rejected" %}
+                <div class="alert alert-danger">This request was rejected. {{ order.rejection_reason|default:"No reason was provided." }}</div>
+            {% elif can_pay %}
+                <div class="alert alert-success d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+                    <span>{{ order.selected_agent.name }} accepted your request. You can now continue to payment.</span>
+                    <a href="{% url 'orders:payment' order.order_number %}" class="btn btn-primary">Continue to Payment</a>
+                </div>
+            {% elif order.status == "cancelled" %}
+                <div class="alert alert-secondary">This order was cancelled. Any refund details are shown in the support section.</div>
+            {% endif %}
+
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead>
+                        <tr>
+                            <th>Product</th>
+                            <th>Qty</th>
+                            <th>Price</th>
+                            <th>Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in order.items.all %}
+                            <tr>
+                                <td>{{ item.product_name }}</td>
+                                <td>{{ item.quantity }}</td>
+                                <td>{{ item.unit_price }}</td>
+                                <td>{{ item.line_total }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Status Timeline</h2>
+            <div class="timeline-list">
+                {% for history in order.status_history.all %}
+                    <div class="timeline-item">
+                        <strong>{{ history.get_status_display }}</strong>
+                        <div class="small text-secondary">{{ history.created_at|date:"M d, Y H:i" }}</div>
+                        {% if history.note %}<div class="small">{{ history.note }}</div>{% endif %}
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="content-card p-4 mb-4">
+            <h2 class="h4 mb-3">Delivery Information</h2>
+            <p class="mb-2"><strong>Company:</strong> {{ order.company.name }}</p>
+            <p class="mb-2"><strong>Address:</strong><br>{{ order.delivery_address|linebreaksbr }}</p>
+            <p class="mb-2"><strong>Phone:</strong> {{ order.phone_number }}</p>
+            <p class="mb-2"><strong>Selected Location:</strong> {{ order.get_location_source_display }}</p>
+            <p class="mb-0"><strong>Notes:</strong> {{ order.notes|default:"No additional notes." }}</p>
+        </div>
+        <div class="content-card p-4 mb-4">
+            <h2 class="h4 mb-3">Fulfillment</h2>
+            <p class="mb-2"><strong>Accepted Agent:</strong> {{ order.selected_agent.name|default:"Waiting for agent response" }}</p>
+            <p class="mb-2"><strong>Driver:</strong>
+                {% if order.assigned_driver %}
+                    {{ order.assigned_driver.user.full_name }}
+                {% else %}
+                    Not assigned yet
+                {% endif %}
+            </p>
+            <p class="mb-0"><strong>Coordinates:</strong> {{ order.latitude }}, {{ order.longitude }}</p>
+        </div>
+        <div class="content-card p-4 mb-4">
+            <h2 class="h4 mb-3">Payment Summary</h2>
+            <div class="d-flex justify-content-between mb-2"><span>Subtotal</span><strong>{{ order.subtotal }}</strong></div>
+            {% if order.discount_amount > 0 %}
+                <div class="d-flex justify-content-between mb-2 text-success"><span>Premium Discount</span><strong>-{{ order.discount_amount }}</strong></div>
+                <div class="small text-secondary mb-2">Premium unlocked at {{ order.premium_discount_percent }}% after a {{ order.premium_streak_count }}-order streak with {{ order.company.name }}.</div>
+            {% endif %}
+            <div class="d-flex justify-content-between mb-2"><span>Delivery Fee</span><strong>{{ order.delivery_fee }}</strong></div>
+            <div class="d-flex justify-content-between mb-3"><span>Total Cost</span><strong>{{ order.total }}</strong></div>
+            {% if can_pay %}
+                <a href="{% url 'orders:payment' order.order_number %}" class="btn btn-primary w-100">Pay with Chapa</a>
+            {% else %}
+                <a href="{% url 'orders:tracking' order.order_number %}" class="btn btn-outline-primary w-100">Track Order</a>
+            {% endif %}
+        </div>
+        <div class="content-card p-4 mb-4">
+            <h2 class="h4 mb-3">Support Actions</h2>
+            {% if order.can_cancel %}
+                <div class="small text-secondary mb-2">
+                    {% if order.cancellation_deadline %}
+                        Paid-order cancellation is available until {{ order.cancellation_deadline|date:"M d, Y H:i" }}.
+                    {% else %}
+                        This order can still be cancelled before payment is completed.
+                    {% endif %}
+                </div>
+                <form method="post" action="{% url 'orders:cancel' order.order_number %}" class="mb-3">
+                    {% csrf_token %}
+                    <textarea name="reason" rows="2" class="form-control mb-2" placeholder="Optional cancellation reason"></textarea>
+                    <button class="btn btn-outline-danger w-100">Cancel Order</button>
+                </form>
+            {% endif %}
+            {% if order.can_request_refund and not existing_service_refund %}
+                <div class="small text-secondary mb-2">If the delivery arrived with an issue, request a refund before {{ order.refund_deadline|date:"M d, Y H:i" }}.</div>
+                <form method="post" action="{% url 'orders:request_refund' order.order_number %}">
+                    {% csrf_token %}
+                    {{ refund_form.reason }}
+                    <button class="btn btn-outline-primary w-100 mt-2">Request Refund Review</button>
+                </form>
+            {% elif existing_service_refund %}
+                <div class="small text-secondary">Latest refund request: {{ existing_service_refund.get_status_display }}.</div>
+            {% else %}
+                <p class="text-secondary mb-0">No support action is available for this order right now.</p>
+            {% endif %}
+        </div>
+        {% if order.refund_requests.all %}
+            <div class="content-card p-4 mb-4">
+                <h2 class="h4 mb-3">Refund and Cancellation History</h2>
+                {% for refund_request in order.refund_requests.all %}
+                    <div class="border rounded p-3 mb-3">
+                        <div class="d-flex justify-content-between align-items-start gap-3">
+                            <div>
+                                <strong>{{ refund_request.get_request_type_display }}</strong>
+                                <div class="small text-secondary">{{ refund_request.created_at|date:"M d, Y H:i" }}</div>
+                            </div>
+                            <span class="badge text-bg-light">{{ refund_request.get_status_display }}</span>
+                        </div>
+                        <div class="small mt-2">Requested: {{ refund_request.requested_amount }}</div>
+                        {% if refund_request.fee_amount > 0 %}
+                            <div class="small">Fee deducted: {{ refund_request.fee_amount }} ({{ refund_request.fee_percent }}%)</div>
+                        {% endif %}
+                        {% if refund_request.approved_amount > 0 %}
+                            <div class="small">Approved amount: {{ refund_request.approved_amount }}</div>
+                        {% endif %}
+                        {% if refund_request.reason %}
+                            <div class="small mt-2"><strong>Reason:</strong> {{ refund_request.reason }}</div>
+                        {% endif %}
+                        {% if refund_request.resolution_note %}
+                            <div class="small text-secondary mt-2"><strong>Review note:</strong> {{ refund_request.resolution_note }}</div>
+                        {% endif %}
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+        {% if order.confirmation %}
+            <div class="content-card p-4">
+                <h2 class="h4 mb-3">Delivery Confirmation</h2>
+                {% if order.confirmation.qr_code_image %}
+                    <img src="{{ order.confirmation.qr_code_image.url }}" alt="Delivery QR code" class="qr-image mb-3">
+                {% endif %}
+                <p class="mb-2"><strong>OTP:</strong> <span class="otp-code">{{ order.confirmation.otp_code }}</span></p>
+                <p class="mb-2"><strong>QR Token:</strong> <code>{{ order.confirmation.qr_token }}</code></p>
+                <p class="small text-secondary mb-0">The driver can scan the QR code, paste the full QR payload, or enter this QR token manually.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Smart Water Distribution{% endblock %}
+{% block content %}
+<section class="landing-hero mb-5">
+    <div class="landing-hero__media">
+        <img src="https://images.unsplash.com/photo-1517586979036-b7d1e86b3345?auto=format&fit=crop&w=1600&q=80" alt="Clean bottled water delivery">
+    </div>
+    <div class="landing-hero__overlay">
+        <div class="landing-hero__content">
+            <span class="eyebrow">Smart Water Delivery</span>
+            <h1 class="landing-title">Order bottled water from trusted companies near you.</h1>
+            <p class="landing-copy">Browse water companies publicly, compare their offers, and move into secure ordering when you are ready.</p>
+            <div class="d-flex flex-wrap gap-2">
+                <a class="btn btn-primary btn-lg" href="#companies">Browse Companies</a>
+                <a class="btn btn-outline-light btn-lg" href="{% url 'accounts:login' %}">Login</a>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="companies" class="mb-5">
+    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
+        <div>
+            <span class="eyebrow">Available Companies</span>
+            <h2 class="display-6 fw-semibold mt-2 mb-1">Browse different water companies</h2>
+            <p class="text-secondary mb-0">You can explore companies before logging in. Product details and checkout require authentication.</p>
+        </div>
+    </div>
+    <form method="get" class="row g-3 mb-4">
+        <div class="col-md-5">{{ filter_form.search }}</div>
+        <div class="col-md-5">{{ filter_form.location }}</div>
+        <div class="col-md-2 d-grid"><button class="btn btn-primary">Search</button></div>
+    </form>
+    <div class="row g-4">
+        {% for company in companies %}
+            <div class="col-md-6 col-xl-4">
+                <div class="content-card h-100 p-4">
+                    {% if company.logo %}
+                        <img src="{{ company.logo.url }}" class="catalog-image mb-3" alt="{{ company.name }}">
+                    {% else %}
+                        <div class="catalog-image placeholder-tile mb-3"></div>
+                    {% endif %}
+                    <div class="d-flex justify-content-between align-items-start gap-2">
+                        <h3 class="h4 mb-0">{{ company.name }}</h3>
+                        <span class="badge {% if company.is_verified %}text-bg-success{% else %}text-bg-secondary{% endif %}">
+                            {% if company.is_verified %}Verified{% else %}Pending{% endif %}
+                        </span>
+                    </div>
+                    <p class="text-secondary mt-2 mb-3">{{ company.description|truncatewords:24 }}</p>
+                    <p class="small mb-3"><strong>Location:</strong> {{ company.location }}</p>
+                    <div class="d-flex gap-2">
+                        <a class="btn btn-outline-primary" href="{% url 'products:list' %}?company={{ company.pk }}">See More</a>
+                        <a class="btn btn-primary" href="{% url 'products:list' %}?company={{ company.pk }}">Order Now</a>
+                    </div>
+                </div>
+            </div>
+        {% empty %}
+            <div class="col-12"><div class="content-card p-4 text-center text-secondary">No companies matched your search.</div></div>
+        {% endfor %}
+    </div>
+    {% include "includes/pagination.html" %}
+</section>
+
+<section id="about" class="py-4 mb-4">
+    <div class="row g-4 align-items-start">
+        <div class="col-lg-5">
+            <span class="eyebrow">About</span>
+            <h2 class="display-6 fw-semibold mt-2">A multi-company delivery platform for bottled water.</h2>
+        </div>
+        <div class="col-lg-7">
+            <div class="content-card p-4">
+                <p class="mb-2">Customers can browse water companies publicly, order from the company they trust, choose delivery location using maps, and pay digitally after a nearby agent accepts the request.</p>
+                <p class="mb-0">Behind the scenes, the platform coordinates company-specific agents, drivers, delivery confirmation, and inventory-aware fulfillment.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="contact" class="py-4">
+    <div class="content-card p-4 p-lg-5">
+        <span class="eyebrow">Contact</span>
+        <h2 class="h2 fw-semibold mt-2">Need help choosing a company or tracking an order?</h2>
+        <p class="text-secondary mb-0">Use the customer portal after login for order tracking and notifications. For now, this public site is the browsing and entry point into the platform.</p>
+    </div>
+</section>
+{% endblock %}

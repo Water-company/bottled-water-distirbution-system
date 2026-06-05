@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Order History{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Order History</span>
+    <h1 class="display-6 fw-semibold mt-2">Track every bottled water order in one place</h1>
+    <form method="get" class="row g-3 mt-1">
+        <div class="col-md-4">
+            <input type="text" name="search" value="{{ search_term }}" class="form-control" placeholder="Search by Order ID">
+        </div>
+        <div class="col-md-4">
+            <select name="status" class="form-select">
+                <option value="">All statuses</option>
+                {% for value, label in status_choices %}
+                    <option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-4 d-grid d-md-flex gap-2">
+            <button class="btn btn-primary">Filter</button>
+            <a href="{% url 'orders:list' %}" class="btn btn-outline-secondary">Reset</a>
+        </div>
+    </form>
+</section>
+
+<div class="content-card p-4">
+    {% if orders %}
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th>Order ID</th>
+                        <th>Company</th>
+                        <th>Date</th>
+                        <th>Status</th>
+                        <th>Total</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for order in orders %}
+                        <tr>
+                            <td>{{ order.order_number }}</td>
+                            <td>{{ order.company.name }}</td>
+                            <td>{{ order.created_at|date:"M d, Y" }}</td>
+                            <td>{{ order.get_status_display }}</td>
+                            <td>{{ order.total }}</td>
+                            <td class="text-end">
+                                <a class="btn btn-sm btn-outline-primary" href="{% url 'orders:detail' order.order_number %}">Details</a>
+                                <a class="btn btn-sm btn-outline-dark" href="{% url 'orders:tracking' order.order_number %}">Track</a>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="text-secondary mb-0">No orders found for the current filter.</p>
+    {% endif %}
+</div>
+
+{% include "includes/pagination.html" %}
+{% endblock %}

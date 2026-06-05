@@ -1,0 +1,451 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Request Delivery{% endblock %}
+{% block extra_head %}
+<link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+>
+{% endblock %}
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-7">
+        <div class="content-card p-4">
+            <span class="eyebrow">Delivery Request</span>
+            <h1 class="h3 mt-2 mb-3">Choose your delivery location</h1>
+            <p class="text-secondary">Pick your location, review the nearby agent branches from <strong>{{ cart_company.name }}</strong>, choose the one you want, and then continue straight to Chapa.</p>
+            <form method="post" novalidate id="checkout-form">
+                {% csrf_token %}
+                <div class="mb-3">
+                    <label class="form-label d-block">{{ form.location_source.label }}</label>
+                    {% for radio in form.location_source %}
+                        <div class="form-check form-check-inline">
+                            {{ radio.tag }}
+                            <label class="form-check-label" for="{{ radio.id_for_label }}">{{ radio.choice_label }}</label>
+                        </div>
+                    {% endfor %}
+                </div>
+                <div class="mb-3 d-flex flex-wrap gap-2">
+                    <button type="button" class="btn btn-outline-primary" id="current-location-button">Use Current Location</button>
+                    <span class="small text-secondary align-self-center">or click the map and search for an address anywhere in Addis Ababa</span>
+                </div>
+                <div class="mb-3 position-relative">
+                    <label class="form-label" for="map-search">Search Address in Addis Ababa</label>
+                    <input type="text" id="map-search" class="form-control" placeholder="Bole, Piassa, CMC, Mexico, Sarbet...">
+                    <div id="map-search-results" class="list-group map-search-results d-none"></div>
+                </div>
+                <div id="delivery-map" class="map-canvas mb-3"></div>
+                <div class="d-flex flex-wrap gap-2 mb-2">
+                    <span class="map-summary-chip" id="selected-coordinates">Coordinates not selected yet</span>
+                    <span class="map-summary-chip" id="decoded-address-chip">Waiting for decoded address</span>
+                </div>
+                <div id="selection-status" class="map-status-line mb-3">Pick a point on the map to decode its coordinates into a delivery address.</div>
+                <div class="mb-3">
+                    <label class="form-label" for="{{ form.delivery_address.id_for_label }}">Delivery Address</label>
+                    <div class="small text-secondary mb-2">This is filled automatically by reverse geocoding the selected coordinates.</div>
+                    {{ form.delivery_address }}
+                </div>
+                {{ form.selected_agent_id }}
+                {{ form.latitude }}
+                {{ form.longitude }}
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label" for="{{ form.phone_number.id_for_label }}">Phone Number</label>
+                        {{ form.phone_number }}
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="{{ form.notes.id_for_label }}">Notes</label>
+                        {{ form.notes }}
+                    </div>
+                </div>
+                {% for field in form %}
+                    {% for error in field.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+                {% endfor %}
+                {% for error in form.non_field_errors %}<div class="text-danger small mt-3">{{ error }}</div>{% endfor %}
+                <button class="btn btn-primary mt-4" type="submit" id="pay-now-button" disabled>Pay Now</button>
+            </form>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="content-card p-4 mb-4">
+            <h2 class="h4 mb-3">Order Summary</h2>
+            <div class="small text-secondary mb-3">Choose an eligible nearby branch with enough stock, then we will reserve that branch and open Chapa checkout immediately.</div>
+            {% if pricing_summary.premium_offer.feature_enabled %}
+                <div class="small text-secondary mb-3">
+                    {% if pricing_summary.premium_offer.eligible %}
+                        <span class="badge text-bg-success">Premium active</span>
+                        You unlocked a {{ pricing_summary.premium_offer.discount_percent }}% discount with {{ cart_company.name }}.
+                    {% else %}
+                        Premium with {{ cart_company.name }} unlocks after {{ pricing_summary.premium_offer.threshold }} consecutive delivered orders.
+                        Current streak: {{ pricing_summary.premium_offer.streak }}.
+                    {% endif %}
+                </div>
+            {% endif %}
+            {% for item in cart.items.all %}
+                <div class="d-flex justify-content-between gap-3 mb-3">
+                    <div>
+                        <div class="fw-semibold">{{ item.product.name }}</div>
+                        <small class="text-secondary">Qty: {{ item.quantity }}</small>
+                    </div>
+                    <strong>{{ item.line_total }}</strong>
+                </div>
+            {% endfor %}
+            <hr>
+            <div class="d-flex justify-content-between mb-2"><span>Subtotal</span><strong>{{ pricing_summary.subtotal }}</strong></div>
+            {% if pricing_summary.discount_amount > 0 %}
+                <div class="d-flex justify-content-between mb-2 text-success"><span>Premium Discount</span><strong>-{{ pricing_summary.discount_amount }}</strong></div>
+            {% endif %}
+            <div class="d-flex justify-content-between mb-2"><span>Delivery Fee</span><strong>{{ pricing_summary.delivery_fee }}</strong></div>
+            <div class="d-flex justify-content-between"><span>Total</span><strong>{{ pricing_summary.total }}</strong></div>
+        </div>
+        <div class="content-card p-4 mb-4">
+            <h2 class="h4 mb-2">Nearby Eligible Agents</h2>
+            <div class="small text-secondary mb-3">Customer marker: C. Agent marker: A. Service circles show each branch radius. Nearby branches stay visible even when they cannot fulfill the order.</div>
+            <div id="nearby-agents-status" class="small text-secondary mb-3">
+                Select a location to preview the nearby agents that can fulfill this order.
+            </div>
+            <div id="nearby-agents-list" class="d-grid gap-3"></div>
+        </div>
+        <div class="content-card p-4">
+            <h2 class="h5 mb-3">What happens next?</h2>
+            <ol class="small text-secondary ps-3 mb-0">
+                <li>You choose your location in Addis Ababa.</li>
+                <li>You review and choose one nearby eligible agent.</li>
+                <li>You are taken straight to Chapa checkout.</li>
+                <li>After payment, you receive a QR code and OTP for delivery confirmation.</li>
+            </ol>
+        </div>
+    </div>
+</div>
+
+{{ checkout_map_config|json_script:"checkout-map-config" }}
+{% endblock %}
+{% block extra_scripts %}
+<script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+></script>
+<script src="{% static 'js/map-tools.js' %}"></script>
+<script>
+    (function () {
+        const mapConfig = JSON.parse(document.getElementById("checkout-map-config").textContent);
+        const maps = window.AquaFlowMaps;
+        const latitudeField = document.getElementById("id_latitude");
+        const longitudeField = document.getElementById("id_longitude");
+        const addressField = document.getElementById("id_delivery_address");
+        const selectedAgentIdField = document.getElementById("id_selected_agent_id");
+        const currentLocationButton = document.getElementById("current-location-button");
+        const mapSearchInput = document.getElementById("map-search");
+        const mapSearchResults = document.getElementById("map-search-results");
+        const nearbyAgentsStatus = document.getElementById("nearby-agents-status");
+        const nearbyAgentsList = document.getElementById("nearby-agents-list");
+        const selectionStatus = document.getElementById("selection-status");
+        const coordinatesChip = document.getElementById("selected-coordinates");
+        const decodedAddressChip = document.getElementById("decoded-address-chip");
+        const payNowButton = document.getElementById("pay-now-button");
+        const locationSourceInputs = document.querySelectorAll("input[name='location_source']");
+        const map = maps.createMap("delivery-map", {
+            center: mapConfig.defaultCenter || maps.defaultCenter,
+            zoom: 13,
+        });
+
+        const agentLayer = L.layerGroup().addTo(map);
+        const serviceRadiusLayer = L.layerGroup().addTo(map);
+        let customerMarker = null;
+        let activeReverseLookup = 0;
+        let selectedAgentId = selectedAgentIdField.value || "";
+
+        function formatCoordinate(value) {
+            return Number(value).toFixed(6);
+        }
+
+        function fallbackAddress(latitude, longitude) {
+            return `Pinned location (${formatCoordinate(latitude)}, ${formatCoordinate(longitude)})`;
+        }
+
+        function setLocationSource(sourceValue) {
+            locationSourceInputs.forEach((input) => {
+                input.checked = input.value === sourceValue;
+            });
+        }
+
+        function setSelectionStatus(message, isError) {
+            selectionStatus.textContent = message;
+            selectionStatus.classList.toggle("text-danger", Boolean(isError));
+        }
+
+        function updateSelectionChips(latitude, longitude, address) {
+            coordinatesChip.textContent = `Lat ${formatCoordinate(latitude)}, Lng ${formatCoordinate(longitude)}`;
+            decodedAddressChip.textContent = address || "Decoded address unavailable";
+        }
+
+        function clearSearchResults() {
+            mapSearchResults.classList.add("d-none");
+            mapSearchResults.innerHTML = "";
+        }
+
+        function syncPayButton() {
+            payNowButton.disabled = !selectedAgentId;
+            if (selectedAgentId) {
+                payNowButton.textContent = "Pay Now";
+            } else {
+                payNowButton.textContent = "Choose an Eligible Agent First";
+            }
+        }
+
+        function selectAgent(agentId) {
+            selectedAgentId = String(agentId);
+            selectedAgentIdField.value = selectedAgentId;
+            nearbyAgentsList.querySelectorAll("[data-agent-id]").forEach((card) => {
+                card.classList.toggle("border-primary", card.dataset.agentId === selectedAgentId);
+                card.classList.toggle("bg-light", card.dataset.agentId === selectedAgentId);
+            });
+            syncPayButton();
+            setSelectionStatus("Agent selected. You can continue to payment now.");
+        }
+
+        function clearSelectedAgent() {
+            selectedAgentId = "";
+            selectedAgentIdField.value = "";
+            syncPayButton();
+        }
+
+        function setCustomerMarker(latitude, longitude) {
+            const point = [Number(latitude), Number(longitude)];
+            if (!customerMarker) {
+                customerMarker = L.marker(point, {
+                    icon: maps.icons.customer,
+                    draggable: true,
+                }).addTo(map);
+                customerMarker.on("dragend", (event) => {
+                    const nextPoint = event.target.getLatLng();
+                    selectLocation(nextPoint.lat, nextPoint.lng, { source: "map" });
+                });
+            } else {
+                customerMarker.setLatLng(point);
+            }
+            customerMarker.bindPopup("Customer delivery point");
+        }
+
+        function renderNearbyAgents(agents, message) {
+            agentLayer.clearLayers();
+            serviceRadiusLayer.clearLayers();
+            nearbyAgentsList.innerHTML = "";
+            const previouslySelectedAgentId = selectedAgentId;
+            clearSelectedAgent();
+
+            if (message) {
+                nearbyAgentsStatus.textContent = message;
+            }
+
+            agents.forEach((agent) => {
+                const card = document.createElement("div");
+                card.className = "border rounded p-3";
+                card.dataset.agentId = String(agent.id);
+                const eligibilityLabel = agent.is_eligible
+                    ? "Eligible for payment"
+                    : agent.unavailable_reason || "Unavailable";
+                const actionMarkup = agent.is_eligible
+                    ? `<button type="button" class="btn btn-sm btn-primary mt-3 agent-select-button">Choose This Agent</button>`
+                    : `<div class="small text-danger mt-3">${maps.escapeHtml(eligibilityLabel)}</div>`;
+                card.innerHTML = `
+                    <div class="fw-semibold">${maps.escapeHtml(agent.name)}</div>
+                    <div class="small text-secondary">${maps.escapeHtml(agent.location_name)}</div>
+                    <div class="small text-secondary">${Number(agent.distance_km).toFixed(2)} km away | Radius ${Number(agent.service_radius_km).toFixed(2)} km</div>
+                    ${agent.address ? `<div class="small mt-1">${maps.escapeHtml(agent.address)}</div>` : ""}
+                    <div class="small mt-2 ${agent.is_eligible ? 'text-success' : 'text-secondary'}">${maps.escapeHtml(eligibilityLabel)}</div>
+                    ${actionMarkup}
+                `;
+                if (agent.is_eligible) {
+                    card.querySelector(".agent-select-button").addEventListener("click", () => {
+                        selectAgent(agent.id);
+                    });
+                }
+                nearbyAgentsList.appendChild(card);
+                if (agent.is_eligible && String(agent.id) === previouslySelectedAgentId) {
+                    selectAgent(agent.id);
+                }
+
+                const marker = L.marker([agent.latitude, agent.longitude], {
+                    icon: maps.icons.agent,
+                }).addTo(agentLayer);
+                marker.bindPopup(`
+                    <strong>${maps.escapeHtml(agent.name)}</strong><br>
+                    ${maps.escapeHtml(agent.location_name)}<br>
+                    ${Number(agent.distance_km).toFixed(2)} km away<br>
+                    ${maps.escapeHtml(eligibilityLabel)}
+                `);
+
+                L.circle([agent.latitude, agent.longitude], {
+                    radius: Number(agent.service_radius_km) * 1000,
+                    color: "#4c7d27",
+                    weight: 1,
+                    fillColor: "#4c7d27",
+                    fillOpacity: 0.06,
+                }).addTo(serviceRadiusLayer);
+            });
+
+            if (!agents.length) {
+                syncPayButton();
+            }
+        }
+
+        async function loadNearbyAgents(latitude, longitude) {
+            nearbyAgentsStatus.textContent = "Checking nearby agents...";
+            try {
+                const response = await fetch(`${mapConfig.nearbyAgentsUrl}?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}`, {
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                });
+                const payload = await response.json();
+                renderNearbyAgents(payload.agents || [], payload.message || "");
+            } catch (error) {
+                renderNearbyAgents([], "Unable to load nearby agents right now.");
+            }
+        }
+
+        async function reverseGeocode(latitude, longitude) {
+            const lookupId = ++activeReverseLookup;
+            try {
+                const response = await fetch(`${mapConfig.reverseUrl}?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}`, {
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                });
+                const payload = await response.json();
+                if (lookupId !== activeReverseLookup) {
+                    return;
+                }
+                const address = payload.display_name || fallbackAddress(latitude, longitude);
+                addressField.value = address;
+                updateSelectionChips(latitude, longitude, address);
+                setSelectionStatus("Coordinates decoded successfully.");
+            } catch (error) {
+                if (lookupId !== activeReverseLookup) {
+                    return;
+                }
+                const address = addressField.value.trim() || fallbackAddress(latitude, longitude);
+                addressField.value = address;
+                updateSelectionChips(latitude, longitude, address);
+                setSelectionStatus("Coordinates were saved, but the address could not be decoded right now.", true);
+            }
+        }
+
+        async function selectLocation(latitude, longitude, options = {}) {
+            const source = options.source || "map";
+            const normalizedLatitude = formatCoordinate(latitude);
+            const normalizedLongitude = formatCoordinate(longitude);
+            const initialAddress = options.address || addressField.value.trim() || fallbackAddress(normalizedLatitude, normalizedLongitude);
+
+            setLocationSource(source);
+            latitudeField.value = normalizedLatitude;
+            longitudeField.value = normalizedLongitude;
+            addressField.value = initialAddress;
+            updateSelectionChips(normalizedLatitude, normalizedLongitude, initialAddress);
+            setSelectionStatus("Delivery point selected. Decoding coordinates and checking nearby agents...");
+            setCustomerMarker(normalizedLatitude, normalizedLongitude);
+            map.setView([Number(normalizedLatitude), Number(normalizedLongitude)], 15);
+            clearSelectedAgent();
+
+            await Promise.all([
+                reverseGeocode(normalizedLatitude, normalizedLongitude),
+                loadNearbyAgents(normalizedLatitude, normalizedLongitude),
+            ]);
+        }
+
+        function renderSearchResults(results, message) {
+            mapSearchResults.innerHTML = "";
+            if (!results.length) {
+                const emptyItem = document.createElement("button");
+                emptyItem.type = "button";
+                emptyItem.className = "list-group-item list-group-item-action";
+                emptyItem.disabled = true;
+                emptyItem.textContent = message || "No Addis Ababa matches found.";
+                mapSearchResults.appendChild(emptyItem);
+                mapSearchResults.classList.remove("d-none");
+                return;
+            }
+
+            results.forEach((result) => {
+                const item = document.createElement("button");
+                item.type = "button";
+                item.className = "list-group-item list-group-item-action";
+                item.innerHTML = `
+                    <div class="fw-semibold">${maps.escapeHtml(result.display_name)}</div>
+                    <div class="small text-secondary">Lat ${formatCoordinate(result.latitude)} | Lng ${formatCoordinate(result.longitude)}</div>
+                `;
+                item.addEventListener("click", () => {
+                    mapSearchInput.value = result.display_name;
+                    clearSearchResults();
+                    selectLocation(result.latitude, result.longitude, {
+                        source: "map",
+                        address: result.display_name,
+                    });
+                });
+                mapSearchResults.appendChild(item);
+            });
+            mapSearchResults.classList.remove("d-none");
+        }
+
+        const debouncedSearch = maps.debounce(async () => {
+            const query = mapSearchInput.value.trim();
+            if (query.length < 3) {
+                clearSearchResults();
+                return;
+            }
+
+            mapSearchResults.classList.remove("d-none");
+            mapSearchResults.innerHTML = '<div class="list-group-item small text-secondary">Searching Addis Ababa addresses...</div>';
+
+            try {
+                const response = await fetch(`${mapConfig.searchUrl}?q=${encodeURIComponent(query)}`, {
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                });
+                const payload = await response.json();
+                renderSearchResults(payload.results || [], payload.message || "");
+            } catch (error) {
+                renderSearchResults([], "Address search is unavailable right now.");
+            }
+        }, 350);
+
+        map.on("click", (event) => {
+            selectLocation(event.latlng.lat, event.latlng.lng, { source: "map" });
+        });
+
+        currentLocationButton.addEventListener("click", () => {
+            if (!navigator.geolocation) {
+                setSelectionStatus("This browser does not support geolocation.", true);
+                return;
+            }
+
+            setSelectionStatus("Requesting your current GPS position...");
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    selectLocation(position.coords.latitude, position.coords.longitude, { source: "current" });
+                },
+                () => {
+                    setSelectionStatus("Unable to access your current location.", true);
+                },
+                { enableHighAccuracy: true, timeout: 15000 }
+            );
+        });
+
+        mapSearchInput.addEventListener("input", debouncedSearch);
+        document.addEventListener("click", (event) => {
+            if (!mapSearchResults.contains(event.target) && event.target !== mapSearchInput) {
+                clearSearchResults();
+            }
+        });
+
+        window.setTimeout(() => map.invalidateSize(), 0);
+        syncPayButton();
+
+        if (latitudeField.value && longitudeField.value) {
+            selectLocation(latitudeField.value, longitudeField.value, {
+                source: document.querySelector("input[name='location_source']:checked")?.value || "map",
+                address: addressField.value.trim(),
+            });
+        }
+    })();
+</script>
+{% endblock %}

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Your Cart{% endblock %}
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-8">
+        <div class="content-card p-4">
+            <h1 class="h3 mb-4">Your Cart</h1>
+            {% if cart.items.all %}
+                <div class="table-responsive">
+                    <table class="table align-middle">
+                        <thead>
+                            <tr>
+                                <th>Product</th>
+                                <th>Price</th>
+                                <th>Quantity</th>
+                                <th>Total</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in cart.items.all %}
+                                <tr>
+                                    <td>
+                                        <div class="fw-semibold">{{ item.product.name }}</div>
+                                        <small class="text-secondary">{{ item.product.company.name }}</small>
+                                    </td>
+                                    <td>{{ item.unit_price }}</td>
+                                    <td>
+                                        <form method="post" action="{% url 'cart:update' item.pk %}" class="d-flex gap-2">
+                                            {% csrf_token %}
+                                            <input type="number" min="1" name="quantity" value="{{ item.quantity }}" class="form-control" style="max-width: 96px;">
+                                            <button class="btn btn-sm btn-outline-primary">Update</button>
+                                        </form>
+                                    </td>
+                                    <td>{{ item.line_total }}</td>
+                                    <td>
+                                        <form method="post" action="{% url 'cart:remove' item.pk %}">
+                                            {% csrf_token %}
+                                            <button class="btn btn-sm btn-outline-danger">Remove</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="text-secondary mb-0">Your cart is empty. Start by browsing products.</p>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Summary</h2>
+            {% if pricing_summary.premium_offer.feature_enabled %}
+                <div class="small text-secondary mb-3">
+                    {% if pricing_summary.premium_offer.eligible %}
+                        <span class="badge text-bg-success">Premium unlocked</span>
+                        {{ pricing_summary.premium_offer.discount_percent }}% loyalty discount is active for {{ pricing_summary.company.name }}.
+                    {% else %}
+                        Premium unlocks after {{ pricing_summary.premium_offer.threshold }} consecutive delivered orders from {{ pricing_summary.company.name }}.
+                        Your current streak is {{ pricing_summary.premium_offer.streak }}.
+                    {% endif %}
+                </div>
+            {% endif %}
+            <div class="d-flex justify-content-between mb-2"><span>Subtotal</span><strong>{{ pricing_summary.subtotal }}</strong></div>
+            {% if pricing_summary.discount_amount > 0 %}
+                <div class="d-flex justify-content-between mb-2 text-success"><span>Premium Discount</span><strong>-{{ pricing_summary.discount_amount }}</strong></div>
+            {% endif %}
+            <div class="d-flex justify-content-between mb-2"><span>Delivery Fee</span><strong>{{ pricing_summary.delivery_fee }}</strong></div>
+            <hr>
+            <div class="d-flex justify-content-between mb-4"><span>Grand Total</span><strong>{{ pricing_summary.total }}</strong></div>
+            <a href="{% url 'orders:checkout' %}" class="btn btn-primary w-100 {% if not cart.items.all %}disabled{% endif %}">Proceed to Checkout</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

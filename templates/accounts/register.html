@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Create Account{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="hero-card p-4 p-lg-5">
+            <div class="row g-4 align-items-center">
+                <div class="col-lg-5">
+                    <span class="eyebrow">Customer Portal</span>
+                    <h1 class="display-6 fw-semibold mt-2">Register and start ordering bottled water online.</h1>
+                    <p class="text-secondary mb-0">Create your account, receive an OTP by email, verify your registration, and manage every order from one clean dashboard.</p>
+                </div>
+                <div class="col-lg-7">
+                    <form method="post" novalidate>
+                        {% csrf_token %}
+                        <div class="row g-3">
+                            {% for field in form %}
+                                <div class="{% if field.name in 'first_name,last_name' %}col-md-6{% else %}col-12{% endif %}">
+                                    <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+                                    {{ field }}
+                                    {% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+                                </div>
+                            {% endfor %}
+                        </div>
+                        {% for error in form.non_field_errors %}<div class="text-danger small mt-3">{{ error }}</div>{% endfor %}
+                        <button type="submit" class="btn btn-primary btn-lg mt-4 w-100">Create account and send OTP</button>
+                    </form>
+                    <p class="text-secondary small mt-3 mb-0">Already registered? <a href="{% url 'accounts:login' %}">Sign in here</a>.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

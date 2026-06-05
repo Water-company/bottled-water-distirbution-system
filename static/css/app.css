@@ -1,0 +1,346 @@
+:root {
+    --portal-navy: #12324a;
+    --portal-sky: #d6eef8;
+    --portal-aqua: #17a6b6;
+    --portal-cream: #f5f8f1;
+    --portal-ink: #20313d;
+}
+
+body {
+    background:
+        radial-gradient(circle at top right, rgba(23, 166, 182, 0.18), transparent 24%),
+        linear-gradient(180deg, #f8fcfd 0%, #f3f6ef 100%);
+    color: var(--portal-ink);
+    font-family: Aptos, "Trebuchet MS", sans-serif;
+    min-height: 100vh;
+}
+
+.landing-hero {
+    border-radius: 1.5rem;
+    min-height: 70vh;
+    overflow: hidden;
+    position: relative;
+}
+
+.landing-hero__media,
+.landing-hero__media img,
+.landing-hero__overlay {
+    height: 100%;
+    inset: 0;
+    position: absolute;
+    width: 100%;
+}
+
+.landing-hero__media img {
+    object-fit: cover;
+}
+
+.landing-hero__overlay {
+    align-items: end;
+    background: linear-gradient(180deg, rgba(10, 27, 39, 0.14), rgba(10, 27, 39, 0.72));
+    display: flex;
+}
+
+.landing-hero__content {
+    color: white;
+    max-width: 700px;
+    padding: 2rem;
+    position: relative;
+    z-index: 1;
+}
+
+.landing-title {
+    font-size: clamp(2.5rem, 4vw, 4.5rem);
+    font-weight: 700;
+    line-height: 1.05;
+    margin: 0.5rem 0 1rem;
+}
+
+.landing-copy {
+    font-size: 1.1rem;
+    margin-bottom: 1.5rem;
+    max-width: 56ch;
+}
+
+.portal-navbar {
+    background: linear-gradient(135deg, var(--portal-navy), #1d5168);
+    box-shadow: 0 18px 45px rgba(18, 50, 74, 0.18);
+}
+
+.hero-card,
+.content-card,
+.dashboard-card {
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(18, 50, 74, 0.08);
+    border-radius: 1.5rem;
+    box-shadow: 0 18px 45px rgba(18, 50, 74, 0.08);
+}
+
+.dashboard-card {
+    padding: 1.5rem;
+}
+
+.dashboard-card span {
+    color: #678093;
+    display: block;
+    margin-bottom: 0.5rem;
+}
+
+.dashboard-card h2 {
+    font-size: 2.1rem;
+    margin: 0;
+}
+
+.eyebrow {
+    color: var(--portal-aqua);
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+}
+
+.catalog-image,
+.detail-image,
+.gallery-image,
+.placeholder-tile {
+    width: 100%;
+    object-fit: cover;
+    border-radius: 1rem;
+}
+
+.catalog-image {
+    height: 220px;
+}
+
+.detail-image {
+    height: 420px;
+}
+
+.gallery-image {
+    height: 110px;
+}
+
+.placeholder-tile {
+    background: linear-gradient(135deg, rgba(18, 50, 74, 0.08), rgba(23, 166, 182, 0.18));
+    min-height: 220px;
+}
+
+.profile-image,
+.profile-fallback {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    object-fit: cover;
+    margin-inline: auto;
+}
+
+.profile-fallback {
+    align-items: center;
+    background: linear-gradient(135deg, var(--portal-navy), var(--portal-aqua));
+    color: white;
+    display: flex;
+    font-size: 2rem;
+    font-weight: 700;
+    justify-content: center;
+}
+
+.map-canvas {
+    background: linear-gradient(135deg, rgba(18, 50, 74, 0.06), rgba(23, 166, 182, 0.16));
+    border: 1px dashed rgba(18, 50, 74, 0.18);
+    border-radius: 1rem;
+    min-height: 280px;
+}
+
+.map-canvas.leaflet-container {
+    border-style: solid;
+}
+
+.map-search-results {
+    inset: auto 0 0 0;
+    max-height: 260px;
+    overflow-y: auto;
+    position: absolute;
+    top: calc(100% + 0.4rem);
+    z-index: 1050;
+}
+
+.map-search-results .list-group-item {
+    cursor: pointer;
+}
+
+.map-status-line {
+    color: #587283;
+    font-size: 0.92rem;
+}
+
+.map-marker-wrapper {
+    background: transparent;
+    border: 0;
+}
+
+.map-marker-pin {
+    align-items: center;
+    border: 2px solid white;
+    border-radius: 999px;
+    box-shadow: 0 10px 18px rgba(18, 50, 74, 0.18);
+    color: white;
+    display: inline-flex;
+    font-size: 0.8rem;
+    font-weight: 700;
+    height: 2.1rem;
+    justify-content: center;
+    width: 2.1rem;
+}
+
+.map-marker-pin--customer {
+    background: #1d5168;
+}
+
+.map-marker-pin--driver {
+    background: #17a6b6;
+}
+
+.map-marker-pin--agent {
+    background: #4c7d27;
+}
+
+.map-marker-pin--warehouse {
+    background: #af5b21;
+}
+
+.map-summary-chip {
+    background: rgba(18, 50, 74, 0.06);
+    border-radius: 999px;
+    color: #587283;
+    display: inline-flex;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-right: 0.4rem;
+    padding: 0.35rem 0.7rem;
+}
+
+.status-pill {
+    align-items: center;
+    border-radius: 999px;
+    display: inline-flex;
+    font-size: 0.85rem;
+    font-weight: 600;
+    gap: 0.5rem;
+    padding: 0.35rem 0.8rem;
+}
+
+.status-pill--online {
+    background: rgba(76, 125, 39, 0.12);
+    color: #35591c;
+}
+
+.status-pill--offline {
+    background: rgba(175, 91, 33, 0.12);
+    color: #8a4a1f;
+}
+
+.status-light {
+    border-radius: 50%;
+    display: inline-block;
+    height: 0.7rem;
+    width: 0.7rem;
+}
+
+.status-light--online {
+    background: #4c7d27;
+    box-shadow: 0 0 0 4px rgba(76, 125, 39, 0.12);
+}
+
+.status-light--offline {
+    background: #af5b21;
+    box-shadow: 0 0 0 4px rgba(175, 91, 33, 0.12);
+}
+
+.timeline-list {
+    border-left: 2px solid rgba(18, 50, 74, 0.12);
+    padding-left: 1.5rem;
+}
+
+.timeline-item {
+    margin-bottom: 1.5rem;
+    position: relative;
+}
+
+.timeline-item::before {
+    background: var(--portal-aqua);
+    border-radius: 50%;
+    content: "";
+    height: 0.75rem;
+    left: -1.9rem;
+    position: absolute;
+    top: 0.35rem;
+    width: 0.75rem;
+}
+
+.tracking-step {
+    align-items: flex-start;
+    border-left: 3px solid rgba(18, 50, 74, 0.1);
+    display: flex;
+    gap: 1rem;
+    padding: 0 0 1.75rem 1.75rem;
+    position: relative;
+}
+
+.tracking-step.complete {
+    border-left-color: var(--portal-aqua);
+}
+
+.tracking-step.current {
+    background: rgba(23, 166, 182, 0.08);
+    border-radius: 1rem;
+    padding-top: 1rem;
+    margin-bottom: 1rem;
+}
+
+.tracking-marker {
+    background: white;
+    border: 3px solid rgba(18, 50, 74, 0.2);
+    border-radius: 50%;
+    height: 1rem;
+    left: -0.6rem;
+    position: absolute;
+    top: 0.2rem;
+    width: 1rem;
+}
+
+.tracking-step.complete .tracking-marker,
+.tracking-step.current .tracking-marker {
+    border-color: var(--portal-aqua);
+    background: var(--portal-aqua);
+}
+
+.badge-soft {
+    border: 1px solid rgba(18, 50, 74, 0.08);
+}
+
+.qr-image {
+    border: 1px solid rgba(18, 50, 74, 0.08);
+    border-radius: 1rem;
+    max-width: 220px;
+    width: 100%;
+}
+
+.otp-code {
+    background: rgba(23, 166, 182, 0.12);
+    border-radius: 0.5rem;
+    display: inline-block;
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    padding: 0.35rem 0.6rem;
+}
+
+@media (max-width: 767.98px) {
+    .landing-hero {
+        min-height: 78vh;
+    }
+
+    .landing-hero__content {
+        padding: 1.5rem;
+    }
+}

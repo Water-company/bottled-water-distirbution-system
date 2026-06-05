@@ -1,0 +1,34 @@
+from django.urls import path
+
+from accounts.views import PendingOrdersJsonView
+from orders.views import (
+    CancelOrderView,
+    ChapaPaymentCallbackView,
+    ChapaPaymentReturnView,
+    CheckoutView,
+    NearbyAgentsPreviewView,
+    OrderDetailView,
+    OrderListView,
+    OrderPaymentView,
+    OrderTrackingView,
+    OrderTrackingStatusView,
+    RefundRequestCreateView,
+)
+
+app_name = "orders"
+
+urlpatterns = [
+    path("checkout/", CheckoutView.as_view(), name="checkout"),
+    path("nearby-agents-preview/", NearbyAgentsPreviewView.as_view(), name="nearby_agents_preview"),
+    path("pending-orders-json/", PendingOrdersJsonView.as_view(), name="pending_orders_json"),
+    path("payments/chapa/callback/", ChapaPaymentCallbackView.as_view(), name="payment_callback"),
+    path("", OrderListView.as_view(), name="list"),
+    path("<str:order_number>/", OrderDetailView.as_view(), name="detail"),
+    path("<str:order_number>/cancel/", CancelOrderView.as_view(), name="cancel"),
+    path("<str:order_number>/refunds/create/", RefundRequestCreateView.as_view(), name="request_refund"),
+    path("<str:order_number>/payment/", OrderPaymentView.as_view(), name="payment"),
+    path("<str:order_number>/payment/return/", ChapaPaymentReturnView.as_view(), name="payment_return"),
+    path("payment/success/<str:order_number>/", ChapaPaymentReturnView.as_view(), name="payment_success"),
+    path("<str:order_number>/tracking/", OrderTrackingView.as_view(), name="tracking"),
+    path("<str:order_number>/tracking/status/", OrderTrackingStatusView.as_view(), name="tracking_status_json"),
+]

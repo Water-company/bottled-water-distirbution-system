@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}System Admin Dashboard{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">System Admin</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">Platform Control Center</h1>
+    <p class="text-secondary mb-2">Manage companies, role accounts, and system-wide order activity without relying on Django admin.</p>
+    <a href="/admin/" class="btn btn-outline-dark btn-sm">Open Django Admin (Optional)</a>
+</section>
+
+<section class="row g-4 mb-4">
+    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Companies</span><h2>{{ stats.companies }}</h2></div></div>
+    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Agents</span><h2>{{ stats.agents }}</h2></div></div>
+    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Drivers</span><h2>{{ stats.drivers }}</h2></div></div>
+    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Orders</span><h2>{{ stats.orders }}</h2></div></div>
+</section>
+
+<section class="row g-4 mb-4">
+    <div class="col-lg-4">
+        <div class="content-card p-4 mb-4">
+            <h2 class="h4 mb-3">Create Company Admin</h2>
+            <form method="post" action="{% url 'accounts:create_company_admin' %}">
+                {% csrf_token %}
+                {% for field in company_admin_form %}<div class="mb-3">{{ field }}</div>{% endfor %}
+                <button class="btn btn-primary w-100">Create Company Admin</button>
+            </form>
+        </div>
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Create System Admin</h2>
+            <form method="post" action="{% url 'accounts:create_system_admin' %}">
+                {% csrf_token %}
+                {% for field in system_admin_form %}<div class="mb-3">{{ field }}</div>{% endfor %}
+                <button class="btn btn-outline-primary w-100">Create System Admin</button>
+            </form>
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Register Water Company</h2>
+            <form method="post" action="{% url 'accounts:create_company' %}" enctype="multipart/form-data" class="row g-3">
+                {% csrf_token %}
+                {% for field in company_form %}
+                    <div class="col-md-6">{{ field }}</div>
+                {% endfor %}
+                <div class="col-12"><button class="btn btn-primary">Create Company and Send to EFDA</button></div>
+            </form>
+        </div>
+    </div>
+</section>
+
+<section class="content-card p-4 mb-4">
+    <h2 class="h4 mb-3">Registered Companies</h2>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th>Company</th><th>Admin</th><th>Location</th><th>EFDA Status</th><th>Actions</th></tr></thead>
+            <tbody>
+                {% for company in companies %}
+                    <tr>
+                        <td>{{ company.name }}</td>
+                        <td>{{ company.admin.full_name|default:"Unassigned" }}</td>
+                        <td>{{ company.location }}</td>
+                        <td>
+                            <span class="status-pill {% if company.is_verified %}status-pill--online{% else %}status-pill--offline{% endif %}">
+                                <span class="status-light {% if company.is_verified %}status-light--online{% else %}status-light--offline{% endif %}"></span>
+                                {{ company.get_verification_status_display }}
+                            </span>
+                        </td>
+                        <td>
+                            <div class="d-flex flex-wrap gap-2">
+                                {% if company.verification_status != "verified" %}
+                                    <form method="post" action="{% url 'accounts:verify_company' company.pk %}" class="d-flex gap-2">
+                                        {% csrf_token %}
+                                        <input type="text" name="efda_reference" class="form-control form-control-sm" placeholder="EFDA Ref" style="max-width: 140px;">
+                                        <button class="btn btn-sm btn-primary">Verify</button>
+                                    </form>
+                                {% endif %}
+                                {% if company.verification_status != "rejected" %}
+                                    <form method="post" action="{% url 'accounts:reject_company' company.pk %}">
+                                        {% csrf_token %}
+                                        <button class="btn btn-sm btn-outline-danger">Reject</button>
+                                    </form>
+                                {% endif %}
+                                {% if company.verification_status == "rejected" %}
+                                    <form method="post" action="{% url 'accounts:resubmit_company' company.pk %}">
+                                        {% csrf_token %}
+                                        <button class="btn btn-sm btn-outline-primary">Resubmit</button>
+                                    </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="content-card p-4 mb-4">
+    <h2 class="h4 mb-3">Recent Orders</h2>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th>Order</th><th>Company</th><th>Customer</th><th>Status</th><th>Total</th></tr></thead>
+            <tbody>
+                {% for order in recent_orders %}
+                    <tr>
+                        <td>{{ order.order_number }}</td>
+                        <td>{{ order.company.name }}</td>
+                        <td>{{ order.customer.full_name }}</td>
+                        <td>{{ order.get_status_display }}</td>
+                        <td>{{ order.total }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="content-card p-4">
+    <h2 class="h4 mb-3">Company Admin Coverage</h2>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th>Company</th><th>Admin</th><th>Verification</th><th>Agents</th></tr></thead>
+            <tbody>
+                {% for company in companies %}
+                    <tr>
+                        <td>{{ company.name }}</td>
+                        <td>{{ company.admin.full_name|default:"Unassigned" }}</td>
+                        <td>{{ company.get_verification_status_display }}</td>
+                        <td>{{ company.agents.count }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

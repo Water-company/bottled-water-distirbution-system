@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Track {{ order.order_number }}{% endblock %}
+{% block extra_head %}
+<link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+>
+{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-10">
+        <div class="hero-card p-4 p-lg-5">
+            <span class="eyebrow">Order Tracking</span>
+            <h1 class="display-6 fw-semibold mt-2">{{ order.order_number }}</h1>
+            <p class="text-secondary mb-2">Current status: <strong id="tracking-status-label">{{ order.get_status_display }}</strong>.</p>
+            <p class="text-secondary mb-4">Last order update: <span id="tracking-last-update">{{ order.last_status_update|date:"M d, Y H:i" }}</span></p>
+            {% if order.confirmation %}
+                <div class="alert alert-success small">Delivery confirmation is ready. OTP: <strong>{{ order.confirmation.otp_code }}</strong>.</div>
+            {% endif %}
+
+            <div class="row g-4 mb-4">
+                <div class="col-lg-7">
+                    <div class="content-card p-4 h-100">
+                        <div class="d-flex flex-wrap justify-content-between gap-2 mb-3">
+                            <div>
+                                <h2 class="h4 mb-1">Live Delivery Map</h2>
+                                <p class="small text-secondary mb-0">Customer location picking, driver real-time tracking, and agent branch display on OpenStreetMap.</p>
+                            </div>
+                            <span class="map-summary-chip" id="tracking-driver-chip">Waiting for driver assignment</span>
+                        </div>
+                        <div id="tracking-map" class="map-canvas mb-3"></div>
+                        <div class="d-flex flex-wrap gap-2 mb-2">
+                            <span class="map-summary-chip">Customer: C</span>
+                            <span class="map-summary-chip">Agent: A</span>
+                            <span class="map-summary-chip">Driver: D</span>
+                        </div>
+                        <div class="map-status-line" id="tracking-map-status">Refreshing driver coordinates every 10 seconds.</div>
+                    </div>
+                </div>
+                <div class="col-lg-5">
+                    <div class="content-card p-4 h-100">
+                        <h2 class="h4 mb-3">Location Summary</h2>
+                        <div class="small text-secondary mb-2">Customer</div>
+                        <p class="mb-3" id="tracking-customer-summary">{{ order.delivery_address }}</p>
+                        <div class="small text-secondary mb-2">Agent / Warehouse</div>
+                        <p class="mb-3" id="tracking-agent-summary">{{ order.selected_agent.name|default:"Waiting for agent" }}</p>
+                        <div class="small text-secondary mb-2">Driver</div>
+                        <p class="mb-0" id="tracking-driver-summary">
+                            {% if order.assigned_driver %}
+                                {{ order.assigned_driver.user.full_name }}
+                            {% else %}
+                                Waiting for driver assignment
+                            {% endif %}
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tracking-steps">
+                {% for step in tracking_steps %}
+                    <div class="tracking-step {% if step.complete %}complete{% endif %} {% if step.current %}current{% endif %}">
+                        <div class="tracking-marker"></div>
+                        <div>
+                            <h2 class="h5 mb-1">{{ step.label }}</h2>
+                            <p class="text-secondary mb-0">
+                                {% if step.current %}
+                                    This is the current stage of your order.
+                                {% elif step.complete %}
+                                    This step has been completed.
+                                {% else %}
+                                    Waiting for this stage.
+                                {% endif %}
+                            </p>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{{ tracking_map_payload|json_script:"tracking-map-payload" }}
+{% endblock %}
+{% block extra_scripts %}
+<script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+></script>
+<script src="{% static 'js/map-tools.js' %}"></script>
+<script>
+    (function () {
+        const maps = window.AquaFlowMaps;
+        const trackingUrl = "{{ tracking_map_data_url }}";
+        const trackingState = JSON.parse(document.getElementById("tracking-map-payload").textContent);
+        const map = maps.createMap("tracking-map", {
+            center: trackingState.customer ? [trackingState.customer.latitude, trackingState.customer.longitude] : maps.defaultCenter,
+            zoom: 13,
+        });
+        const routeLayer = L.layerGroup().addTo(map);
+        let customerMarker = null;
+        let agentMarker = null;
+        let driverMarker = null;
+        let hasFitInitialBounds = false;
+
+        const statusLabel = document.getElementById("tracking-status-label");
+        const mapStatus = document.getElementById("tracking-map-status");
+        const customerSummary = document.getElementById("tracking-customer-summary");
+        const agentSummary = document.getElementById("tracking-agent-summary");
+        const driverSummary = document.getElementById("tracking-driver-summary");
+        const driverChip = document.getElementById("tracking-driver-chip");
+
+        function hasCoords(item) {
+            return item && Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude));
+        }
+
+        function upsertMarker(existingMarker, point, icon, popupHtml) {
+            if (!point) {
+                if (existingMarker) {
+                    map.removeLayer(existingMarker);
+                }
+                return null;
+            }
+
+            if (!existingMarker) {
+                existingMarker = L.marker(point, { icon }).addTo(map);
+            } else {
+                existingMarker.setLatLng(point);
+            }
+            existingMarker.bindPopup(popupHtml);
+            return existingMarker;
+        }
+
+        function renderTracking(payload) {
+            const points = [];
+            statusLabel.textContent = payload.statusLabel;
+            customerSummary.textContent = payload.customer.address;
+
+            if (hasCoords(payload.customer)) {
+                const customerPoint = [Number(payload.customer.latitude), Number(payload.customer.longitude)];
+                customerMarker = upsertMarker(
+                    customerMarker,
+                    customerPoint,
+                    maps.icons.customer,
+                    `<strong>Customer</strong><br>${maps.escapeHtml(payload.customer.name)}<br>${maps.escapeHtml(payload.customer.address)}`
+                );
+                points.push(customerPoint);
+            }
+
+            if (hasCoords(payload.agent)) {
+                const agentPoint = [Number(payload.agent.latitude), Number(payload.agent.longitude)];
+                agentMarker = upsertMarker(
+                    agentMarker,
+                    agentPoint,
+                    maps.icons.agent,
+                    `<strong>Agent</strong><br>${maps.escapeHtml(payload.agent.name)}<br>${maps.escapeHtml(payload.agent.locationName || payload.agent.address || "")}`
+                );
+                agentSummary.textContent = `${payload.agent.name}${payload.agent.locationName ? ` | ${payload.agent.locationName}` : ""}`;
+                points.push(agentPoint);
+            } else {
+                agentMarker = upsertMarker(agentMarker, null, maps.icons.agent, "");
+                agentSummary.textContent = "Waiting for agent assignment";
+            }
+
+            if (hasCoords(payload.driver)) {
+                const driverPoint = [Number(payload.driver.latitude), Number(payload.driver.longitude)];
+                driverMarker = upsertMarker(
+                    driverMarker,
+                    driverPoint,
+                    maps.icons.driver,
+                    `<strong>Driver</strong><br>${maps.escapeHtml(payload.driver.name)}<br>${maps.escapeHtml(payload.driver.vehicleIdentifier || "Vehicle pending")}`
+                );
+                driverSummary.textContent = `${payload.driver.name}${payload.driver.vehicleIdentifier ? ` | ${payload.driver.vehicleIdentifier}` : ""}`;
+                driverChip.textContent = payload.driver.online ? "Driver online" : "Driver offline";
+                points.push(driverPoint);
+            } else {
+                driverMarker = upsertMarker(driverMarker, null, maps.icons.driver, "");
+                driverSummary.textContent = "Waiting for driver assignment";
+                driverChip.textContent = "Waiting for driver assignment";
+            }
+
+            routeLayer.clearLayers();
+            if (hasCoords(payload.driver) && hasCoords(payload.customer)) {
+                L.polyline(
+                    [
+                        [Number(payload.driver.latitude), Number(payload.driver.longitude)],
+                        [Number(payload.customer.latitude), Number(payload.customer.longitude)],
+                    ],
+                    { color: "#17a6b6", weight: 4, opacity: 0.75 }
+                ).addTo(routeLayer);
+                mapStatus.textContent = payload.driver.online
+                    ? `Driver last ping: ${payload.driver.lastPingAt || "Just now"}`
+                    : "Driver has been assigned, but is currently offline.";
+            } else if (hasCoords(payload.agent) && hasCoords(payload.customer)) {
+                L.polyline(
+                    [
+                        [Number(payload.agent.latitude), Number(payload.agent.longitude)],
+                        [Number(payload.customer.latitude), Number(payload.customer.longitude)],
+                    ],
+                    { color: "#4c7d27", weight: 3, opacity: 0.5, dashArray: "6 6" }
+                ).addTo(routeLayer);
+                mapStatus.textContent = "Agent branch shown. Driver coordinates will appear once a driver is assigned.";
+            } else {
+                mapStatus.textContent = "Waiting for agent and driver coordinates.";
+            }
+
+            if (!hasFitInitialBounds) {
+                maps.fitMap(map, points, maps.defaultCenter, 13);
+                hasFitInitialBounds = true;
+            } else if (points.length && !map.getBounds().pad(-0.15).contains(points[points.length - 1])) {
+                maps.fitMap(map, points, maps.defaultCenter, 13);
+            }
+        }
+
+        async function refreshTracking() {
+            try {
+                const response = await fetch(trackingUrl, {
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                });
+                if (!response.ok) {
+                    throw new Error("Unable to load tracking");
+                }
+                const payload = await response.json();
+                renderTracking(payload);
+            } catch (error) {
+                mapStatus.textContent = "Unable to refresh tracking right now. The last known positions remain on the map.";
+            }
+        }
+
+        renderTracking(trackingState);
+        window.setTimeout(() => map.invalidateSize(), 0);
+        window.setInterval(refreshTracking, 10000);
+    })();
+</script>
+{% endblock %}

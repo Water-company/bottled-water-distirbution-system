@@ -1,0 +1,356 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Driver Dashboard{% endblock %}
+{% block extra_head %}
+<link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+>
+{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Driver</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">{{ driver.user.full_name }}</h1>
+    <p class="text-secondary mb-2">Manage live delivery status, send GPS updates, decode coordinates into addresses, and complete delivery handoff using QR and OTP verification.</p>
+    <div class="d-flex flex-wrap gap-2">
+        <span class="status-pill {% if driver_online %}status-pill--online{% else %}status-pill--offline{% endif %}">
+            <span class="status-light {% if driver_online %}status-light--online{% else %}status-light--offline{% endif %}"></span>
+            {% if driver_online %}Driver online{% else %}Driver offline{% endif %}
+        </span>
+    </div>
+</section>
+
+<section class="row g-4 mb-4">
+    <div class="col-lg-4">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Availability</h2>
+            <form method="post" action="{% url 'accounts:update_location' %}" id="driver-location-form">
+                {% csrf_token %}
+                <div class="mb-3 d-flex flex-wrap gap-2">
+                    <button type="button" class="btn btn-outline-primary" id="driver-use-gps">Use Current GPS</button>
+                    <span class="small text-secondary align-self-center">or click the map to set a fallback position</span>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Latitude</label>
+                    <input type="text" id="driver-latitude" name="latitude" class="form-control" value="{{ location.latitude|default:'9.030000' }}">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Longitude</label>
+                    <input type="text" id="driver-longitude" name="longitude" class="form-control" value="{{ location.longitude|default:'38.740000' }}">
+                </div>
+                <div class="mb-3">
+                    <div class="small text-secondary mb-1">Decoded address</div>
+                    <div class="map-status-line" id="driver-decoded-address">Waiting for coordinates to decode.</div>
+                </div>
+                <div class="form-check mb-3">
+                    <input type="checkbox" id="driver-online" name="is_online" value="true" class="form-check-input" {% if location and location.is_online %}checked{% endif %}>
+                    <label class="form-check-label">Online</label>
+                </div>
+                <button class="btn btn-primary w-100">Update Location</button>
+            </form>
+            <p class="small text-secondary mt-3 mb-0" id="location-status">
+                When online, the dashboard sends a GPS update every 10 seconds and customers see the live driver marker.
+            </p>
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <div class="content-card p-4 mb-4">
+            <div class="d-flex flex-wrap justify-content-between gap-2 mb-3">
+                <div>
+                    <h2 class="h4 mb-1">Live Route Map</h2>
+                    <p class="small text-secondary mb-0">Driver marker: D. Customer marker: C. Agent branch / warehouse marker: A.</p>
+                </div>
+                <span class="map-summary-chip" id="driver-map-chip">Driver location offline</span>
+            </div>
+            <div id="driver-map" class="map-canvas mb-3"></div>
+            <div class="d-flex flex-wrap gap-2 mb-2">
+                <span class="map-summary-chip">Click the map to set a manual fallback coordinate</span>
+                <span class="map-summary-chip">Drag D to fine-tune the driver marker</span>
+            </div>
+            <div class="map-status-line" id="driver-map-status">Assigned customer and agent locations are shown whenever delivery data is available.</div>
+        </div>
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Assigned Deliveries</h2>
+            {% if assigned_orders %}
+                {% for order in assigned_orders %}
+                    <div class="border rounded p-3 mb-3">
+                        <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
+                            <div>
+                                <strong>{{ order.order_number }}</strong>
+                                <div class="small text-secondary">{{ order.customer.full_name }} | {{ order.delivery_address }}</div>
+                            </div>
+                            <span class="badge text-bg-light">{{ order.get_status_display }}</span>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 mb-3">
+                            {% if order.status == "driver_assigned" %}
+                                <form method="post" action="{% url 'accounts:start_delivery' order.order_number %}">
+                                    {% csrf_token %}
+                                    <button class="btn btn-primary btn-sm">Start Delivery</button>
+                                </form>
+                            {% endif %}
+                        </div>
+                        {% if order.status == "out_for_delivery" %}
+                            <form method="post" action="{% url 'accounts:complete_delivery' order.order_number %}" class="row g-2">
+                                {% csrf_token %}
+                                <div class="col-md-5"><input type="text" name="otp_code" class="form-control" placeholder="OTP Code (optional if QR is used)"></div>
+                                <div class="col-md-5"><input type="text" name="qr_token" class="form-control" placeholder="QR payload or token (optional if OTP is used)"></div>
+                                <div class="col-md-2 d-grid"><button class="btn btn-success">Complete</button></div>
+                            </form>
+                            <div class="small text-secondary mt-2">Use either the OTP or the QR code/token. You do not need to enter both.</div>
+                        {% endif %}
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-secondary mb-0">No deliveries assigned yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+{{ driver_map_payload|json_script:"driver-map-payload" }}
+{% endblock %}
+{% block extra_scripts %}
+<script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+></script>
+<script src="{% static 'js/map-tools.js' %}"></script>
+<script>
+    (function () {
+        const maps = window.AquaFlowMaps;
+        const payload = JSON.parse(document.getElementById("driver-map-payload").textContent);
+        const reverseUrl = "{{ reverse_geocode_url }}";
+        const locationForm = document.getElementById("driver-location-form");
+        const latitudeInput = document.getElementById("driver-latitude");
+        const longitudeInput = document.getElementById("driver-longitude");
+        const onlineInput = document.getElementById("driver-online");
+        const locationStatus = document.getElementById("location-status");
+        const decodedAddress = document.getElementById("driver-decoded-address");
+        const driverMapStatus = document.getElementById("driver-map-status");
+        const driverMapChip = document.getElementById("driver-map-chip");
+        const useGpsButton = document.getElementById("driver-use-gps");
+        const csrfToken = locationForm.querySelector("input[name='csrfmiddlewaretoken']").value;
+
+        function hasCoords(item) {
+            return item && Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude));
+        }
+
+        function formatCoordinate(value) {
+            return Number(value).toFixed(6);
+        }
+
+        function getInitialCenter() {
+            if (hasCoords(payload.currentDriverLocation)) {
+                return [Number(payload.currentDriverLocation.latitude), Number(payload.currentDriverLocation.longitude)];
+            }
+            const firstOrder = payload.assignedOrders.find((order) => hasCoords(order));
+            if (firstOrder) {
+                return [Number(firstOrder.latitude), Number(firstOrder.longitude)];
+            }
+            return maps.defaultCenter;
+        }
+
+        const map = maps.createMap("driver-map", {
+            center: getInitialCenter(),
+            zoom: 13,
+        });
+        const assignedLayer = L.layerGroup().addTo(map);
+        const routeLayer = L.layerGroup().addTo(map);
+        let driverMarker = null;
+        let reverseLookupToken = 0;
+
+        function updateDriverChip() {
+            if (onlineInput.checked) {
+                driverMapChip.textContent = "Driver location online";
+            } else {
+                driverMapChip.textContent = "Driver location offline";
+            }
+        }
+
+        function upsertDriverMarker(latitude, longitude) {
+            const point = [Number(latitude), Number(longitude)];
+            if (!driverMarker) {
+                driverMarker = L.marker(point, {
+                    icon: maps.icons.driver,
+                    draggable: true,
+                }).addTo(map);
+                driverMarker.on("dragend", (event) => {
+                    const nextPoint = event.target.getLatLng();
+                    setDriverCoordinate(nextPoint.lat, nextPoint.lng, true);
+                });
+            } else {
+                driverMarker.setLatLng(point);
+            }
+            driverMarker.bindPopup("Driver live position");
+        }
+
+        function renderAssignedOrders() {
+            assignedLayer.clearLayers();
+            routeLayer.clearLayers();
+
+            const points = [];
+            const seenWarehouses = new Set();
+
+            if (driverMarker) {
+                const driverPoint = driverMarker.getLatLng();
+                points.push([driverPoint.lat, driverPoint.lng]);
+            }
+
+            payload.assignedOrders.forEach((order) => {
+                const customerPoint = [Number(order.latitude), Number(order.longitude)];
+                const warehousePoint = [Number(order.agentLatitude), Number(order.agentLongitude)];
+                points.push(customerPoint);
+                if (hasCoords({ latitude: order.agentLatitude, longitude: order.agentLongitude })) {
+                    points.push(warehousePoint);
+                }
+
+                L.marker(customerPoint, {
+                    icon: maps.icons.customer,
+                }).addTo(assignedLayer).bindPopup(`
+                    <strong>${maps.escapeHtml(order.orderNumber)}</strong><br>
+                    ${maps.escapeHtml(order.customerName)}<br>
+                    ${maps.escapeHtml(order.deliveryAddress)}
+                `);
+
+                const warehouseKey = `${order.agentName}:${order.agentLatitude}:${order.agentLongitude}`;
+                if (!seenWarehouses.has(warehouseKey)) {
+                    seenWarehouses.add(warehouseKey);
+                    L.marker(warehousePoint, {
+                        icon: maps.icons.agent,
+                    }).addTo(assignedLayer).bindPopup(`
+                        <strong>${maps.escapeHtml(order.agentName)}</strong><br>
+                        Branch / warehouse
+                    `);
+                }
+
+                L.polyline(
+                    [warehousePoint, customerPoint],
+                    { color: "#4c7d27", weight: 2, opacity: 0.45, dashArray: "6 6" }
+                ).addTo(routeLayer);
+
+                if (driverMarker) {
+                    const driverPoint = driverMarker.getLatLng();
+                    L.polyline(
+                        [[driverPoint.lat, driverPoint.lng], customerPoint],
+                        { color: "#17a6b6", weight: 3, opacity: 0.6 }
+                    ).addTo(routeLayer);
+                }
+            });
+
+            maps.fitMap(map, points, maps.defaultCenter, 13);
+
+            if (payload.assignedOrders.length) {
+                driverMapStatus.textContent = "Assigned customers and agent branches are plotted. Live driver updates redraw the route lines automatically.";
+            } else {
+                driverMapStatus.textContent = "No assigned deliveries yet. Your marker will still update when you go online.";
+            }
+        }
+
+        async function decodeCoordinate(latitude, longitude) {
+            const token = ++reverseLookupToken;
+            decodedAddress.textContent = "Decoding coordinates into an address...";
+            try {
+                const response = await fetch(`${reverseUrl}?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}`, {
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                });
+                const data = await response.json();
+                if (token !== reverseLookupToken) {
+                    return;
+                }
+                decodedAddress.textContent = data.display_name || `Pinned location (${formatCoordinate(latitude)}, ${formatCoordinate(longitude)})`;
+            } catch (error) {
+                if (token !== reverseLookupToken) {
+                    return;
+                }
+                decodedAddress.textContent = `Pinned location (${formatCoordinate(latitude)}, ${formatCoordinate(longitude)})`;
+            }
+        }
+
+        function setDriverCoordinate(latitude, longitude, updateMapView) {
+            const formattedLatitude = formatCoordinate(latitude);
+            const formattedLongitude = formatCoordinate(longitude);
+            latitudeInput.value = formattedLatitude;
+            longitudeInput.value = formattedLongitude;
+            upsertDriverMarker(formattedLatitude, formattedLongitude);
+            if (updateMapView) {
+                map.setView([Number(formattedLatitude), Number(formattedLongitude)], 15);
+            }
+            decodeCoordinate(formattedLatitude, formattedLongitude);
+            renderAssignedOrders();
+        }
+
+        async function postDriverLocation(latitude, longitude, isOnline) {
+            const body = new URLSearchParams({
+                latitude,
+                longitude,
+                is_online: isOnline ? "true" : "",
+            });
+            const response = await fetch(locationForm.action, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "X-CSRFToken": csrfToken,
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+                body: body.toString(),
+            });
+            if (!response.ok) {
+                throw new Error("Unable to update location");
+            }
+            return response.json();
+        }
+
+        async function refreshGpsLocation() {
+            updateDriverChip();
+            if (!onlineInput.checked) {
+                locationStatus.textContent = "Driver is offline. Automatic GPS updates are paused.";
+                return;
+            }
+            if (!navigator.geolocation) {
+                locationStatus.textContent = "This browser does not support geolocation.";
+                return;
+            }
+            navigator.geolocation.getCurrentPosition(
+                async (position) => {
+                    const latitude = position.coords.latitude.toFixed(6);
+                    const longitude = position.coords.longitude.toFixed(6);
+                    setDriverCoordinate(latitude, longitude, true);
+                    try {
+                        await postDriverLocation(latitude, longitude, true);
+                        locationStatus.textContent = `Last GPS update sent at ${new Date().toLocaleTimeString()}.`;
+                    } catch (error) {
+                        locationStatus.textContent = "Automatic GPS update failed. You can still submit the form manually.";
+                    }
+                },
+                () => {
+                    locationStatus.textContent = "Location permission was denied, so automatic GPS updates could not be sent.";
+                },
+                { enableHighAccuracy: true, timeout: 15000 }
+            );
+        }
+
+        map.on("click", (event) => {
+            setDriverCoordinate(event.latlng.lat, event.latlng.lng, false);
+            locationStatus.textContent = "Manual fallback coordinate selected. Submit the form or go online to save it.";
+        });
+
+        useGpsButton.addEventListener("click", refreshGpsLocation);
+        onlineInput.addEventListener("change", refreshGpsLocation);
+
+        if (latitudeInput.value && longitudeInput.value) {
+            setDriverCoordinate(latitudeInput.value, longitudeInput.value, false);
+        } else if (hasCoords(payload.currentDriverLocation)) {
+            setDriverCoordinate(payload.currentDriverLocation.latitude, payload.currentDriverLocation.longitude, false);
+        } else {
+            renderAssignedOrders();
+        }
+
+        updateDriverChip();
+        window.setTimeout(() => map.invalidateSize(), 0);
+        window.setInterval(refreshGpsLocation, 10000);
+    })();
+</script>
+{% endblock %}

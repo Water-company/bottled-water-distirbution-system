@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Browse Companies{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Companies</span>
+    <h1 class="display-6 fw-semibold mt-2">Browse verified bottled water suppliers</h1>
+    <form method="get" class="row g-3 mt-1">
+        <div class="col-md-5">{{ filter_form.search }}</div>
+        <div class="col-md-5">{{ filter_form.location }}</div>
+        <div class="col-md-2 d-grid"><button class="btn btn-primary">Search</button></div>
+    </form>
+</section>
+
+<section class="row g-4">
+    {% for company in companies %}
+        <div class="col-md-6 col-xl-4">
+            <div class="content-card h-100 p-4">
+                {% if company.logo %}
+                    <img src="{{ company.logo.url }}" class="catalog-image mb-3" alt="{{ company.name }}">
+                {% endif %}
+                <div class="d-flex justify-content-between align-items-start gap-2">
+                    <h2 class="h4 mb-0">{{ company.name }}</h2>
+                    <span class="badge {% if company.is_verified %}text-bg-success{% else %}text-bg-secondary{% endif %}">
+                        {% if company.is_verified %}Verified{% else %}Pending{% endif %}
+                    </span>
+                </div>
+                <p class="text-secondary mt-2 mb-3">{{ company.description|truncatewords:24 }}</p>
+                <p class="small mb-0"><strong>Location:</strong> {{ company.location }}</p>
+            </div>
+        </div>
+    {% empty %}
+        <div class="col-12"><div class="content-card p-4 text-center text-secondary">No companies matched your search.</div></div>
+    {% endfor %}
+</section>
+
+{% include "includes/pagination.html" %}
+{% endblock %}

@@ -1,0 +1,466 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Company Admin Dashboard{% endblock %}
+{% block extra_head %}
+<link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+>
+{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Company Admin</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">{{ company.name }}</h1>
+    <p class="text-secondary mb-2">Manage company agents, managers, drivers, restock approvals, order performance, refunds, and loyalty settings across all branches.</p>
+    <div class="d-flex flex-wrap gap-2">
+        <span class="status-pill {% if company.is_verified %}status-pill--online{% else %}status-pill--offline{% endif %}">
+            <span class="status-light {% if company.is_verified %}status-light--online{% else %}status-light--offline{% endif %}"></span>
+            {{ company.get_verification_status_display }}
+        </span>
+        {% if company.premium_feature_enabled %}
+            <span class="map-summary-chip">Premium: {{ company.premium_discount_percent }}% after {{ company.premium_streak_threshold }} consecutive deliveries</span>
+        {% endif %}
+    </div>
+</section>
+
+<section class="content-card p-4 mb-4">
+    <div class="d-flex flex-wrap justify-content-between gap-2 mb-3">
+        <div>
+            <h2 class="h4 mb-1">Operations Map</h2>
+            <p class="small text-secondary mb-0">Warehouse: W. Agent branches: A. Drivers update live every 10 seconds on OpenStreetMap.</p>
+        </div>
+        <span class="map-summary-chip" id="company-map-chip">{{ agents|length }} agents | {{ drivers|length }} drivers</span>
+    </div>
+    <div id="company-map" class="map-canvas mb-3"></div>
+    <div class="d-flex flex-wrap gap-2 mb-2">
+        <span class="map-summary-chip">Service circles show each agent radius</span>
+        <span class="map-summary-chip">Offline drivers remain visible at their last known location</span>
+    </div>
+    <div class="map-status-line" id="company-map-status">Refreshing company, agent, and driver locations every 10 seconds.</div>
+</section>
+
+<section class="content-card p-4 mb-4">
+    <div class="row g-4 align-items-end">
+        <div class="col-lg-5">
+            <h2 class="h4 mb-2">Premium Loyalty Settings</h2>
+            <p class="text-secondary mb-0">Choose whether this company offers premium customer discounts, how many consecutive delivered orders unlock the badge, and the discount rate customers receive.</p>
+        </div>
+        <div class="col-lg-7">
+            <form method="post" action="{% url 'accounts:update_company_premium' %}" class="row g-3">
+                {% csrf_token %}
+                <div class="col-md-4">
+                    <label class="form-label">Enable Premium</label>
+                    <div class="form-check mt-2">{{ premium_form.premium_feature_enabled }}</div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Streak Threshold</label>
+                    {{ premium_form.premium_streak_threshold }}
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Discount Percent</label>
+                    {{ premium_form.premium_discount_percent }}
+                </div>
+                <div class="col-12">
+                    <button class="btn btn-primary">Save Premium Settings</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</section>
+
+<section class="row g-4 mb-4">
+    <div class="col-lg-4">
+        <div class="content-card p-4 mb-4">
+            <h2 class="h4 mb-3">Create Agent Manager</h2>
+            <form method="post" action="{% url 'accounts:create_agent_manager' %}">
+                {% csrf_token %}
+                {% for field in agent_manager_form %}<div class="mb-3">{{ field }}</div>{% endfor %}
+                <button class="btn btn-primary w-100">Create Manager</button>
+            </form>
+        </div>
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Create Driver User</h2>
+            <form method="post" action="{% url 'accounts:create_driver_user' %}">
+                {% csrf_token %}
+                {% for field in driver_user_form %}<div class="mb-3">{{ field }}</div>{% endfor %}
+                <button class="btn btn-outline-primary w-100">Create Driver User</button>
+            </form>
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <div class="content-card p-4 mb-4">
+            <h2 class="h4 mb-3">Create Agent Branch</h2>
+            <form method="post" action="{% url 'accounts:create_agent' %}" class="row g-3">
+                {% csrf_token %}
+                {% for field in agent_form %}
+                    <div class="col-md-6">{{ field }}</div>
+                {% endfor %}
+                <div class="col-12"><button class="btn btn-primary">Create Agent</button></div>
+            </form>
+        </div>
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Create Driver Profile</h2>
+            <form method="post" action="{% url 'accounts:create_driver' %}" class="row g-3">
+                {% csrf_token %}
+                {% for field in driver_form %}
+                    <div class="col-md-6">{{ field }}</div>
+                {% endfor %}
+                <div class="col-12"><button class="btn btn-outline-primary">Assign Driver to Agent</button></div>
+            </form>
+        </div>
+    </div>
+    <div class="col-12">
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Agents</h2>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Name</th><th>Manager</th><th>Radius</th><th>Status</th></tr></thead>
+                    <tbody>
+                        {% for agent in agents %}
+                            <tr>
+                                <td>{{ agent.name }}</td>
+                                <td>{{ agent.admin.full_name|default:"Unassigned" }}</td>
+                                <td>{{ agent.service_radius_km }} km</td>
+                                <td>
+                                    <span class="status-pill {% if agent.is_online %}status-pill--online{% else %}status-pill--offline{% endif %}">
+                                        <span class="status-light {% if agent.is_online %}status-light--online{% else %}status-light--offline{% endif %}"></span>
+                                        {% if agent.is_online %}Online{% else %}Offline{% endif %}
+                                    </span>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="content-card p-4 mb-4">
+    <h2 class="h4 mb-3">Refund Requests</h2>
+    {% if refund_requests %}
+        {% for refund_request in refund_requests %}
+            <div class="border rounded p-3 mb-3">
+                <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-2">
+                    <div>
+                        <strong>{{ refund_request.order.order_number }}</strong>
+                        <div class="small text-secondary">
+                            {{ refund_request.get_request_type_display }} | Customer: {{ refund_request.order.customer.full_name }}
+                        </div>
+                    </div>
+                    <span class="badge text-bg-light">{{ refund_request.get_status_display }}</span>
+                </div>
+                <div class="small mb-2"><strong>Reason:</strong> {{ refund_request.reason|default:"No reason provided." }}</div>
+                <div class="small text-secondary mb-3">
+                    Requested: {{ refund_request.requested_amount }}
+                    {% if refund_request.approved_amount %}| Approved: {{ refund_request.approved_amount }}{% endif %}
+                </div>
+                {% if refund_request.status == "pending" %}
+                    <div class="row g-2">
+                        <div class="col-lg-6">
+                            <form method="post" action="{% url 'accounts:approve_refund' refund_request.pk %}" class="row g-2">
+                                {% csrf_token %}
+                                <div class="col-md-4"><input type="number" step="0.01" name="approved_amount" class="form-control" value="{{ refund_request.requested_amount }}"></div>
+                                <div class="col-md-8"><input type="text" name="resolution_note" class="form-control" placeholder="Approval note"></div>
+                                <div class="col-12"><button class="btn btn-primary btn-sm">Approve Refund</button></div>
+                            </form>
+                        </div>
+                        <div class="col-lg-6">
+                            <form method="post" action="{% url 'accounts:reject_refund' refund_request.pk %}" class="row g-2">
+                                {% csrf_token %}
+                                <div class="col-12"><input type="text" name="resolution_note" class="form-control" placeholder="Reason for rejection"></div>
+                                <div class="col-12"><button class="btn btn-outline-danger btn-sm">Reject Refund</button></div>
+                            </form>
+                        </div>
+                    </div>
+                {% else %}
+                    <div class="small text-secondary">
+                        Reviewed by {{ refund_request.reviewed_by.full_name|default:"System" }}
+                        {% if refund_request.resolution_note %}| Note: {{ refund_request.resolution_note }}{% endif %}
+                    </div>
+                {% endif %}
+            </div>
+        {% endfor %}
+    {% else %}
+        <p class="text-secondary mb-0">No refund requests for this company yet.</p>
+    {% endif %}
+</section>
+
+<section class="content-card p-4 mb-4">
+    <h2 class="h4 mb-3">Restock Requests</h2>
+    {% if restock_requests %}
+        {% for request_item in restock_requests %}
+            <div class="border rounded p-3 mb-3">
+                <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
+                    <div>
+                        <strong>{{ request_item.agent.name }}</strong>
+                        <div class="small text-secondary">{{ request_item.product.name }} | Requested: {{ request_item.quantity_requested }}</div>
+                    </div>
+                    <span class="badge text-bg-light">{{ request_item.get_status_display }}</span>
+                </div>
+                {% if request_item.status == "pending" %}
+                    <form method="post" action="{% url 'accounts:approve_restock' request_item.pk %}" class="row g-2">
+                        {% csrf_token %}
+                        <div class="col-md-2"><input type="number" name="quantity_approved" class="form-control" value="{{ request_item.quantity_requested }}"></div>
+                        <div class="col-md-2"><input type="date" name="due_date" class="form-control"></div>
+                        <div class="col-md-2"><input type="number" step="0.01" name="base_price" class="form-control" placeholder="Base"></div>
+                        <div class="col-md-2"><input type="number" step="0.01" name="excise_tax" class="form-control" placeholder="Excise"></div>
+                        <div class="col-md-2"><input type="number" step="0.01" name="vat" class="form-control" placeholder="VAT"></div>
+                        <div class="col-md-2"><input type="number" step="0.01" name="transport_cost" class="form-control" placeholder="Transport"></div>
+                        <div class="col-md-3"><input type="number" step="0.01" name="amount_paid" class="form-control" placeholder="Amount Paid" value="0"></div>
+                        <div class="col-md-3">
+                            <select name="status" class="form-select">
+                                <option value="pending">Pending</option>
+                                <option value="partial">Partial</option>
+                                <option value="paid">Paid</option>
+                                <option value="overdue">Overdue</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3"><input type="text" name="batch_number" class="form-control" placeholder="Batch Number"></div>
+                        <div class="col-md-3"><input type="date" name="received_at" class="form-control"></div>
+                        <div class="col-md-3"><input type="date" name="expires_at" class="form-control"></div>
+                        <div class="col-md-12"><button class="btn btn-primary">Approve & Create Schedule</button></div>
+                    </form>
+                {% endif %}
+            </div>
+        {% endfor %}
+    {% else %}
+        <p class="text-secondary mb-0">No restock requests yet.</p>
+    {% endif %}
+</section>
+
+<section class="content-card p-4 mb-4">
+    <h2 class="h4 mb-3">Recent Orders</h2>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th>Order</th><th>Customer</th><th>Agent</th><th>Status</th><th>Total</th></tr></thead>
+            <tbody>
+                {% for order in orders %}
+                    <tr>
+                        <td>{{ order.order_number }}</td>
+                        <td>{{ order.customer.full_name }}</td>
+                        <td>{{ order.selected_agent.name|default:"Pending" }}</td>
+                        <td>{{ order.get_status_display }}</td>
+                        <td>{{ order.total }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="row g-4">
+    <div class="col-lg-6">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Payment Schedules</h2>
+            {% if payment_schedules %}
+                <div class="table-responsive">
+                    <table class="table align-middle">
+                        <thead><tr><th>Agent</th><th>Product</th><th>Due</th><th>Status</th><th>Total</th></tr></thead>
+                        <tbody>
+                            {% for schedule in payment_schedules %}
+                                <tr>
+                                    <td>{{ schedule.restock_request.agent.name }}</td>
+                                    <td>{{ schedule.restock_request.product.name }}</td>
+                                    <td>{{ schedule.due_date }}</td>
+                                    <td>{{ schedule.get_status_display }}</td>
+                                    <td>{{ schedule.total_amount }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="text-secondary mb-0">No payment schedules created yet.</p>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Drivers</h2>
+            {% if drivers %}
+                <div class="table-responsive mb-4">
+                    <table class="table align-middle">
+                        <thead><tr><th>Name</th><th>Agent</th><th>Vehicle</th><th>Status</th></tr></thead>
+                        <tbody>
+                            {% for driver in drivers %}
+                                <tr>
+                                    <td>{{ driver.user.full_name }}</td>
+                                    <td>{{ driver.agent.name }}</td>
+                                    <td>{{ driver.vehicle_identifier|default:"Not set" }}</td>
+                                    <td>
+                                        <span class="status-pill {% if driver.is_online %}status-pill--online{% else %}status-pill--offline{% endif %}">
+                                            <span class="status-light {% if driver.is_online %}status-light--online{% else %}status-light--offline{% endif %}"></span>
+                                            {% if driver.is_online %}Online{% else %}Offline{% endif %}
+                                        </span>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="text-secondary">No drivers have been assigned yet.</p>
+            {% endif %}
+            <h2 class="h4 mb-3">Inventory Batches</h2>
+            {% if inventory_batches %}
+                <div class="table-responsive">
+                    <table class="table align-middle">
+                        <thead><tr><th>Agent</th><th>Product</th><th>Batch</th><th>Remaining</th><th>Expires</th></tr></thead>
+                        <tbody>
+                            {% for batch in inventory_batches %}
+                                <tr>
+                                    <td>{{ batch.agent.name }}</td>
+                                    <td>{{ batch.product.name }}</td>
+                                    <td>{{ batch.batch_number }}</td>
+                                    <td>{{ batch.quantity_remaining }}</td>
+                                    <td>{{ batch.expires_at }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="text-secondary mb-0">No inventory batches received yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+{{ company_map_payload|json_script:"company-map-payload" }}
+{% endblock %}
+{% block extra_scripts %}
+<script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+></script>
+<script src="{% static 'js/map-tools.js' %}"></script>
+<script>
+    (function () {
+        const maps = window.AquaFlowMaps;
+        const locationsUrl = "{{ company_locations_url }}";
+        const initialPayload = JSON.parse(document.getElementById("company-map-payload").textContent);
+        const mapStatus = document.getElementById("company-map-status");
+        const mapChip = document.getElementById("company-map-chip");
+
+        function hasCoords(item) {
+            return item && Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude));
+        }
+
+        function getInitialCenter(payload) {
+            if (hasCoords(payload.company)) {
+                return [Number(payload.company.latitude), Number(payload.company.longitude)];
+            }
+            if (payload.agents.length && hasCoords(payload.agents[0])) {
+                return [Number(payload.agents[0].latitude), Number(payload.agents[0].longitude)];
+            }
+            if (payload.drivers.length) {
+                const driverWithCoords = payload.drivers.find((driver) => hasCoords(driver));
+                if (driverWithCoords) {
+                    return [Number(driverWithCoords.latitude), Number(driverWithCoords.longitude)];
+                }
+            }
+            return maps.defaultCenter;
+        }
+
+        const map = maps.createMap("company-map", {
+            center: getInitialCenter(initialPayload),
+            zoom: 12,
+        });
+        const warehouseLayer = L.layerGroup().addTo(map);
+        const agentLayer = L.layerGroup().addTo(map);
+        const driverLayer = L.layerGroup().addTo(map);
+        const radiusLayer = L.layerGroup().addTo(map);
+        let hasFitInitialBounds = false;
+
+        function renderPayload(payload) {
+            const points = [];
+            warehouseLayer.clearLayers();
+            agentLayer.clearLayers();
+            driverLayer.clearLayers();
+            radiusLayer.clearLayers();
+
+            if (hasCoords(payload.company)) {
+                const point = [Number(payload.company.latitude), Number(payload.company.longitude)];
+                points.push(point);
+                L.marker(point, {
+                    icon: maps.icons.warehouse,
+                }).addTo(warehouseLayer).bindPopup(`
+                    <strong>${maps.escapeHtml(payload.company.name)}</strong><br>
+                    ${maps.escapeHtml(payload.company.address || "Main warehouse")}
+                `);
+            }
+
+            payload.agents.forEach((agent) => {
+                if (!hasCoords(agent)) {
+                    return;
+                }
+                const point = [Number(agent.latitude), Number(agent.longitude)];
+                points.push(point);
+                L.marker(point, {
+                    icon: maps.icons.agent,
+                }).addTo(agentLayer).bindPopup(`
+                    <strong>${maps.escapeHtml(agent.name)}</strong><br>
+                    ${maps.escapeHtml(agent.locationName || "")}<br>
+                    ${maps.escapeHtml(agent.address || "")}
+                `);
+                L.circle(point, {
+                    radius: Number(agent.serviceRadiusKm) * 1000,
+                    color: "#4c7d27",
+                    weight: 1,
+                    fillColor: "#4c7d27",
+                    fillOpacity: 0.05,
+                }).addTo(radiusLayer);
+            });
+
+            payload.drivers.forEach((driver) => {
+                if (!hasCoords(driver)) {
+                    return;
+                }
+                const point = [Number(driver.latitude), Number(driver.longitude)];
+                points.push(point);
+                L.marker(point, {
+                    icon: maps.icons.driver,
+                }).addTo(driverLayer).bindPopup(`
+                    <strong>${maps.escapeHtml(driver.name)}</strong><br>
+                    Agent: ${maps.escapeHtml(driver.agentName)}<br>
+                    ${maps.escapeHtml(driver.vehicleIdentifier || "Vehicle pending")}<br>
+                    ${driver.online ? "Online" : "Offline"}
+                `);
+            });
+
+            mapChip.textContent = `${payload.agents.length} agents | ${payload.drivers.length} drivers`;
+            mapStatus.textContent = payload.drivers.some((driver) => driver.online)
+                ? "Live drivers are online. The map is polling for fresh coordinates every 10 seconds."
+                : "No drivers are online right now. Last known coordinates are still shown when available.";
+
+            if (!hasFitInitialBounds) {
+                maps.fitMap(map, points, maps.defaultCenter, 12);
+                hasFitInitialBounds = true;
+            }
+        }
+
+        async function refreshLocations() {
+            try {
+                const response = await fetch(locationsUrl, {
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                });
+                if (!response.ok) {
+                    throw new Error("Unable to refresh locations");
+                }
+                const payload = await response.json();
+                renderPayload(payload);
+            } catch (error) {
+                mapStatus.textContent = "Unable to refresh the operations map right now. The last known markers remain visible.";
+            }
+        }
+
+        renderPayload(initialPayload);
+        window.setTimeout(() => map.invalidateSize(), 0);
+        window.setInterval(refreshLocations, 10000);
+    })();
+</script>
+{% endblock %}

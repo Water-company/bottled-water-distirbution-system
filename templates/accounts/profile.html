@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Manage Profile{% endblock %}
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-4">
+        <div class="content-card p-4 text-center">
+            {% if request.user.profile_image %}
+                <img src="{{ request.user.profile_image.url }}" class="profile-image mb-3" alt="{{ request.user.full_name }}">
+            {% else %}
+                <div class="profile-image profile-fallback mb-3">{{ request.user.first_name|slice:":1" }}{{ request.user.last_name|slice:":1" }}</div>
+            {% endif %}
+            <h1 class="h4 mb-1">{{ request.user.full_name }}</h1>
+            <p class="text-secondary mb-2">{{ request.user.email }}</p>
+            <p class="small text-secondary mb-3">{{ request.user.get_role_display }}</p>
+            <a href="{% url 'accounts:password_change' %}" class="btn btn-outline-primary btn-sm">Change Password</a>
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Update Profile</h2>
+            <form method="post" enctype="multipart/form-data" novalidate>
+                {% csrf_token %}
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label" for="{{ form.first_name.id_for_label }}">First Name</label>
+                        {{ form.first_name }}
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="{{ form.last_name.id_for_label }}">Last Name</label>
+                        {{ form.last_name }}
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="{{ form.phone_number.id_for_label }}">Phone Number</label>
+                        {{ form.phone_number }}
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="{{ form.profile_image.id_for_label }}">Profile Image</label>
+                        {{ form.profile_image }}
+                    </div>
+                </div>
+                {% for field in form %}
+                    {% for error in field.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+                {% endfor %}
+                {% for error in form.non_field_errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
+                <button type="submit" class="btn btn-primary mt-4">Save Changes</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
