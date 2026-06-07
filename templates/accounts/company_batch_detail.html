@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Batch {{ batch.batch_number }}{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Batch Performance</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">{{ batch.batch_number }}</h1>
+    <p class="text-secondary mb-3">{{ batch.product.name }} | Produced {{ batch.production_date }} | Status: {{ batch.get_status_display }}</p>
+    <div class="d-flex flex-wrap gap-2">
+        <a href="{% url 'accounts:company_inventory' %}" class="btn btn-outline-dark">Back to Inventory</a>
+        {% if batch.status != "recalled" %}
+            <form method="post" action="{% url 'accounts:company_batch_recall' batch.pk %}" class="d-flex flex-wrap gap-2">
+                {% csrf_token %}
+                <input type="text" name="reason" class="form-control" placeholder="Recall reason" required style="min-width: 240px;">
+                <button class="btn btn-danger">Trigger Recall</button>
+            </form>
+        {% endif %}
+    </div>
+</section>
+
+<section class="row g-4 mb-4">
+    <div class="col-md-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Cases Produced</div><div class="display-6 fw-semibold">{{ batch.total_cases_produced }}</div></div></div>
+    <div class="col-md-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Unsold in Warehouse</div><div class="display-6 fw-semibold">{{ metrics.unsold_cases_remaining }}</div></div></div>
+    <div class="col-md-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Cash Recovery</div><div class="display-6 fw-semibold">{{ metrics.cash_recovery_rate }}%</div></div></div>
+    <div class="col-md-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Overdue Agents</div><div class="display-6 fw-semibold text-danger">{{ metrics.overdue_sales_count }}</div></div></div>
+</section>
+
+<section class="row g-4 mb-4">
+    <div class="col-lg-7">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Batch Financial and Movement Summary</h2>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <tbody>
+                        <tr><th>Cases sold to agents</th><td>{{ metrics.cases_sold }}</td></tr>
+                        <tr><th>Cases still with agents</th><td>{{ metrics.remaining_with_agents }}</td></tr>
+                        <tr><th>Cases distributed further</th><td>{{ metrics.distributed_cases }}</td></tr>
+                        <tr><th>Total owed</th><td>{{ metrics.total_owed }}</td></tr>
+                        <tr><th>Total collected</th><td>{{ metrics.total_collected }}</td></tr>
+                        <tr><th>Outstanding balance</th><td>{{ metrics.outstanding_balance }}</td></tr>
+                        <tr><th>Sales velocity</th><td>{{ metrics.sales_velocity_per_day|floatformat:2 }} cases/day</td></tr>
+                        <tr><th>Recalled cases</th><td>{{ metrics.recalled_cases }}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Top Agents by Batch Volume</h2>
+            {% if top_agents %}
+                {% for row in top_agents %}
+                    <div class="border-bottom py-2">
+                        <div class="fw-semibold">{{ row.agent.name }}</div>
+                        <div class="small text-secondary">{{ row.cases }} cases | Outstanding {{ row.outstanding }}</div>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-secondary mb-0">No agent has taken stock from this batch yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<section class="content-card p-4">
+    <h2 class="h4 mb-3">Agent Sales and Recovery Ledger</h2>
+    {% if sale_rows %}
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th>Agent</th>
+                        <th>Requested / Approved</th>
+                        <th>Payment Type</th>
+                        <th>Collected</th>
+                        <th>Outstanding</th>
+                        <th>At Agent</th>
+                        <th>Distributed</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in sale_rows %}
+                        <tr>
+                            <td>{{ row.sale.agent.name }}</td>
+                            <td>{{ row.sale.quantity_requested }} / {{ row.sale.quantity_approved }}</td>
+                            <td>{{ row.sale.get_payment_type_display }}</td>
+                            <td>{{ row.sale.amount_collected }}</td>
+                            <td>{{ row.sale.outstanding_balance }}</td>
+                            <td>{{ row.remaining_cases }}</td>
+                            <td>{{ row.distributed_cases }}</td>
+                            <td>
+                                {{ row.sale.get_status_display }}
+                                {% if row.sale.is_overdue %}
+                                    <div class="small text-danger">Overdue</div>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="text-secondary mb-0">No requests or sales exist for this batch yet.</p>
+    {% endif %}
+</section>
+{% endblock %}

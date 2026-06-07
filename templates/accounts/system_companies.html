@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}System Companies{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">System Admin</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">Company Registration</h1>
+    <p class="text-secondary mb-0">Onboard water companies, attach registration documents, assign company admins, and track EFDA approval status.</p>
+</section>
+
+<section class="row g-4">
+    <div class="col-xl-4">
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Register New Company</h2>
+            <div class="small text-secondary mb-3">Step 1: company profile. Step 2: upload document. Step 3: assign a company admin and submit to EFDA.</div>
+            <form method="post" action="{% url 'accounts:create_company' %}" enctype="multipart/form-data">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{% url 'accounts:system_companies' %}">
+                {% for field in company_form %}
+                    <div class="mb-3">
+                        <label class="form-label">{{ field.label }}</label>
+                        {{ field }}
+                    </div>
+                {% endfor %}
+                <button class="btn btn-primary w-100">Submit Company to EFDA</button>
+            </form>
+        </div>
+    </div>
+    <div class="col-xl-8">
+        <div class="content-card p-4 mb-4">
+            <form method="get" class="row g-3">
+                <div class="col-md-4">
+                    <input type="text" class="form-control" name="search" placeholder="Search company or region" value="{{ search }}">
+                </div>
+                <div class="col-md-4">
+                    <select name="status" class="form-select">
+                        <option value="">All statuses</option>
+                        <option value="draft" {% if status_filter == "draft" %}selected{% endif %}>Draft</option>
+                        <option value="pending_efda" {% if status_filter == "pending_efda" %}selected{% endif %}>Pending EFDA</option>
+                        <option value="verified" {% if status_filter == "verified" %}selected{% endif %}>Verified</option>
+                        <option value="rejected" {% if status_filter == "rejected" %}selected{% endif %}>Rejected</option>
+                    </select>
+                </div>
+                <div class="col-md-4 d-flex gap-2">
+                    <button class="btn btn-primary">Filter</button>
+                    <a class="btn btn-outline-primary" href="{% url 'accounts:system_companies' %}">Reset</a>
+                </div>
+            </form>
+        </div>
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Registered Companies</h2>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Company</th><th>Admin</th><th>Document</th><th>EFDA Status</th><th>Platform Access</th><th>Actions</th></tr></thead>
+                    <tbody>
+                        {% for company in companies %}
+                            <tr>
+                                <td>
+                                    <div class="fw-semibold">{{ company.name }}</div>
+                                    <div class="small text-secondary">{{ company.location }}</div>
+                                </td>
+                                <td>{{ company.admin.full_name|default:"Unassigned" }}</td>
+                                <td>
+                                    {% if company.registration_document %}
+                                        <a href="{{ company.registration_document.url }}" target="_blank">View document</a>
+                                    {% else %}
+                                        <span class="text-secondary">No document</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ company.get_verification_status_display }}</td>
+                                <td>
+                                    {% if company.is_active %}
+                                        <span class="badge text-bg-success">Active</span>
+                                    {% else %}
+                                        <span class="badge text-bg-danger">Suspended</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        {% if company.verification_status != "verified" %}
+                                            <form method="post" action="{% url 'accounts:verify_company' company.pk %}" class="d-flex gap-2">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="next" value="{% url 'accounts:system_companies' %}">
+                                                <input type="text" name="efda_reference" class="form-control form-control-sm" placeholder="EFDA Ref" style="max-width: 140px;">
+                                                <button class="btn btn-sm btn-primary">Verify</button>
+                                            </form>
+                                        {% endif %}
+                                        {% if company.verification_status != "rejected" %}
+                                            <form method="post" action="{% url 'accounts:reject_company' company.pk %}">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="next" value="{% url 'accounts:system_companies' %}">
+                                                <button class="btn btn-sm btn-outline-danger">Reject</button>
+                                            </form>
+                                        {% endif %}
+                                        {% if company.verification_status == "rejected" %}
+                                            <form method="post" action="{% url 'accounts:resubmit_company' company.pk %}">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="next" value="{% url 'accounts:system_companies' %}">
+                                                <button class="btn btn-sm btn-outline-primary">Resubmit</button>
+                                            </form>
+                                        {% endif %}
+                                        {% if company.is_active %}
+                                            <form method="post" action="{% url 'accounts:suspend_company' company.pk %}">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="next" value="{% url 'accounts:system_companies' %}">
+                                                <button class="btn btn-sm btn-outline-danger">Suspend</button>
+                                            </form>
+                                        {% else %}
+                                            <form method="post" action="{% url 'accounts:reactivate_company' company.pk %}">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="next" value="{% url 'accounts:system_companies' %}">
+                                                <button class="btn btn-sm btn-outline-success">Reactivate</button>
+                                            </form>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                        {% empty %}
+                            <tr><td colspan="6" class="text-center text-secondary py-4">No companies found.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

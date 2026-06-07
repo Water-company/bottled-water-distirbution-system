@@ -5,10 +5,10 @@
     <span class="eyebrow">Order History</span>
     <h1 class="display-6 fw-semibold mt-2">Track every bottled water order in one place</h1>
     <form method="get" class="row g-3 mt-1">
-        <div class="col-md-4">
+        <div class="col-md-3">
             <input type="text" name="search" value="{{ search_term }}" class="form-control" placeholder="Search by Order ID">
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <select name="status" class="form-select">
                 <option value="">All statuses</option>
                 {% for value, label in status_choices %}
@@ -16,7 +16,13 @@
                 {% endfor %}
             </select>
         </div>
-        <div class="col-md-4 d-grid d-md-flex gap-2">
+        <div class="col-md-2">
+            <input type="date" name="date_from" value="{{ date_from }}" class="form-control">
+        </div>
+        <div class="col-md-2">
+            <input type="date" name="date_to" value="{{ date_to }}" class="form-control">
+        </div>
+        <div class="col-md-2 d-grid d-md-flex gap-2">
             <button class="btn btn-primary">Filter</button>
             <a href="{% url 'orders:list' %}" class="btn btn-outline-secondary">Reset</a>
         </div>
@@ -33,6 +39,8 @@
                         <th>Company</th>
                         <th>Date</th>
                         <th>Status</th>
+                        <th>Refund</th>
+                        <th>Feedback</th>
                         <th>Total</th>
                         <th></th>
                     </tr>
@@ -44,10 +52,38 @@
                             <td>{{ order.company.name }}</td>
                             <td>{{ order.created_at|date:"M d, Y" }}</td>
                             <td>{{ order.get_status_display }}</td>
+                            <td>
+                                {% with latest_refund=order.refund_requests.first %}
+                                    {% if latest_refund %}
+                                        {{ latest_refund.get_status_display }}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                {% endwith %}
+                            </td>
+                            <td>
+                                {% if order.feedback %}
+                                    {% if order.feedback.was_skipped %}
+                                        Skipped
+                                    {% else %}
+                                        {{ order.feedback.rating }}/5
+                                    {% endif %}
+                                {% elif order.status == "delivered" %}
+                                    Pending
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
                             <td>{{ order.total }}</td>
                             <td class="text-end">
                                 <a class="btn btn-sm btn-outline-primary" href="{% url 'orders:detail' order.order_number %}">Details</a>
                                 <a class="btn btn-sm btn-outline-dark" href="{% url 'orders:tracking' order.order_number %}">Track</a>
+                                {% if order.status == "delivered" %}
+                                    <form method="post" action="{% url 'orders:reorder' order.order_number %}" class="d-inline">
+                                        {% csrf_token %}
+                                        <button class="btn btn-sm btn-outline-success">Re-order</button>
+                                    </form>
+                                {% endif %}
                             </td>
                         </tr>
                     {% endfor %}

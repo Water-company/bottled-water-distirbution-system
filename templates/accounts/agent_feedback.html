@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Agent Feedback{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Agent Manager</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">Driver Feedback</h1>
+    <p class="text-secondary mb-0">Review customer ratings and comments across your driver fleet.</p>
+</section>
+
+<section class="row g-3 mb-4">
+    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Rated Deliveries</div><div class="display-6 fw-semibold mt-2">{{ feedback_summary.count }}</div></div></div>
+    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Average Rating</div><div class="display-6 fw-semibold mt-2">{% if feedback_summary.average_rating %}{{ feedback_summary.average_rating|floatformat:1 }}/5{% else %}-{% endif %}</div></div></div>
+    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Skipped</div><div class="display-6 fw-semibold mt-2">{{ feedback_summary.skipped }}</div></div></div>
+</section>
+
+<section class="content-card p-4">
+    {% if feedback_entries %}
+        {% for feedback in feedback_entries %}
+            <div class="border rounded p-3 mb-3">
+                <div class="d-flex flex-wrap justify-content-between gap-3">
+                    <div>
+                        <div class="fw-semibold">{{ feedback.order.order_number }} | {{ feedback.customer.full_name }}</div>
+                        <div class="small text-secondary">{{ feedback.driver.user.full_name|default:"Driver unavailable" }} | {{ feedback.created_at|date:"M d, Y H:i" }}</div>
+                    </div>
+                    <div>
+                        {% if feedback.was_skipped %}
+                            <span class="badge text-bg-secondary">Skipped</span>
+                        {% else %}
+                            <span class="badge text-bg-light">{{ feedback.rating }}/5</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% if feedback.comment %}<div class="small mt-2">{{ feedback.comment }}</div>{% endif %}
+                {% if feedback.photo %}
+                    <div class="mt-2">
+                        <a href="{{ feedback.photo.url }}" target="_blank">
+                            <img src="{{ feedback.photo.url }}" alt="Feedback photo" class="img-fluid rounded border" style="max-width: 180px;">
+                        </a>
+                    </div>
+                {% endif %}
+            </div>
+        {% endfor %}
+    {% else %}
+        <p class="text-secondary mb-0">No customer feedback has been submitted yet.</p>
+    {% endif %}
+</section>
+{% endblock %}

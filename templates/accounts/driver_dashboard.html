@@ -8,6 +8,46 @@
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
     crossorigin=""
 >
+<style>
+    .scanner-shell {
+        position: relative;
+        border-radius: 1rem;
+        overflow: hidden;
+        background: #111827;
+        min-height: 320px;
+    }
+
+    .scanner-reader {
+        min-height: 320px;
+    }
+
+    .scanner-reader video {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: cover;
+    }
+
+    .scanner-overlay {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .scanner-frame {
+        width: min(70vw, 240px);
+        height: min(70vw, 240px);
+        border: 2px solid rgba(255, 255, 255, 0.9);
+        border-radius: 1rem;
+        box-shadow: 0 0 0 999px rgba(17, 24, 39, 0.2);
+    }
+
+    .scanner-status {
+        min-height: 48px;
+    }
+</style>
 {% endblock %}
 {% block content %}
 <section class="hero-card p-4 p-lg-5 mb-4">
@@ -15,10 +55,38 @@
     <h1 class="display-6 fw-semibold mt-2 mb-2">{{ driver.user.full_name }}</h1>
     <p class="text-secondary mb-2">Manage live delivery status, send GPS updates, decode coordinates into addresses, and complete delivery handoff using QR and OTP verification.</p>
     <div class="d-flex flex-wrap gap-2">
+        <span class="map-summary-chip">Availability: {{ driver.get_availability_status_display }}</span>
         <span class="status-pill {% if driver_online %}status-pill--online{% else %}status-pill--offline{% endif %}">
             <span class="status-light {% if driver_online %}status-light--online{% else %}status-light--offline{% endif %}"></span>
             {% if driver_online %}Driver online{% else %}Driver offline{% endif %}
         </span>
+        <a href="{% url 'accounts:driver_history' %}" class="btn btn-sm btn-outline-primary">History</a>
+        <a href="{% url 'accounts:notifications' %}" class="btn btn-sm btn-outline-dark">Notifications</a>
+    </div>
+    <div class="alert alert-warning small mt-3 mb-0 d-none" id="driver-queue-status"></div>
+</section>
+
+<section class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="content-card p-4 h-100">
+            <div class="text-secondary small text-uppercase">Today</div>
+            <div class="display-6 fw-semibold mt-2">{{ performance.completed_today }}</div>
+            <div class="small text-secondary">{{ performance.assigned_today }} assigned | {{ performance.pending_today }} pending</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="content-card p-4 h-100">
+            <div class="text-secondary small text-uppercase">Earnings Today</div>
+            <div class="display-6 fw-semibold mt-2">{{ performance.earnings_today }}</div>
+            <div class="small text-secondary">Month: {{ performance.earnings_month }}</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="content-card p-4 h-100">
+            <div class="text-secondary small text-uppercase">Performance</div>
+            <div class="display-6 fw-semibold mt-2">{% if performance.average_rating %}{{ performance.average_rating|floatformat:1 }}/5{% else %}-{% endif %}</div>
+            <div class="small text-secondary">On-time rate: {{ performance.on_time_rate }}%</div>
+        </div>
     </div>
 </section>
 
@@ -26,6 +94,21 @@
     <div class="col-lg-4">
         <div class="content-card p-4 h-100">
             <h2 class="h4 mb-3">Availability</h2>
+            <form method="post" action="{% url 'accounts:driver_availability' %}" class="mb-4">
+                {% csrf_token %}
+                <div class="d-grid gap-2">
+                    {% for value, label in driver_status_choices %}
+                        <button
+                            type="submit"
+                            name="availability_status"
+                            value="{{ value }}"
+                            class="btn {% if driver.availability_status == value %}btn-primary{% else %}btn-outline-primary{% endif %}"
+                        >
+                            {{ label }}
+                        </button>
+                    {% endfor %}
+                </div>
+            </form>
             <form method="post" action="{% url 'accounts:update_location' %}" id="driver-location-form">
                 {% csrf_token %}
                 <div class="mb-3 d-flex flex-wrap gap-2">
@@ -56,6 +139,18 @@
         </div>
     </div>
     <div class="col-lg-8">
+        {% if active_delivery %}
+            <div class="content-card p-4 mb-4">
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+                    <div>
+                        <h2 class="h4 mb-1">Active Delivery</h2>
+                        <div class="fw-semibold">{{ active_delivery.order_number }}</div>
+                        <div class="small text-secondary">{{ active_delivery.customer.full_name }} | {{ active_delivery.delivery_address }}</div>
+                    </div>
+                    <span class="badge text-bg-light">{{ active_delivery.get_status_display }}</span>
+                </div>
+            </div>
+        {% endif %}
         <div class="content-card p-4 mb-4">
             <div class="d-flex flex-wrap justify-content-between gap-2 mb-3">
                 <div>
@@ -84,21 +179,63 @@
                             <span class="badge text-bg-light">{{ order.get_status_display }}</span>
                         </div>
                         <div class="d-flex flex-wrap gap-2 mb-3">
+                            <a
+                                class="btn btn-outline-dark btn-sm"
+                                href="https://www.google.com/maps/dir/?api=1&destination={{ order.latitude }},{{ order.longitude }}"
+                                target="_blank"
+                                rel="noopener"
+                            >
+                                Navigate
+                            </a>
+                            <a class="btn btn-outline-secondary btn-sm" href="tel:{{ order.phone_number }}">Call Customer</a>
                             {% if order.status == "driver_assigned" %}
+                                <form method="post" action="{% url 'accounts:accept_delivery' order.order_number %}">
+                                    {% csrf_token %}
+                                    <button class="btn btn-outline-primary btn-sm">Accept Delivery</button>
+                                </form>
+                            {% elif order.status == "driver_accepted" %}
+                                <form method="post" action="{% url 'accounts:picked_up_delivery' order.order_number %}">
+                                    {% csrf_token %}
+                                    <button class="btn btn-primary btn-sm">Picked Up from Warehouse</button>
+                                </form>
+                            {% elif order.status == "picked_up" %}
                                 <form method="post" action="{% url 'accounts:start_delivery' order.order_number %}">
                                     {% csrf_token %}
                                     <button class="btn btn-primary btn-sm">Start Delivery</button>
                                 </form>
+                            {% elif order.status == "out_for_delivery" %}
+                                <form method="post" action="{% url 'accounts:arrived_delivery' order.order_number %}">
+                                    {% csrf_token %}
+                                    <button class="btn btn-primary btn-sm">I Have Arrived</button>
+                                </form>
                             {% endif %}
                         </div>
-                        {% if order.status == "out_for_delivery" %}
+                        {% if order.status == "arrived" %}
+                            <div class="d-flex flex-wrap gap-2 mb-3">
+                                <button
+                                    type="button"
+                                    class="btn btn-primary w-100 open-qr-scanner"
+                                    data-order-number="{{ order.order_number }}"
+                                    data-confirm-url="{% url 'accounts:confirm_delivery_qr' order.order_number %}"
+                                >
+                                    Scan Bar Code
+                                </button>
+                            </div>
                             <form method="post" action="{% url 'accounts:complete_delivery' order.order_number %}" class="row g-2">
                                 {% csrf_token %}
-                                <div class="col-md-5"><input type="text" name="otp_code" class="form-control" placeholder="OTP Code (optional if QR is used)"></div>
-                                <div class="col-md-5"><input type="text" name="qr_token" class="form-control" placeholder="QR payload or token (optional if OTP is used)"></div>
+                                <div class="col-md-5"><input type="text" name="qr_token" class="form-control" placeholder="QR JSON payload or signed token"></div>
+                                <div class="col-md-5"><input type="text" name="otp_code" class="form-control" placeholder="OTP fallback (manual verification)"></div>
                                 <div class="col-md-2 d-grid"><button class="btn btn-success">Complete</button></div>
                             </form>
-                            <div class="small text-secondary mt-2">Use either the OTP or the QR code/token. You do not need to enter both.</div>
+                            <div class="small text-secondary mt-2">Use the customer QR payload first. OTP remains available as a manual fallback.</div>
+                        {% endif %}
+                        {% if order.status != "delivered" and order.status != "failed" and order.status != "cancelled" %}
+                            <form method="post" action="{% url 'accounts:report_delivery_issue' order.order_number %}" class="row g-2 mt-3">
+                                {% csrf_token %}
+                                <div class="col-md-4">{{ issue_form.issue_type }}</div>
+                                <div class="col-md-6">{{ issue_form.description }}</div>
+                                <div class="col-md-2 d-grid"><button class="btn btn-outline-danger btn-sm">Report Issue</button></div>
+                            </form>
                         {% endif %}
                     </div>
                 {% endfor %}
@@ -109,6 +246,35 @@
     </div>
 </section>
 
+<div class="modal fade" id="driverQrScannerModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h2 class="h5 mb-1">Scan Customer Bar Code</h2>
+                    <div class="small text-secondary">Order <span id="scanner-order-number">-</span></div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="scanner-shell mb-3">
+                    <div id="driver-qr-reader" class="scanner-reader"></div>
+                    <div class="scanner-overlay">
+                        <div class="scanner-frame"></div>
+                    </div>
+                </div>
+                <div class="d-flex flex-wrap gap-2 mb-3">
+                    <button type="button" class="btn btn-outline-primary" id="scanner-torch-button" disabled>Toggle Torch</button>
+                    <button type="button" class="btn btn-outline-secondary d-none" id="scanner-retry-button">Try Again</button>
+                </div>
+                <div class="scanner-status alert alert-secondary small mb-0" id="scanner-status">
+                    Align the customer code inside the frame.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 {{ driver_map_payload|json_script:"driver-map-payload" }}
 {% endblock %}
 {% block extra_scripts %}
@@ -117,6 +283,7 @@
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
     crossorigin=""
 ></script>
+<script src="https://unpkg.com/html5-qrcode" crossorigin="anonymous"></script>
 <script src="{% static 'js/map-tools.js' %}"></script>
 <script>
     (function () {
@@ -351,6 +518,244 @@
         updateDriverChip();
         window.setTimeout(() => map.invalidateSize(), 0);
         window.setInterval(refreshGpsLocation, 10000);
+    })();
+
+    (function () {
+        const queueStorageKey = "aquaFlowPendingQrScans";
+        const batchSyncUrl = "{% url 'accounts:confirm_delivery_qr_batch' %}";
+        const scannerModalElement = document.getElementById("driverQrScannerModal");
+        const scannerOrderNumber = document.getElementById("scanner-order-number");
+        const scannerStatus = document.getElementById("scanner-status");
+        const scannerTorchButton = document.getElementById("scanner-torch-button");
+        const scannerRetryButton = document.getElementById("scanner-retry-button");
+        const queueStatus = document.getElementById("driver-queue-status");
+        const openButtons = document.querySelectorAll(".open-qr-scanner");
+        const scannerModal = new bootstrap.Modal(scannerModalElement);
+        const csrfToken = document.querySelector("input[name='csrfmiddlewaretoken']")?.value || "";
+
+        let html5QrCode = null;
+        let scannerRunning = false;
+        let scannerConfirmUrl = "";
+        let activeOrderNumber = "";
+        let torchEnabled = false;
+
+        function setScannerMessage(message, type) {
+            scannerStatus.className = `scanner-status alert alert-${type || "secondary"} small mb-0`;
+            scannerStatus.textContent = message;
+        }
+
+        function getQueuedScans() {
+            try {
+                return JSON.parse(localStorage.getItem(queueStorageKey) || "[]");
+            } catch (error) {
+                return [];
+            }
+        }
+
+        function setQueuedScans(items) {
+            localStorage.setItem(queueStorageKey, JSON.stringify(items));
+        }
+
+        function renderQueueStatus(message, visible, type) {
+            queueStatus.className = `alert alert-${type || "warning"} small mt-3 mb-0${visible ? "" : " d-none"}`;
+            queueStatus.textContent = message || "";
+        }
+
+        async function stopScanner() {
+            scannerRetryButton.classList.add("d-none");
+            scannerTorchButton.disabled = true;
+            torchEnabled = false;
+            if (html5QrCode && scannerRunning) {
+                try {
+                    await html5QrCode.stop();
+                } catch (error) {
+                    // Ignore stop errors when the camera session is already closed.
+                }
+            }
+            if (html5QrCode) {
+                try {
+                    await html5QrCode.clear();
+                } catch (error) {
+                    // Ignore clear errors if the DOM was already reset.
+                }
+            }
+            html5QrCode = null;
+            scannerRunning = false;
+        }
+
+        function supportsTorch() {
+            try {
+                const capabilities = html5QrCode && html5QrCode.getRunningTrackCapabilities
+                    ? html5QrCode.getRunningTrackCapabilities()
+                    : null;
+                return Boolean(capabilities && capabilities.torch);
+            } catch (error) {
+                return false;
+            }
+        }
+
+        async function toggleTorch() {
+            if (!html5QrCode || !scannerRunning || !supportsTorch()) {
+                return;
+            }
+            torchEnabled = !torchEnabled;
+            try {
+                await html5QrCode.applyVideoConstraints({
+                    advanced: [{ torch: torchEnabled }],
+                });
+                scannerTorchButton.textContent = torchEnabled ? "Torch On" : "Toggle Torch";
+            } catch (error) {
+                torchEnabled = false;
+                scannerTorchButton.textContent = "Toggle Torch";
+                setScannerMessage("Torch control is not available on this device.", "warning");
+            }
+        }
+
+        function queueOfflineScan(orderNumber, rawPayload) {
+            const queuedScans = getQueuedScans();
+            queuedScans.push({
+                order_id: orderNumber,
+                qr_payload: rawPayload,
+                scanned_at_local: new Date().toISOString(),
+            });
+            setQueuedScans(queuedScans);
+            renderQueueStatus("Scan saved - will confirm when connection restores.", true, "warning");
+        }
+
+        async function syncQueuedScans() {
+            const queuedScans = getQueuedScans();
+            if (!queuedScans.length || !navigator.onLine) {
+                if (!queuedScans.length) {
+                    renderQueueStatus("", false);
+                }
+                return;
+            }
+
+            try {
+                const response = await fetch(batchSyncUrl, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRFToken": csrfToken,
+                    },
+                    body: JSON.stringify({ scans: queuedScans }),
+                });
+                if (!response.ok) {
+                    throw new Error("Unable to sync queued scans.");
+                }
+                const payload = await response.json();
+                const results = payload.results || [];
+                const retryableOrderIds = new Set(
+                    results
+                        .filter((item) => item.status !== "confirmed" && item.error === "INVALID_STATE")
+                        .map((item) => item.order_id)
+                );
+                const remaining = queuedScans.filter((item) => retryableOrderIds.has(item.order_id));
+                setQueuedScans(remaining);
+                if (remaining.length) {
+                    renderQueueStatus("Some saved scans still need attention. They will retry when the delivery is ready.", true, "warning");
+                } else {
+                    renderQueueStatus("Queued scans synced successfully.", true, "success");
+                    window.setTimeout(() => renderQueueStatus("", false), 3000);
+                    window.location.reload();
+                }
+            } catch (error) {
+                renderQueueStatus("Saved scans are waiting for a stable connection before syncing.", true, "warning");
+            }
+        }
+
+        async function submitScan(rawPayload) {
+            if (!navigator.onLine) {
+                queueOfflineScan(activeOrderNumber, rawPayload);
+                setScannerMessage("Scan saved - will confirm when connection restores.", "warning");
+                window.setTimeout(() => scannerModal.hide(), 1000);
+                return;
+            }
+
+            setScannerMessage("Verifying QR code...", "info");
+            try {
+                const response = await fetch(scannerConfirmUrl, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRFToken": csrfToken,
+                    },
+                    body: JSON.stringify({ qr_payload: rawPayload }),
+                });
+                const payload = await response.json();
+                if (!response.ok) {
+                    throw payload;
+                }
+                setScannerMessage("Delivery confirmed successfully.", "success");
+                window.setTimeout(() => window.location.reload(), 900);
+            } catch (error) {
+                const message = error && error.message
+                    ? error.message
+                    : "Unable to confirm the QR code right now.";
+                setScannerMessage(message, "danger");
+                scannerRetryButton.classList.remove("d-none");
+            }
+        }
+
+        async function startScanner() {
+            await stopScanner();
+            setScannerMessage("Opening camera...", "secondary");
+            scannerRetryButton.classList.add("d-none");
+
+            if (!window.Html5Qrcode) {
+                setScannerMessage("QR scanner library could not load. Use the OTP fallback below.", "danger");
+                return;
+            }
+
+            try {
+                const cameras = await Html5Qrcode.getCameras();
+                if (!cameras.length) {
+                    throw new Error("No camera was found on this device.");
+                }
+                const preferredCamera = cameras.find((camera) => /back|rear|environment/i.test(camera.label)) || cameras[0];
+                html5QrCode = new Html5Qrcode("driver-qr-reader");
+                await html5QrCode.start(
+                    preferredCamera.id,
+                    {
+                        fps: 10,
+                        qrbox: { width: 240, height: 240 },
+                        aspectRatio: 1.0,
+                    },
+                    async (decodedText) => {
+                        if (!scannerRunning) {
+                            return;
+                        }
+                        scannerRunning = false;
+                        await stopScanner();
+                        await submitScan(decodedText);
+                    },
+                    () => {}
+                );
+                scannerRunning = true;
+                scannerTorchButton.disabled = !supportsTorch();
+                scannerTorchButton.textContent = "Toggle Torch";
+                setScannerMessage("Align the customer QR code inside the frame.", "secondary");
+            } catch (error) {
+                setScannerMessage(error.message || "Unable to start the camera scanner.", "danger");
+                scannerRetryButton.classList.remove("d-none");
+            }
+        }
+
+        openButtons.forEach((button) => {
+            button.addEventListener("click", () => {
+                activeOrderNumber = button.dataset.orderNumber;
+                scannerConfirmUrl = button.dataset.confirmUrl;
+                scannerOrderNumber.textContent = activeOrderNumber;
+                scannerModal.show();
+                startScanner();
+            });
+        });
+
+        scannerTorchButton.addEventListener("click", toggleTorch);
+        scannerRetryButton.addEventListener("click", startScanner);
+        scannerModalElement.addEventListener("hidden.bs.modal", stopScanner);
+        window.addEventListener("online", syncQueuedScans);
+        syncQueuedScans();
     })();
 </script>
 {% endblock %}

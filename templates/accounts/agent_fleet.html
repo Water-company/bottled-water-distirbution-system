@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Live Fleet{% endblock %}
+{% block extra_head %}
+<link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+>
+{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Fleet Monitoring</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">{{ agent.name }}</h1>
+    <p class="text-secondary mb-3">Track drivers, active customer drop points, and live handoffs across the branch in real time.</p>
+    <div class="d-flex flex-wrap gap-2">
+        <a href="{% url 'accounts:agent_dashboard' %}" class="btn btn-outline-dark">Back to Dashboard</a>
+        <a href="{% url 'accounts:agent_drivers' %}" class="btn btn-outline-primary">Driver Profiles</a>
+    </div>
+</section>
+
+<section class="row g-4 mb-4">
+    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Drivers</div><div class="display-6 fw-semibold">{{ fleet_summary.driverCount }}</div></div></div>
+    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Online Drivers</div><div class="display-6 fw-semibold">{{ fleet_summary.onlineDrivers }}</div></div></div>
+    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Active Deliveries</div><div class="display-6 fw-semibold">{{ fleet_summary.activeDeliveries }}</div></div></div>
+</section>
+
+<section class="content-card p-4 mb-4">
+    <div class="d-flex flex-wrap justify-content-between gap-2 mb-3">
+        <div>
+            <h2 class="h4 mb-1">Fleet Map</h2>
+            <p class="small text-secondary mb-0">A = agent base, D = drivers, C = active customer destinations. Driver coordinates refresh every 10 seconds.</p>
+        </div>
+        <span class="map-summary-chip" id="agent-fleet-chip">{{ fleet_summary.onlineDrivers }} online | {{ fleet_summary.activeDeliveries }} active deliveries</span>
+    </div>
+    <div id="agent-fleet-map" class="map-canvas mb-3"></div>
+    <div class="d-flex flex-wrap gap-2 mb-2">
+        <span class="map-summary-chip">Offline drivers remain visible at their last known point</span>
+        <span class="map-summary-chip">Customer markers appear only for active deliveries</span>
+    </div>
+    <div class="map-status-line" id="agent-fleet-status">Refreshing fleet markers every 10 seconds.</div>
+</section>
+
+<section class="content-card p-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="h4 mb-0">Driver Overview</h2>
+        <a href="{% url 'accounts:agent_drivers' %}" class="btn btn-sm btn-outline-primary">Manage Drivers</a>
+    </div>
+    {% if fleet_drivers %}
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th>Driver</th>
+                        <th>Status</th>
+                        <th>Active</th>
+                        <th>Completed</th>
+                        <th>Rating</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for driver in fleet_drivers %}
+                        <tr>
+                            <td><a href="{% url 'accounts:agent_driver_detail' driver.pk %}">{{ driver.user.full_name }}</a></td>
+                            <td>{% if driver.is_online %}Online{% else %}Offline{% endif %}</td>
+                            <td>{{ driver.active_deliveries }}</td>
+                            <td>{{ driver.completed_deliveries }}</td>
+                            <td>{% if driver.average_rating %}{{ driver.average_rating|floatformat:1 }}/5{% else %}-{% endif %}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="text-secondary mb-0">No drivers are assigned to this branch yet.</p>
+    {% endif %}
+</section>
+
+{{ fleet_payload|json_script:"agent-fleet-payload" }}
+{% endblock %}
+{% block extra_scripts %}
+<script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+></script>
+<script src="{% static 'js/map-tools.js' %}"></script>
+<script>
+    (function () {
+        const maps = window.AquaFlowMaps;
+        const fleetUrl = "{{ fleet_json_url }}";
+        const initialPayload = JSON.parse(document.getElementById("agent-fleet-payload").textContent);
+        const mapStatus = document.getElementById("agent-fleet-status");
+        const mapChip = document.getElementById("agent-fleet-chip");
+
+        function hasCoords(item) {
+            return item && Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude));
+        }
+
+        function getInitialCenter(payload) {
+            if (hasCoords(payload.agent)) {
+                return [Number(payload.agent.latitude), Number(payload.agent.longitude)];
+            }
+            const firstDriver = (payload.drivers || []).find((driver) => hasCoords(driver));
+            if (firstDriver) {
+                return [Number(firstDriver.latitude), Number(firstDriver.longitude)];
+            }
+            const firstOrder = (payload.orders || []).find((order) => hasCoords(order));
+            if (firstOrder) {
+                return [Number(firstOrder.latitude), Number(firstOrder.longitude)];
+            }
+            return maps.defaultCenter;
+        }
+
+        const map = maps.createMap("agent-fleet-map", {
+            center: getInitialCenter(initialPayload),
+            zoom: 13,
+        });
+        const agentLayer = L.layerGroup().addTo(map);
+        const driverLayer = L.layerGroup().addTo(map);
+        const customerLayer = L.layerGroup().addTo(map);
+        const routeLayer = L.layerGroup().addTo(map);
+        let hasFitInitialBounds = false;
+
+        function renderPayload(payload) {
+            const points = [];
+            agentLayer.clearLayers();
+            driverLayer.clearLayers();
+            customerLayer.clearLayers();
+            routeLayer.clearLayers();
+
+            if (hasCoords(payload.agent)) {
+                const point = [Number(payload.agent.latitude), Number(payload.agent.longitude)];
+                points.push(point);
+                L.marker(point, {
+                    icon: maps.icons.agent,
+                }).addTo(agentLayer).bindPopup(`
+                    <strong>${maps.escapeHtml(payload.agent.name)}</strong><br>
+                    ${maps.escapeHtml(payload.agent.locationName || "")}<br>
+                    ${maps.escapeHtml(payload.agent.address || "")}
+                `);
+            }
+
+            const driverLookup = new Map();
+            (payload.drivers || []).forEach((driver) => {
+                driverLookup.set(driver.id, driver);
+                if (!hasCoords(driver)) {
+                    return;
+                }
+                const point = [Number(driver.latitude), Number(driver.longitude)];
+                points.push(point);
+                L.marker(point, {
+                    icon: maps.icons.driver,
+                }).addTo(driverLayer).bindPopup(`
+                    <strong>${maps.escapeHtml(driver.name)}</strong><br>
+                    ${maps.escapeHtml(driver.vehicleIdentifier || "Vehicle pending")}<br>
+                    ${driver.online ? "Online" : "Offline"}<br>
+                    ${driver.currentOrder ? maps.escapeHtml(`${driver.currentOrder.orderNumber} | ${driver.currentOrder.status}`) : "No active order"}
+                `);
+            });
+
+            (payload.orders || []).forEach((order) => {
+                if (!hasCoords(order)) {
+                    return;
+                }
+                const customerPoint = [Number(order.latitude), Number(order.longitude)];
+                points.push(customerPoint);
+                L.marker(customerPoint, {
+                    icon: maps.icons.customer,
+                }).addTo(customerLayer).bindPopup(`
+                    <strong>${maps.escapeHtml(order.orderNumber)}</strong><br>
+                    ${maps.escapeHtml(order.customerName)}<br>
+                    ${maps.escapeHtml(order.deliveryAddress)}<br>
+                    ${maps.escapeHtml(order.status)}
+                `);
+
+                const driver = driverLookup.get(order.driverId);
+                if (driver && hasCoords(driver)) {
+                    L.polyline(
+                        [
+                            [Number(driver.latitude), Number(driver.longitude)],
+                            customerPoint,
+                        ],
+                        {
+                            color: "#1d4ed8",
+                            weight: 3,
+                            opacity: 0.7,
+                        }
+                    ).addTo(routeLayer);
+                }
+            });
+
+            mapChip.textContent = `${payload.summary.onlineDrivers} online | ${payload.summary.activeDeliveries} active deliveries`;
+            mapStatus.textContent = payload.summary.onlineDrivers
+                ? "Live fleet markers are online and refreshing every 10 seconds."
+                : "No drivers are currently online. Last known markers remain visible when coordinates exist.";
+
+            if (!hasFitInitialBounds) {
+                maps.fitMap(map, points, maps.defaultCenter, 13);
+                hasFitInitialBounds = true;
+            }
+        }
+
+        async function refreshFleet() {
+            try {
+                const response = await fetch(fleetUrl, {
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                });
+                if (!response.ok) {
+                    throw new Error("Unable to refresh fleet");
+                }
+                const payload = await response.json();
+                renderPayload(payload);
+            } catch (error) {
+                mapStatus.textContent = "Unable to refresh fleet locations right now. The last known markers remain visible.";
+            }
+        }
+
+        renderPayload(initialPayload);
+        window.setTimeout(() => map.invalidateSize(), 0);
+        window.setInterval(refreshFleet, 10000);
+    })();
+</script>
+{% endblock %}

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Platform Announcements{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">System Admin</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">Announcements</h1>
+    <p class="text-secondary mb-0">Send platform-wide messages by role and monitor how many recipients received or failed delivery.</p>
+</section>
+
+<section class="row g-4">
+    <div class="col-xl-4">
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Create Announcement</h2>
+            <form method="post" action="{% url 'accounts:system_announcement_create' %}">
+                {% csrf_token %}
+                {% for field in announcement_form %}
+                    <div class="mb-3">
+                        <label class="form-label">{{ field.label }}</label>
+                        {{ field }}
+                    </div>
+                {% endfor %}
+                <button class="btn btn-primary w-100">Send Announcement</button>
+            </form>
+        </div>
+    </div>
+    <div class="col-xl-8">
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Delivery Tracking</h2>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Announcement</th><th>Target</th><th>Recipients</th><th>Sent</th><th>Failed</th><th>Created</th></tr></thead>
+                    <tbody>
+                        {% for announcement in announcements %}
+                            <tr>
+                                <td>
+                                    <div class="fw-semibold">{{ announcement.title }}</div>
+                                    <div class="small text-secondary">{{ announcement.message|truncatechars:90 }}</div>
+                                </td>
+                                <td>{{ announcement.get_target_role_display }}</td>
+                                <td>{{ announcement.recipient_count }}</td>
+                                <td>{{ announcement.sent_count }}</td>
+                                <td>{% if announcement.failed_count %}<span class="text-danger">{{ announcement.failed_count }}</span>{% else %}0{% endif %}</td>
+                                <td>{{ announcement.created_at|date:"Y-m-d H:i" }}</td>
+                            </tr>
+                        {% empty %}
+                            <tr><td colspan="6" class="text-center text-secondary py-4">No announcements sent yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

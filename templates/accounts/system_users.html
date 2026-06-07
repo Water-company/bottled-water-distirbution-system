@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}System Users{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">System Admin</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">User Management</h1>
+    <p class="text-secondary mb-0">Filter by role, company, and status, then activate, deactivate, reassign roles, or trigger password reset emails.</p>
+</section>
+
+<section class="content-card p-4 mb-4">
+    <form method="get" class="row g-3">
+        <div class="col-md-3"><input type="text" name="search" class="form-control" placeholder="Search name, email, phone" value="{{ search }}"></div>
+        <div class="col-md-2">
+            <select name="role" class="form-select">
+                <option value="">All roles</option>
+                <option value="customer" {% if role_filter == "customer" %}selected{% endif %}>Customer</option>
+                <option value="agent_manager" {% if role_filter == "agent_manager" %}selected{% endif %}>Agent Manager</option>
+                <option value="driver" {% if role_filter == "driver" %}selected{% endif %}>Driver</option>
+                <option value="company_admin" {% if role_filter == "company_admin" %}selected{% endif %}>Company Admin</option>
+                <option value="system_admin" {% if role_filter == "system_admin" %}selected{% endif %}>System Admin</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <select name="status" class="form-select">
+                <option value="">All statuses</option>
+                <option value="active" {% if status_filter == "active" %}selected{% endif %}>Active</option>
+                <option value="inactive" {% if status_filter == "inactive" %}selected{% endif %}>Inactive</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <select name="company" class="form-select">
+                <option value="">All companies</option>
+                {% for company in companies %}
+                    <option value="{{ company.pk }}" {% if company_filter == company.pk|stringformat:"s" %}selected{% endif %}>{{ company.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2 d-flex gap-2">
+            <button class="btn btn-primary">Filter</button>
+            <a class="btn btn-outline-primary" href="{% url 'accounts:system_users' %}">Reset</a>
+        </div>
+    </form>
+</section>
+
+<section class="content-card p-4">
+    <form method="post" action="{% url 'accounts:system_users_bulk_action' %}">
+        {% csrf_token %}
+        <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
+            <h2 class="h4 mb-0">Platform Users</h2>
+            <div class="d-flex gap-2">
+                <button class="btn btn-outline-success btn-sm" name="action" value="activate">Bulk Activate</button>
+                <button class="btn btn-outline-danger btn-sm" name="action" value="deactivate">Bulk Deactivate</button>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead><tr><th></th><th>Name</th><th>Role</th><th>Company</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
+                <tbody>
+                    {% for user in users %}
+                        <tr>
+                            <td><input type="checkbox" class="form-check-input" name="user_ids" value="{{ user.pk }}"></td>
+                            <td>
+                                <div class="fw-semibold">{{ user.full_name|default:user.email }}</div>
+                                <div class="small text-secondary">{{ user.email }} | {{ user.phone_number }}</div>
+                            </td>
+                            <td>{{ user.get_role_display }}</td>
+                            <td>{{ user.company_label }}</td>
+                            <td>
+                                {% if user.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}
+                                {% if user.is_locked %}
+                                    <div class="small text-danger mt-1">Locked until {{ user.locked_until|date:"M d, Y H:i" }}</div>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                <a class="btn btn-sm btn-outline-primary" href="{% url 'accounts:system_user_edit' user.pk %}">Manage</a>
+                            </td>
+                        </tr>
+                    {% empty %}
+                        <tr><td colspan="6" class="text-center text-secondary py-4">No users match the current filters.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </form>
+</section>
+{% endblock %}

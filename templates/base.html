@@ -29,12 +29,29 @@
                             <li class="nav-item"><a class="nav-link" href="{% url 'accounts:dashboard' %}">Dashboard</a></li>
                         {% elif request.user.role == "agent_manager" %}
                             <li class="nav-item"><a class="nav-link" href="{% url 'accounts:agent_dashboard' %}">Agent Dashboard</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:agent_orders' %}">Orders</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:agent_drivers' %}">Drivers</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:agent_fleet' %}">Fleet</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:agent_feedback' %}">Feedback</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:agent_inventory' %}">Inventory</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:agent_refunds' %}">Refunds</a></li>
                         {% elif request.user.role == "driver" %}
                             <li class="nav-item"><a class="nav-link" href="{% url 'accounts:driver_dashboard' %}">Driver Dashboard</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:driver_history' %}">History</a></li>
                         {% elif request.user.role == "company_admin" %}
                             <li class="nav-item"><a class="nav-link" href="{% url 'accounts:company_dashboard' %}">Company Dashboard</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:company_products' %}">Products</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:company_agents' %}">Agents</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:company_inventory' %}">Inventory</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:company_reports' %}">Reports</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:company_ai_insights' %}">AI Insights</a></li>
                         {% elif request.user.role == "system_admin" %}
                             <li class="nav-item"><a class="nav-link" href="{% url 'accounts:system_dashboard' %}">System Dashboard</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:system_companies' %}">Companies</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:system_users' %}">Users</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:system_audit_logs' %}">Audit Logs</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:system_reports' %}">Reports</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'accounts:system_announcements' %}">Announcements</a></li>
                         {% endif %}
                     {% endif %}
                 </ul>
@@ -43,6 +60,7 @@
                         {% if request.user.role == "customer" %}
                             <a class="btn btn-sm btn-outline-light" href="{% url 'cart:detail' %}">Cart ({{ cart_item_count }})</a>
                         {% endif %}
+                        <a class="nav-link text-white" href="{% url 'accounts:notifications' %}">Notifications</a>
                         <a class="nav-link text-white" href="{% url 'accounts:profile' %}">{{ request.user.first_name|default:request.user.email }}</a>
                         <form method="post" action="{% url 'accounts:logout' %}">
                             {% csrf_token %}

@@ -1,6 +1,7 @@
 import uuid
 import json
 from decimal import Decimal
+from datetime import timezone as dt_timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -14,10 +15,14 @@ from django.utils import timezone
 
 from core.services import notify_user
 from core.policies import get_cart_pricing_summary, quantize_money
-from cart.services import get_or_create_cart
-from catalog.models import Agent, AgentStock, InventoryBatch
+from cart.services import add_product_to_cart, get_or_create_cart
+from catalog.models import Agent, AgentStock, InventoryBatch, InventoryTransactionType
+from catalog.services import create_inventory_transaction
 from orders.models import (
     AgentRequestStatus,
+    DeliveryFeedback,
+    DeliveryIssue,
+    DeliveryIssueType,
     DeliveryConfirmation,
     Order,
     OrderAgentRequest,
@@ -27,15 +32,63 @@ from orders.models import (
     PaymentProvider,
     PaymentStatus,
     RefundRequest,
+    RefundEvidence,
+    RefundPayoutMethod,
     RefundRequestStatus,
     RefundRequestType,
     OrderStatusHistory,
 )
+from orders.qr_tokens import QRTokenError, build_customer_token_id, decode_signed_qr_token
+
+
+ACTIVE_DELIVERY_STATUSES = {
+    OrderStatus.PAID,
+    OrderStatus.DRIVER_ASSIGNED,
+    OrderStatus.DRIVER_ACCEPTED,
+    OrderStatus.PICKED_UP,
+    OrderStatus.OUT_FOR_DELIVERY,
+    OrderStatus.ARRIVED,
+}
+
+RESERVED_STOCK_ORDER_STATUSES = ACTIVE_DELIVERY_STATUSES | {OrderStatus.PAYMENT_PENDING}
+QR_CONFIRMABLE_STATUSES = {OrderStatus.ARRIVED}
+
+
+class QRConfirmationError(Exception):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
 
 def get_cart_company(cart):
     first_item = cart.items.select_related("product__company").first()
     return first_item.product.company if first_item else None
+
+
+@transaction.atomic
+def reorder_order_to_cart(user, order):
+    if order.customer_id != user.id:
+        raise ValidationError("You can only reorder your own deliveries.")
+    if order.status != OrderStatus.DELIVERED:
+        raise ValidationError("Only delivered orders can be reordered.")
+    if not order.items.exists():
+        raise ValidationError("This order does not have any items to reorder.")
+
+    cart = get_or_create_cart(user)
+    cart.items.all().delete()
+    unavailable_products = []
+    for item in order.items.select_related("product"):
+        if not item.product.is_active:
+            unavailable_products.append(item.product_name)
+            continue
+        add_product_to_cart(user, item.product, item.quantity)
+
+    if unavailable_products:
+        raise ValidationError(
+            f"Some products are no longer available for reorder: {', '.join(unavailable_products)}."
+        )
+    return cart
 
 
 def get_eligible_agents(company, items, latitude, longitude):
@@ -48,6 +101,8 @@ def get_eligible_agents(company, items, latitude, longitude):
 
 def get_agent_delivery_options(company, items, latitude, longitude):
     options = []
+    if not company.is_live:
+        return options
     agents = (
         Agent.objects.filter(company=company, is_active=True, is_accepting_orders=True)
         .prefetch_related("stocks__product")
@@ -198,6 +253,8 @@ def create_order_request_from_cart(user, cleaned_data):
     company = get_cart_company(cart)
     if not company:
         raise ValidationError("Your cart is missing company information.")
+    if not company.is_live:
+        raise ValidationError("This company is not currently accepting new customer orders.")
 
     if any(item.product.company_id != company.id for item in items):
         raise ValidationError("All cart items must belong to the same company.")
@@ -365,6 +422,14 @@ def reject_agent_request(agent_request, note=""):
 
 
 @transaction.atomic
+def refresh_delivery_confirmation(order, force=False):
+    confirmation, _ = DeliveryConfirmation.objects.get_or_create(order=order)
+    if force or confirmation.is_expired or not confirmation.qr_code_image or not confirmation.qr_token:
+        confirmation.refresh_qr_assets()
+    return confirmation
+
+
+@transaction.atomic
 def mark_order_paid(order, reference=None, payload=None):
     if order.status == OrderStatus.PAID:
         payment = getattr(order, "payment", None)
@@ -376,7 +441,7 @@ def mark_order_paid(order, reference=None, payload=None):
                 minutes=settings.ORDER_CANCELLATION_WINDOW_MINUTES
             )
             order.save(update_fields=["cancellation_deadline", "updated_at"])
-        confirmation, _ = DeliveryConfirmation.objects.get_or_create(order=order)
+        confirmation = refresh_delivery_confirmation(order)
         return confirmation
 
     if order.status != OrderStatus.PAYMENT_PENDING:
@@ -408,7 +473,7 @@ def mark_order_paid(order, reference=None, payload=None):
         f"Payment confirmed. Cancellation remains available until {timezone.localtime(order.cancellation_deadline).strftime('%Y-%m-%d %H:%M')}.",
     )
 
-    confirmation, _ = DeliveryConfirmation.objects.get_or_create(order=order)
+    confirmation = refresh_delivery_confirmation(order, force=True)
     send_delivery_confirmation_email(order, confirmation)
     if order.selected_agent and order.selected_agent.admin:
         notify_user(
@@ -417,6 +482,11 @@ def mark_order_paid(order, reference=None, payload=None):
             f"{order.order_number} has been paid and is ready for driver assignment.",
             link=reverse("accounts:agent_dashboard"),
         )
+    send_order_status_email(
+        order,
+        "Payment confirmed",
+        "Your order has been confirmed and a delivery QR code is now ready on your order page.",
+    )
     return confirmation
 
 
@@ -549,10 +619,30 @@ def chapa_request(method, path, payload=None):
 def assign_driver(order, driver):
     if order.selected_agent_id != driver.agent_id:
         raise ValidationError("The selected driver must belong to the assigned agent.")
+    if not driver.can_receive_assignments:
+        raise ValidationError("Only available active drivers can be assigned to deliveries.")
+    if order.status not in ACTIVE_DELIVERY_STATUSES | {OrderStatus.PAID}:
+        raise ValidationError("A driver can only be assigned after payment and before delivery completion.")
+
+    previous_driver_user = order.assigned_driver.user if order.assigned_driver and order.assigned_driver.user_id != driver.user_id else None
+    now = timezone.now()
     order.assigned_driver = driver
     order.status = OrderStatus.DRIVER_ASSIGNED
-    order.driver_assigned_at = timezone.now()
+    order.driver_assigned_at = order.driver_assigned_at or now
+    order.driver_accepted_at = None
+    order.picked_up_at = None
+    order.out_for_delivery_at = None
+    order.arrived_at = None
+    order.failed_at = None
     order.save()
+
+    if previous_driver_user:
+        notify_user(
+            previous_driver_user,
+            "Delivery reassigned",
+            f"Order {order.order_number} has been reassigned to another driver.",
+            link=reverse("accounts:driver_dashboard"),
+        )
     notify_user(
         driver.user,
         "Delivery assigned",
@@ -565,15 +655,108 @@ def assign_driver(order, driver):
         f"A driver has been assigned to order {order.order_number}.",
         link=reverse("orders:tracking", kwargs={"order_number": order.order_number}),
     )
+    send_order_status_email(
+        order,
+        "Driver assigned",
+        "A driver has been assigned and your order is moving into fulfillment.",
+    )
+    return order
+
+
+def _ensure_assigned_driver(order, driver_user):
+    if not order.assigned_driver or order.assigned_driver.user_id != driver_user.id:
+        raise ValidationError("You are not assigned to this delivery.")
+
+
+@transaction.atomic
+def accept_delivery_assignment(order, driver_user):
+    _ensure_assigned_driver(order, driver_user)
+    if order.status not in {OrderStatus.DRIVER_ASSIGNED, OrderStatus.DRIVER_ACCEPTED}:
+        raise ValidationError("This delivery cannot be accepted in its current state.")
+    if order.status == OrderStatus.DRIVER_ACCEPTED:
+        return order
+
+    if order.assigned_driver:
+        order.assigned_driver.availability_status = order.assigned_driver.AvailabilityStatus.ON_DELIVERY
+        order.assigned_driver.save(update_fields=["availability_status", "updated_at"])
+    order.status = OrderStatus.DRIVER_ACCEPTED
+    order.driver_accepted_at = timezone.now()
+    order.save()
+    notify_user(
+        order.customer,
+        "Driver accepted delivery",
+        f"The assigned driver accepted {order.order_number} and is preparing for dispatch.",
+        link=reverse("orders:tracking", kwargs={"order_number": order.order_number}),
+    )
+    send_order_status_email(
+        order,
+        "Driver accepted delivery",
+        "Your assigned driver has accepted the delivery and is preparing the handoff.",
+    )
+    return order
+
+
+@transaction.atomic
+def mark_order_picked_up(order, driver_user):
+    _ensure_assigned_driver(order, driver_user)
+    if order.status not in {OrderStatus.DRIVER_ASSIGNED, OrderStatus.DRIVER_ACCEPTED, OrderStatus.PICKED_UP}:
+        raise ValidationError("This delivery cannot be marked as picked up right now.")
+    if order.status == OrderStatus.PICKED_UP:
+        return order
+
+    now = timezone.now()
+    if order.assigned_driver:
+        order.assigned_driver.availability_status = order.assigned_driver.AvailabilityStatus.ON_DELIVERY
+        order.assigned_driver.save(update_fields=["availability_status", "updated_at"])
+    if not order.driver_accepted_at:
+        order.driver_accepted_at = now
+    order.status = OrderStatus.PICKED_UP
+    order.picked_up_at = now
+    order.save()
+    notify_user(
+        order.customer,
+        "Order picked up",
+        f"Your order {order.order_number} has been picked up from the warehouse.",
+        link=reverse("orders:tracking", kwargs={"order_number": order.order_number}),
+    )
+    if order.selected_agent and order.selected_agent.admin:
+        notify_user(
+            order.selected_agent.admin,
+            "Order picked up",
+            f"{order.order_number} was collected from the warehouse by {driver_user.full_name}.",
+            link=reverse("accounts:agent_dashboard"),
+        )
+    send_order_status_email(
+        order,
+        "Order picked up",
+        "The assigned driver has collected your order and is almost ready to start the route.",
+    )
     return order
 
 
 @transaction.atomic
 def start_delivery(order, driver_user):
-    if not order.assigned_driver or order.assigned_driver.user_id != driver_user.id:
-        raise ValidationError("You are not assigned to this delivery.")
+    _ensure_assigned_driver(order, driver_user)
+    if order.status not in {
+        OrderStatus.DRIVER_ASSIGNED,
+        OrderStatus.DRIVER_ACCEPTED,
+        OrderStatus.PICKED_UP,
+        OrderStatus.OUT_FOR_DELIVERY,
+    }:
+        raise ValidationError("This delivery cannot be started in its current state.")
+    if order.status == OrderStatus.OUT_FOR_DELIVERY:
+        return order
+
+    now = timezone.now()
+    if order.assigned_driver:
+        order.assigned_driver.availability_status = order.assigned_driver.AvailabilityStatus.ON_DELIVERY
+        order.assigned_driver.save(update_fields=["availability_status", "updated_at"])
+    if not order.driver_accepted_at:
+        order.driver_accepted_at = now
+    if not order.picked_up_at:
+        order.picked_up_at = now
     order.status = OrderStatus.OUT_FOR_DELIVERY
-    order.out_for_delivery_at = timezone.now()
+    order.out_for_delivery_at = now
     order.save()
     notify_user(
         order.customer,
@@ -581,41 +764,193 @@ def start_delivery(order, driver_user):
         f"Your order {order.order_number} is now on the way.",
         link=reverse("orders:tracking", kwargs={"order_number": order.order_number}),
     )
+    send_order_status_email(
+        order,
+        "Delivery started",
+        "Your driver is on the way and live tracking is now active on the order page.",
+    )
     return order
 
 
 @transaction.atomic
-def complete_delivery_and_deduct_stock(order, otp_code, qr_token, verified_by_user):
-    confirmation = order.confirmation
-    if not confirmation:
-        raise ValidationError("This order does not have a delivery confirmation record.")
-    submitted_otp = (otp_code or "").strip()
-    submitted_qr_token = (qr_token or "").strip()
-    if "|" in submitted_qr_token:
-        payload_parts = [part.strip() for part in submitted_qr_token.split("|")]
-        if len(payload_parts) >= 3:
-            payload_order_number, payload_qr_token, payload_otp = payload_parts[:3]
-            if payload_order_number and payload_order_number != order.order_number:
-                raise ValidationError("This QR code belongs to a different order.")
-            submitted_qr_token = payload_qr_token
-            if not submitted_otp:
-                submitted_otp = payload_otp
-    if not submitted_otp and not submitted_qr_token:
-        raise ValidationError("Enter either the OTP code or the QR code/token to complete delivery.")
+def mark_order_arrived(order, driver_user):
+    _ensure_assigned_driver(order, driver_user)
+    if order.status not in {OrderStatus.OUT_FOR_DELIVERY, OrderStatus.ARRIVED}:
+        raise ValidationError("This delivery cannot be marked as arrived right now.")
+    if order.status == OrderStatus.ARRIVED:
+        return order
 
-    otp_matches = bool(submitted_otp) and confirmation.otp_code == submitted_otp
-    qr_matches = bool(submitted_qr_token) and confirmation.qr_token == submitted_qr_token
-    if not (otp_matches or qr_matches):
-        raise ValidationError("The OTP code or QR token does not match this order.")
+    if order.assigned_driver:
+        order.assigned_driver.availability_status = order.assigned_driver.AvailabilityStatus.ON_DELIVERY
+        order.assigned_driver.save(update_fields=["availability_status", "updated_at"])
+    order.status = OrderStatus.ARRIVED
+    order.arrived_at = timezone.now()
+    order.save()
+    notify_user(
+        order.customer,
+        "Driver arrived",
+        f"Your driver has arrived for order {order.order_number}. Please open your QR code.",
+        link=reverse("orders:tracking", kwargs={"order_number": order.order_number}),
+    )
+    send_order_status_email(
+        order,
+        "Driver arrived",
+        "Your driver has arrived. Please open the QR code on your order page for confirmation.",
+    )
+    return order
 
+
+@transaction.atomic
+def report_delivery_issue(order, driver_user, issue_type, description=""):
+    _ensure_assigned_driver(order, driver_user)
+    if order.status in {OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.FAILED}:
+        raise ValidationError("This delivery can no longer be flagged with a new issue.")
+
+    issue = DeliveryIssue.objects.create(
+        order=order,
+        reported_by=driver_user,
+        issue_type=issue_type,
+        description=description,
+    )
+    order.status = OrderStatus.FAILED
+    order.failed_at = timezone.now()
+    order.save()
+    if order.assigned_driver:
+        order.assigned_driver.availability_status = order.assigned_driver.AvailabilityStatus.AVAILABLE
+        order.assigned_driver.save(update_fields=["availability_status", "updated_at"])
+
+    if order.selected_agent and order.selected_agent.admin:
+        notify_user(
+            order.selected_agent.admin,
+            "Delivery issue reported",
+            f"{driver_user.full_name} reported {issue.get_issue_type_display().lower()} for {order.order_number}.",
+            link=reverse("accounts:agent_dashboard"),
+        )
+    notify_user(
+        order.customer,
+        "Delivery issue reported",
+        f"There is an issue with {order.order_number}. The agent manager has been notified.",
+        link=reverse("orders:detail", kwargs={"order_number": order.order_number}),
+    )
+    send_order_status_email(
+        order,
+        "Delivery issue reported",
+        f"We recorded a delivery issue for your order: {issue.get_issue_type_display()}. Our operations team will follow up.",
+    )
+    return issue
+
+
+@transaction.atomic
+def submit_delivery_feedback(order, customer_user, rating, comment="", photo=None):
+    if order.customer_id != customer_user.id:
+        raise ValidationError("You can only submit feedback for your own order.")
+    if order.status != OrderStatus.DELIVERED:
+        raise ValidationError("Feedback is only available after delivery is complete.")
+
+    feedback, _ = DeliveryFeedback.objects.get_or_create(
+        order=order,
+        defaults={
+            "customer": customer_user,
+            "driver": order.assigned_driver,
+        },
+    )
+    feedback.customer = customer_user
+    feedback.driver = order.assigned_driver
+    feedback.rating = rating
+    feedback.comment = comment
+    feedback.skipped_at = None
+    if photo is not None:
+        feedback.photo = photo
+    feedback.full_clean()
+    feedback.save()
+
+    if order.assigned_driver and order.assigned_driver.user_id:
+        notify_user(
+            order.assigned_driver.user,
+            "New delivery rating",
+            f"You received a {rating}-star rating for {order.order_number}.",
+            link=reverse("accounts:driver_dashboard"),
+        )
+    if order.selected_agent and order.selected_agent.admin:
+        notify_user(
+            order.selected_agent.admin,
+            "Customer feedback submitted",
+            f"{order.customer.full_name} left feedback for {order.order_number}.",
+            link=reverse("accounts:agent_dashboard"),
+        )
+    return feedback
+
+
+@transaction.atomic
+def skip_delivery_feedback(order, customer_user):
+    if order.customer_id != customer_user.id:
+        raise ValidationError("You can only skip feedback for your own order.")
+    if order.status != OrderStatus.DELIVERED:
+        raise ValidationError("Feedback is only available after delivery is complete.")
+
+    feedback, _ = DeliveryFeedback.objects.get_or_create(
+        order=order,
+        defaults={
+            "customer": customer_user,
+            "driver": order.assigned_driver,
+        },
+    )
+    feedback.customer = customer_user
+    feedback.driver = order.assigned_driver
+    feedback.rating = None
+    feedback.comment = ""
+    feedback.photo = None
+    feedback.skipped_at = timezone.now()
+    feedback.full_clean()
+    feedback.save()
+    return feedback
+
+
+def _parse_qr_payload(raw_qr_data):
+    try:
+        payload = json.loads((raw_qr_data or "").strip())
+    except json.JSONDecodeError as exc:
+        raise QRConfirmationError(
+            "INVALID_TOKEN",
+            "This QR code is not valid. Ask the customer to refresh their order page.",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise QRConfirmationError(
+            "INVALID_TOKEN",
+            "This QR code is not valid. Ask the customer to refresh their order page.",
+        )
+    required_fields = {"order_id", "customer_id", "token", "expires_at"}
+    if not required_fields.issubset(payload.keys()):
+        raise QRConfirmationError(
+            "INVALID_TOKEN",
+            "This QR code is not valid. Ask the customer to refresh their order page.",
+        )
+    return payload
+
+
+def _validate_confirmation_state(order, confirmation):
+    if order.status == OrderStatus.DELIVERED or confirmation.scanned_at:
+        raise QRConfirmationError("ALREADY_SCANNED", "This delivery has already been confirmed.")
+
+
+@transaction.atomic
+def _mark_order_delivered(order, confirmation, verified_by_user):
     deduct_inventory_fefo(order)
-    confirmation.verified_at = timezone.now()
+    now = timezone.now()
+    confirmation.scanned_at = now
+    confirmation.scanned_by = verified_by_user
+    confirmation.verified_at = now
     confirmation.verified_by = verified_by_user
-    confirmation.save(update_fields=["verified_at", "verified_by", "updated_at"])
+    confirmation.save(update_fields=["scanned_at", "scanned_by", "verified_at", "verified_by", "updated_at"])
 
     order.status = OrderStatus.DELIVERED
-    order.delivered_at = timezone.now()
+    order.delivered_at = now
+    if not order.arrived_at:
+        order.arrived_at = now
     order.save()
+    if order.assigned_driver:
+        order.assigned_driver.availability_status = order.assigned_driver.AvailabilityStatus.AVAILABLE
+        order.assigned_driver.save(update_fields=["availability_status", "updated_at"])
 
     notify_user(
         order.customer,
@@ -630,7 +965,127 @@ def complete_delivery_and_deduct_stock(order, otp_code, qr_token, verified_by_us
             f"{order.order_number} was delivered successfully.",
             link=reverse("accounts:agent_dashboard"),
         )
+    send_order_status_email(
+        order,
+        "Delivery complete",
+        "Your order was confirmed successfully and has been marked as delivered.",
+    )
     return order
+
+
+@transaction.atomic
+def confirm_delivery_by_qr_token(order, qr_token, driver_user, payload_metadata=None):
+    _ensure_assigned_driver(order, driver_user)
+    confirmation = getattr(order, "confirmation", None)
+    if not confirmation:
+        raise QRConfirmationError(
+            "INVALID_TOKEN",
+            "This QR code is not valid. Ask the customer to refresh their order page.",
+        )
+    if order.status not in QR_CONFIRMABLE_STATUSES:
+        raise ValidationError("The driver must mark the delivery as arrived before confirming the QR code.")
+    _validate_confirmation_state(order, confirmation)
+
+    token = (qr_token or "").strip()
+    if token != confirmation.qr_token:
+        raise QRConfirmationError(
+            "INVALID_TOKEN",
+            "This QR code is not valid. Ask the customer to refresh their order page.",
+        )
+
+    try:
+        decoded_token = decode_signed_qr_token(token)
+    except QRTokenError as exc:
+        raise QRConfirmationError(
+            "INVALID_TOKEN",
+            "This QR code is not valid. Ask the customer to refresh their order page.",
+        ) from exc
+
+    expected_customer_id = build_customer_token_id(order.customer_id)
+    if decoded_token.get("order_id") != order.order_number or decoded_token.get("customer_id") != expected_customer_id:
+        raise QRConfirmationError("ORDER_MISMATCH", "This QR code belongs to a different order.")
+
+    expires_at = confirmation.expires_at
+    if payload_metadata:
+        if payload_metadata.get("order_id") != order.order_number or payload_metadata.get("customer_id") != expected_customer_id:
+            raise QRConfirmationError("ORDER_MISMATCH", "This QR code belongs to a different order.")
+        try:
+            expires_at = timezone.datetime.fromisoformat(payload_metadata.get("expires_at", ""))
+        except ValueError as exc:
+            raise QRConfirmationError(
+                "INVALID_TOKEN",
+                "This QR code is not valid. Ask the customer to refresh their order page.",
+            ) from exc
+        if timezone.is_naive(expires_at):
+            expires_at = timezone.make_aware(expires_at, timezone.get_current_timezone())
+
+    token_expiry = timezone.datetime.fromtimestamp(int(decoded_token["exp"]), tz=dt_timezone.utc)
+    now = timezone.now()
+    if (expires_at and now >= expires_at) or now >= token_expiry or confirmation.is_expired:
+        raise QRConfirmationError("EXPIRED", "This QR code has expired. The customer needs to request a new one.")
+
+    return _mark_order_delivered(order, confirmation, driver_user)
+
+
+@transaction.atomic
+def confirm_delivery_by_qr(order, raw_qr_data, driver_user):
+    payload = _parse_qr_payload(raw_qr_data)
+    return confirm_delivery_by_qr_token(order, payload.get("token"), driver_user, payload_metadata=payload)
+
+
+def submit_queued_qr_scans(scan_items, driver_user):
+    results = []
+    for item in scan_items:
+        order_number = (item.get("order_id") or item.get("delivery_id") or "").strip()
+        raw_payload = item.get("qr_payload", "")
+        try:
+            order = Order.objects.select_related("confirmation", "assigned_driver__user", "selected_agent").get(
+                order_number=order_number
+            )
+            confirm_delivery_by_qr(order, raw_payload, driver_user)
+            results.append({"order_id": order_number, "status": "confirmed"})
+        except QRConfirmationError as exc:
+            results.append({"order_id": order_number, "status": "failed", "error": exc.code, "message": exc.message})
+        except (ValidationError, Order.DoesNotExist) as exc:
+            message = str(exc)
+            results.append({"order_id": order_number, "status": "failed", "error": "INVALID_STATE", "message": message})
+    return results
+
+
+@transaction.atomic
+def complete_delivery_and_deduct_stock(order, otp_code, qr_token, verified_by_user):
+    confirmation = order.confirmation
+    if not confirmation:
+        raise ValidationError("This order does not have a delivery confirmation record.")
+    submitted_otp = (otp_code or "").strip()
+    submitted_qr_token = (qr_token or "").strip()
+    if submitted_qr_token.startswith("{"):
+        return confirm_delivery_by_qr(order, submitted_qr_token, verified_by_user)
+    if "|" in submitted_qr_token:
+        payload_parts = [part.strip() for part in submitted_qr_token.split("|")]
+        if len(payload_parts) >= 3:
+            payload_order_number, payload_qr_token, payload_otp = payload_parts[:3]
+            if payload_order_number and payload_order_number != order.order_number:
+                raise ValidationError("This QR code belongs to a different order.")
+            submitted_qr_token = payload_qr_token
+            if not submitted_otp:
+                submitted_otp = payload_otp
+    if not submitted_otp and not submitted_qr_token:
+        raise ValidationError("Enter either the OTP code or the QR code/token to complete delivery.")
+
+    if submitted_qr_token:
+        try:
+            return confirm_delivery_by_qr_token(order, submitted_qr_token, verified_by_user)
+        except QRConfirmationError as exc:
+            raise ValidationError(exc.message) from exc
+
+    _ensure_assigned_driver(order, verified_by_user)
+    if order.status not in QR_CONFIRMABLE_STATUSES:
+        raise ValidationError("The driver must mark the delivery as arrived before completing handoff.")
+    _validate_confirmation_state(order, confirmation)
+    if confirmation.otp_code != submitted_otp:
+        raise ValidationError("The OTP code does not match this order.")
+    return _mark_order_delivered(order, confirmation, verified_by_user)
 
 
 @transaction.atomic
@@ -666,6 +1121,7 @@ def cancel_order(order, requested_by, reason=""):
                 "fee_amount": str(fee_amount),
                 "approved_amount": str(approved_amount),
                 "processed_at": timezone.now().isoformat(),
+                "payout_method": RefundPayoutMethod.GATEWAY,
             },
         }
         payment.save(update_fields=["status", "raw_payload", "updated_at"])
@@ -689,7 +1145,8 @@ def cancel_order(order, requested_by, reason=""):
         order=order,
         requested_by=requested_by,
         request_type=RefundRequestType.CANCELLATION,
-        status=RefundRequestStatus.APPROVED,
+        status=RefundRequestStatus.PROCESSED,
+        payout_method=RefundPayoutMethod.GATEWAY,
         reason=reason,
         requested_amount=payment.amount if payment else Decimal("0.00"),
         fee_percent=fee_percent,
@@ -698,6 +1155,7 @@ def cancel_order(order, requested_by, reason=""):
         reviewed_by=requested_by,
         reviewed_at=timezone.now(),
         processed_at=timezone.now(),
+        processed_by=requested_by,
         resolution_note=cancellation_note,
     )
 
@@ -719,14 +1177,13 @@ def cancel_order(order, requested_by, reason=""):
 
 
 @transaction.atomic
-def request_order_refund(order, requested_by, reason):
+def request_order_refund(order, requested_by, reason, payout_method=RefundPayoutMethod.GATEWAY, photos=None):
     if not order.can_request_refund:
         raise ValidationError("This order is not eligible for a service refund request anymore.")
     if order.refund_requests.filter(
         request_type=RefundRequestType.SERVICE_ISSUE,
-        status=RefundRequestStatus.PENDING,
     ).exists():
-        raise ValidationError("A service refund request is already pending review for this order.")
+        raise ValidationError("A service refund request already exists for this order.")
 
     payment = getattr(order, "payment", None)
     requested_amount = payment.amount if payment else order.total
@@ -734,10 +1191,24 @@ def request_order_refund(order, requested_by, reason):
         order=order,
         requested_by=requested_by,
         request_type=RefundRequestType.SERVICE_ISSUE,
+        payout_method=payout_method,
         reason=reason,
         requested_amount=requested_amount,
     )
-    if order.company.admin:
+    for photo in photos or []:
+        RefundEvidence.objects.create(refund_request=refund_request, image=photo)
+    if order.selected_agent and order.selected_agent.admin:
+        notify_user(
+            order.selected_agent.admin,
+            "New refund request",
+            f"{order.order_number} has a new service refund request waiting for review.",
+            link=reverse("accounts:agent_refunds"),
+        )
+    if order.company.admin and (
+        not order.selected_agent
+        or not order.selected_agent.admin_id
+        or order.company.admin_id != order.selected_agent.admin_id
+    ):
         notify_user(
             order.company.admin,
             "New refund request",
@@ -758,6 +1229,9 @@ def request_order_refund(order, requested_by, reason):
 def approve_refund_request(refund_request, reviewed_by, approved_amount=None, resolution_note=""):
     if refund_request.status != RefundRequestStatus.PENDING:
         raise ValidationError("This refund request has already been reviewed.")
+    resolution_note = (resolution_note or "").strip()
+    if not resolution_note:
+        raise ValidationError("A written reason is required when approving a refund.")
 
     payment = getattr(refund_request.order, "payment", None)
     if payment is None:
@@ -774,21 +1248,17 @@ def approve_refund_request(refund_request, reviewed_by, approved_amount=None, re
     refund_request.approved_amount = approved_amount
     refund_request.reviewed_by = reviewed_by
     refund_request.reviewed_at = timezone.now()
-    refund_request.processed_at = timezone.now()
     refund_request.resolution_note = resolution_note
-    refund_request.save()
-
-    payment.status = PaymentStatus.REFUNDED if approved_amount >= payment.amount else PaymentStatus.PARTIALLY_REFUNDED
-    payment.raw_payload = {
-        **(payment.raw_payload or {}),
-        "service_refund": {
-            "approved_amount": str(approved_amount),
-            "reviewed_by": reviewed_by.email,
-            "processed_at": refund_request.processed_at.isoformat(),
-            "note": resolution_note,
-        },
-    }
-    payment.save(update_fields=["status", "raw_payload", "updated_at"])
+    refund_request.failure_reason = ""
+    refund_request.save(update_fields=[
+        "status",
+        "approved_amount",
+        "reviewed_by",
+        "reviewed_at",
+        "resolution_note",
+        "failure_reason",
+        "updated_at",
+    ])
 
     OrderStatusHistory.objects.create(
         order=refund_request.order,
@@ -798,7 +1268,7 @@ def approve_refund_request(refund_request, reviewed_by, approved_amount=None, re
     notify_user(
         refund_request.order.customer,
         "Refund approved",
-        f"Your refund for {refund_request.order.order_number} was approved for {approved_amount}.",
+        f"Your refund for {refund_request.order.order_number} was approved for {approved_amount} and is waiting to be processed.",
         link=reverse("orders:detail", kwargs={"order_number": refund_request.order.order_number}),
     )
     send_refund_resolution_email(refund_request.order, refund_request, approved=True)
@@ -809,12 +1279,23 @@ def approve_refund_request(refund_request, reviewed_by, approved_amount=None, re
 def reject_refund_request(refund_request, reviewed_by, resolution_note=""):
     if refund_request.status != RefundRequestStatus.PENDING:
         raise ValidationError("This refund request has already been reviewed.")
+    resolution_note = (resolution_note or "").strip()
+    if not resolution_note:
+        raise ValidationError("A written reason is required when rejecting a refund.")
 
     refund_request.status = RefundRequestStatus.REJECTED
     refund_request.reviewed_by = reviewed_by
     refund_request.reviewed_at = timezone.now()
     refund_request.resolution_note = resolution_note
-    refund_request.save()
+    refund_request.failure_reason = ""
+    refund_request.save(update_fields=[
+        "status",
+        "reviewed_by",
+        "reviewed_at",
+        "resolution_note",
+        "failure_reason",
+        "updated_at",
+    ])
 
     OrderStatusHistory.objects.create(
         order=refund_request.order,
@@ -831,15 +1312,111 @@ def reject_refund_request(refund_request, reviewed_by, resolution_note=""):
     return refund_request
 
 
+@transaction.atomic
+def process_refund_request(refund_request, processed_by, failure_reason=""):
+    if refund_request.status not in {RefundRequestStatus.APPROVED, RefundRequestStatus.FAILED}:
+        raise ValidationError("Only approved refund requests can be processed.")
+
+    failure_reason = (failure_reason or "").strip()
+    payment = getattr(refund_request.order, "payment", None)
+    if payment is None:
+        raise ValidationError("This order does not have a payment to refund.")
+
+    if failure_reason:
+        refund_request.status = RefundRequestStatus.FAILED
+        refund_request.processed_by = processed_by
+        refund_request.processed_at = timezone.now()
+        refund_request.failure_reason = failure_reason
+        refund_request.save(update_fields=["status", "processed_by", "processed_at", "failure_reason", "updated_at"])
+        notify_user(
+            refund_request.order.customer,
+            "Refund processing failed",
+            f"We were unable to process the refund for {refund_request.order.order_number} yet.",
+            link=reverse("orders:detail", kwargs={"order_number": refund_request.order.order_number}),
+        )
+        return refund_request
+
+    approved_amount = refund_request.approved_amount or refund_request.requested_amount
+    customer = refund_request.order.customer
+    if refund_request.payout_method == RefundPayoutMethod.WALLET_CREDIT and customer:
+        customer.credit_wallet(approved_amount)
+    payment.status = PaymentStatus.REFUNDED if approved_amount >= payment.amount else PaymentStatus.PARTIALLY_REFUNDED
+    payment.raw_payload = {
+        **(payment.raw_payload or {}),
+        "service_refund": {
+            "approved_amount": str(approved_amount),
+            "reviewed_by": refund_request.reviewed_by.email if refund_request.reviewed_by else "",
+            "processed_by": processed_by.email,
+            "processed_at": timezone.now().isoformat(),
+            "note": refund_request.resolution_note,
+            "payout_method": refund_request.payout_method,
+        },
+    }
+    payment.save(update_fields=["status", "raw_payload", "updated_at"])
+
+    refund_request.status = RefundRequestStatus.PROCESSED
+    refund_request.processed_by = processed_by
+    refund_request.processed_at = timezone.now()
+    refund_request.failure_reason = ""
+    refund_request.save(update_fields=["status", "processed_by", "processed_at", "failure_reason", "updated_at"])
+
+    OrderStatusHistory.objects.create(
+        order=refund_request.order,
+        status=refund_request.order.status,
+        note=f"Refund processed for {approved_amount} via {refund_request.get_payout_method_display().lower()}.",
+    )
+    notify_user(
+        refund_request.order.customer,
+        "Refund processed",
+        f"Your refund for {refund_request.order.order_number} has been processed via {refund_request.get_payout_method_display().lower()}.",
+        link=reverse("orders:detail", kwargs={"order_number": refund_request.order.order_number}),
+    )
+    return refund_request
+
+
 def send_delivery_confirmation_email(order, confirmation):
+    item_lines = "\n".join(
+        f"- {item.product_name} x {item.quantity} @ {item.unit_price} = {item.line_total}"
+        for item in order.items.all()
+    )
+    agent_name = order.selected_agent.name if order.selected_agent else "Pending assignment"
+    discount_line = ""
+    if order.discount_amount > 0:
+        discount_line = (
+            f"Premium discount: -{order.discount_amount} "
+            f"({order.premium_discount_percent}% streak reward)\n"
+        )
     send_mail(
-        subject=f"Delivery confirmation for {order.order_number}",
+        subject=f"Payment confirmed for {order.order_number}",
         message=(
-            f"Your payment for {order.order_number} is confirmed.\n\n"
-            f"OTP: {confirmation.otp_code}\n"
-            f"QR Token: {confirmation.qr_token}\n\n"
-            "Share this OTP or QR token with the assigned driver when your order arrives."
+            f"Hello {order.customer.first_name},\n\n"
+            f"Your payment for order {order.order_number} has been confirmed.\n\n"
+            f"Company: {order.company.name}\n"
+            f"Agent branch: {agent_name}\n"
+            f"Delivery address: {order.delivery_address}\n"
+            f"Location coordinates: {order.latitude}, {order.longitude}\n"
+            f"Phone number: {order.phone_number}\n\n"
+            "Order details:\n"
+            f"{item_lines}\n\n"
+            f"Subtotal: {order.subtotal}\n"
+            f"{discount_line}"
+            f"Delivery fee: {order.delivery_fee}\n"
+            f"Total paid: {order.total}\n\n"
+            f"Confirmation code: {confirmation.otp_code}\n"
+            f"QR expires at: {timezone.localtime(confirmation.expires_at).strftime('%Y-%m-%d %H:%M')}\n\n"
+            "When the driver arrives, open your order page so the driver can scan your delivery code. "
+            "If the QR expires before delivery, request a fresh one from the order page."
         ),
+        from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@water.local"),
+        recipient_list=[order.customer.email],
+        fail_silently=True,
+    )
+
+
+def send_order_status_email(order, subject_line, body):
+    send_mail(
+        subject=f"{subject_line} - {order.order_number}",
+        message=body,
         from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@water.local"),
         recipient_list=[order.customer.email],
         fail_silently=True,
@@ -912,12 +1489,7 @@ def deduct_inventory_fefo(order):
             OrderItem.objects.filter(
                 order__selected_agent=order.selected_agent,
                 product=item.product,
-                order__status__in=[
-                    OrderStatus.PAYMENT_PENDING,
-                    OrderStatus.PAID,
-                    OrderStatus.DRIVER_ASSIGNED,
-                    OrderStatus.OUT_FOR_DELIVERY,
-                ],
+                order__status__in=RESERVED_STOCK_ORDER_STATUSES,
             )
             .exclude(order=order)
             .aggregate(total=Sum("quantity"))["total"]
@@ -940,6 +1512,16 @@ def deduct_inventory_fefo(order):
         batch_available_quantity = sum(batch.quantity_remaining for batch in batches)
         stock.available_quantity = max(0, batch_available_quantity - active_reserved_quantity)
         stock.save(update_fields=["available_quantity", "updated_at"])
+        create_inventory_transaction(
+            agent=order.selected_agent,
+            product=item.product,
+            transaction_type=InventoryTransactionType.SALE,
+            quantity_change=-item.quantity,
+            stock_after=stock.available_quantity,
+            performed_by=getattr(getattr(order, "assigned_driver", None), "user", None),
+            reference=order.order_number,
+            note=f"Stock consumed for delivered order {order.order_number}.",
+        )
 
 
 def generate_payment_reference(order):

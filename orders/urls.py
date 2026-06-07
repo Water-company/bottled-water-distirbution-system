@@ -12,7 +12,11 @@ from orders.views import (
     OrderPaymentView,
     OrderTrackingView,
     OrderTrackingStatusView,
+    RefreshDeliveryQRCodeView,
+    ReorderOrderView,
     RefundRequestCreateView,
+    SkipDeliveryFeedbackView,
+    SubmitDeliveryFeedbackView,
 )
 
 app_name = "orders"
@@ -25,6 +29,10 @@ urlpatterns = [
     path("", OrderListView.as_view(), name="list"),
     path("<str:order_number>/", OrderDetailView.as_view(), name="detail"),
     path("<str:order_number>/cancel/", CancelOrderView.as_view(), name="cancel"),
+    path("<str:order_number>/reorder/", ReorderOrderView.as_view(), name="reorder"),
+    path("<str:order_number>/refresh-qr/", RefreshDeliveryQRCodeView.as_view(), name="refresh_qr"),
+    path("<str:order_number>/feedback/", SubmitDeliveryFeedbackView.as_view(), name="submit_feedback"),
+    path("<str:order_number>/feedback/skip/", SkipDeliveryFeedbackView.as_view(), name="skip_feedback"),
     path("<str:order_number>/refunds/create/", RefundRequestCreateView.as_view(), name="request_refund"),
     path("<str:order_number>/payment/", OrderPaymentView.as_view(), name="payment"),
     path("<str:order_number>/payment/return/", ChapaPaymentReturnView.as_view(), name="payment_return"),

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Edit Driver{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Edit Driver</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">{{ driver.user.full_name }}</h1>
+    <p class="text-secondary mb-3">Update driver contact details, vehicle information, and account status.</p>
+    <a href="{% url 'accounts:agent_drivers' %}" class="btn btn-outline-dark">Back to Drivers</a>
+</section>
+
+<section class="content-card p-4">
+    <form method="post" class="row g-3">
+        {% csrf_token %}
+        {% for field in form %}
+            <div class="col-md-6">
+                <label class="form-label">{{ field.label }}</label>
+                {{ field }}
+                {% if field.errors %}
+                    <div class="text-danger small mt-1">{{ field.errors|join:", " }}</div>
+                {% endif %}
+            </div>
+        {% endfor %}
+        <div class="col-12">
+            <button class="btn btn-primary">Save Driver Changes</button>
+        </div>
+    </form>
+</section>
+{% endblock %}

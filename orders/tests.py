@@ -1,15 +1,36 @@
+import json
 from unittest.mock import patch
 
+from django.core import mail
 from django.utils import timezone
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from accounts.models import User, UserRole
+from accounts.models import CustomerAddress, User, UserRole
 from cart.services import add_product_to_cart
-from catalog.models import Agent, AgentStock, Company, Driver, InventoryBatch, Product
+from catalog.models import Agent, AgentStock, Company, Driver, InventoryBatch, InventoryTransaction, InventoryTransactionType, Product
 from core.models import DriverLocation
-from orders.models import AgentRequestStatus, DeliveryConfirmation, Order, OrderStatus, PaymentStatus, RefundRequestStatus
-from orders.services import approve_refund_request, assign_driver, complete_delivery_and_deduct_stock, mark_order_paid, start_delivery
+from orders.models import (
+    AgentRequestStatus,
+    DeliveryConfirmation,
+    DeliveryFeedback,
+    Order,
+    OrderStatus,
+    PaymentStatus,
+    RefundPayoutMethod,
+    RefundRequestStatus,
+)
+from orders.services import (
+    accept_delivery_assignment,
+    approve_refund_request,
+    assign_driver,
+    complete_delivery_and_deduct_stock,
+    mark_order_arrived,
+    mark_order_picked_up,
+    mark_order_paid,
+    process_refund_request,
+    start_delivery,
+)
 
 
 class OrderFlowTests(TestCase):
@@ -117,6 +138,18 @@ class OrderFlowTests(TestCase):
             )
         return response, Order.objects.order_by("-created_at").first()
 
+    def create_delivered_order(self, quantity=1, delivery_address="Piassa"):
+        _, order = self.create_checkout_order(quantity=quantity, delivery_address=delivery_address)
+        mark_order_paid(order, reference=f"TX-{order.order_number}", payload={"status": "success"})
+        assign_driver(order, self.driver)
+        accept_delivery_assignment(order, self.driver_user)
+        mark_order_picked_up(order, self.driver_user)
+        start_delivery(order, self.driver_user)
+        mark_order_arrived(order, self.driver_user)
+        complete_delivery_and_deduct_stock(order, "", order.confirmation.qr_payload_json, self.driver_user)
+        order.refresh_from_db()
+        return order
+
     def test_checkout_redirects_directly_to_chapa_and_reserves_stock(self):
         response, order = self.create_checkout_order(quantity=2, delivery_address="Bole Road, Addis Ababa", notes="Leave at reception")
 
@@ -139,6 +172,47 @@ class OrderFlowTests(TestCase):
         self.assertContains(response, "Choose your delivery location")
         self.assertContains(response, "Search Address in Addis Ababa")
         self.assertContains(response, "Choose an Eligible Agent First")
+
+    def test_checkout_is_blocked_when_company_is_suspended(self):
+        self.company.is_active = False
+        self.company.save(update_fields=["is_active", "updated_at"])
+        add_product_to_cart(self.user, self.product, 1)
+
+        response = self.client.post(
+            reverse("orders:checkout"),
+            {
+                "location_source": "current",
+                "selected_agent_id": str(self.agent.pk),
+                "delivery_address": "Piassa",
+                "latitude": "9.031000",
+                "longitude": "38.741000",
+                "phone_number": "+251911000020",
+                "notes": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "This company is not currently accepting new customer orders.")
+        self.assertEqual(Order.objects.count(), 0)
+
+    def test_checkout_prefills_default_saved_address(self):
+        default_address = CustomerAddress.objects.create(
+            user=self.user,
+            label="Hotel",
+            address_line="Meskel Square, Addis Ababa",
+            latitude="9.012345",
+            longitude="38.765432",
+            notes="Use the service entrance",
+            is_default=True,
+        )
+        add_product_to_cart(self.user, self.product, 1)
+
+        response = self.client.get(reverse("orders:checkout"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["form"].initial["saved_address_id"], str(default_address.pk))
+        self.assertEqual(response.context["form"].initial["delivery_address"], default_address.address_line)
+        self.assertEqual(response.context["form"].initial["notes"], default_address.notes)
 
     def test_checkout_can_create_order_without_manually_typed_address_when_coordinates_exist(self):
         add_product_to_cart(self.user, self.product, 1)
@@ -196,12 +270,24 @@ class OrderFlowTests(TestCase):
         order.refresh_from_db()
         self.assertEqual(order.status, OrderStatus.DRIVER_ASSIGNED)
 
+        accept_delivery_assignment(order, self.driver_user)
+        order.refresh_from_db()
+        self.assertEqual(order.status, OrderStatus.DRIVER_ACCEPTED)
+
+        mark_order_picked_up(order, self.driver_user)
+        order.refresh_from_db()
+        self.assertEqual(order.status, OrderStatus.PICKED_UP)
+
         start_delivery(order, self.driver_user)
         order.refresh_from_db()
         self.assertEqual(order.status, OrderStatus.OUT_FOR_DELIVERY)
 
+        mark_order_arrived(order, self.driver_user)
+        order.refresh_from_db()
+        self.assertEqual(order.status, OrderStatus.ARRIVED)
+
         confirmation = order.confirmation
-        complete_delivery_and_deduct_stock(order, confirmation.otp_code, confirmation.qr_token, self.driver_user)
+        complete_delivery_and_deduct_stock(order, "", confirmation.qr_payload_json, self.driver_user)
         order.refresh_from_db()
         self.inventory_batch.refresh_from_db()
         self.agent_stock.refresh_from_db()
@@ -210,17 +296,44 @@ class OrderFlowTests(TestCase):
         self.assertEqual(self.inventory_batch.quantity_remaining, 4)
         self.assertEqual(self.agent_stock.available_quantity, 4)
         self.assertTrue(DeliveryConfirmation.objects.filter(order=order).exists())
+        sale_transaction = InventoryTransaction.objects.get(reference=order.order_number)
+        self.assertEqual(sale_transaction.transaction_type, InventoryTransactionType.SALE)
+        self.assertEqual(sale_transaction.quantity_change, -2)
 
     def test_complete_delivery_accepts_full_qr_payload(self):
         _, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
         mark_order_paid(order, reference="TX-456", payload={"status": "success"})
         assign_driver(order, self.driver)
+        accept_delivery_assignment(order, self.driver_user)
+        mark_order_picked_up(order, self.driver_user)
         start_delivery(order, self.driver_user)
+        mark_order_arrived(order, self.driver_user)
 
         confirmation = order.confirmation
-        qr_payload = f"{order.order_number}|{confirmation.qr_token}|{confirmation.otp_code}"
+        qr_payload = confirmation.qr_payload_json
         complete_delivery_and_deduct_stock(order, "", qr_payload, self.driver_user)
 
+        order.refresh_from_db()
+        self.assertEqual(order.status, OrderStatus.DELIVERED)
+
+    def test_driver_qr_confirm_endpoint_marks_delivery_complete(self):
+        _, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
+        mark_order_paid(order, reference="TX-SCAN", payload={"status": "success"})
+        assign_driver(order, self.driver)
+        accept_delivery_assignment(order, self.driver_user)
+        mark_order_picked_up(order, self.driver_user)
+        start_delivery(order, self.driver_user)
+        mark_order_arrived(order, self.driver_user)
+
+        self.client.force_login(self.driver_user)
+        response = self.client.post(
+            reverse("accounts:confirm_delivery_qr", kwargs={"order_number": order.order_number}),
+            data=json.dumps({"qr_payload": order.confirmation.qr_payload_json}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "confirmed"})
         order.refresh_from_db()
         self.assertEqual(order.status, OrderStatus.DELIVERED)
 
@@ -228,7 +341,10 @@ class OrderFlowTests(TestCase):
         _, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
         mark_order_paid(order, reference="TX-OTP", payload={"status": "success"})
         assign_driver(order, self.driver)
+        accept_delivery_assignment(order, self.driver_user)
+        mark_order_picked_up(order, self.driver_user)
         start_delivery(order, self.driver_user)
+        mark_order_arrived(order, self.driver_user)
 
         confirmation = order.confirmation
         complete_delivery_and_deduct_stock(order, confirmation.otp_code, "", self.driver_user)
@@ -240,7 +356,10 @@ class OrderFlowTests(TestCase):
         _, order = self.create_checkout_order(quantity=2, delivery_address="Piassa")
         mark_order_paid(order, reference="TX-BATCH", payload={"status": "success"})
         assign_driver(order, self.driver)
+        accept_delivery_assignment(order, self.driver_user)
+        mark_order_picked_up(order, self.driver_user)
         start_delivery(order, self.driver_user)
+        mark_order_arrived(order, self.driver_user)
 
         InventoryBatch.objects.filter(agent=self.agent, product=self.product).delete()
         confirmation = order.confirmation
@@ -261,6 +380,42 @@ class OrderFlowTests(TestCase):
         self.assertContains(tracking_response, "Current status")
         self.assertContains(tracking_response, "Live Delivery Map")
 
+    def test_customer_can_reorder_a_delivered_order(self):
+        delivered_order = self.create_delivered_order(quantity=2)
+
+        response = self.client.post(reverse("orders:reorder", kwargs={"order_number": delivered_order.order_number}))
+
+        self.assertRedirects(response, reverse("cart:detail"))
+        cart = self.user.cart
+        self.assertEqual(cart.items.count(), 1)
+        cart_item = cart.items.get()
+        self.assertEqual(cart_item.product, self.product)
+        self.assertEqual(cart_item.quantity, 2)
+
+    def test_customer_can_submit_driver_feedback_after_delivery(self):
+        delivered_order = self.create_delivered_order()
+
+        response = self.client.post(
+            reverse("orders:submit_feedback", kwargs={"order_number": delivered_order.order_number}),
+            {"rating": 5, "comment": "Fast delivery and polite driver."},
+        )
+
+        self.assertRedirects(response, reverse("orders:detail", kwargs={"order_number": delivered_order.order_number}))
+        feedback = DeliveryFeedback.objects.get(order=delivered_order)
+        self.assertEqual(feedback.rating, 5)
+        self.assertEqual(feedback.comment, "Fast delivery and polite driver.")
+        self.assertFalse(feedback.was_skipped)
+
+    def test_customer_can_skip_driver_feedback_after_delivery(self):
+        delivered_order = self.create_delivered_order()
+
+        response = self.client.post(reverse("orders:skip_feedback", kwargs={"order_number": delivered_order.order_number}))
+
+        self.assertRedirects(response, reverse("orders:detail", kwargs={"order_number": delivered_order.order_number}))
+        feedback = DeliveryFeedback.objects.get(order=delivered_order)
+        self.assertIsNone(feedback.rating)
+        self.assertTrue(feedback.was_skipped)
+
     def test_tracking_status_json_returns_driver_coordinates(self):
         _, order = self.create_checkout_order(quantity=1, delivery_address="Kazanchis")
         mark_order_paid(order, reference="TX-123", payload={"status": "success"})
@@ -280,6 +435,34 @@ class OrderFlowTests(TestCase):
         self.assertEqual(payload["driver"]["latitude"], 9.05)
         self.assertEqual(payload["driver"]["longitude"], 38.76)
         self.assertTrue(payload["driver"]["online"])
+
+    def test_customer_can_refresh_expired_qr_code(self):
+        _, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
+        mark_order_paid(order, reference="TX-REFRESH", payload={"status": "success"})
+        confirmation = order.confirmation
+        old_token = confirmation.qr_token
+        confirmation.expires_at = timezone.now() - timezone.timedelta(minutes=5)
+        confirmation.save(update_fields=["expires_at", "updated_at"])
+
+        response = self.client.post(reverse("orders:refresh_qr", kwargs={"order_number": order.order_number}))
+
+        self.assertRedirects(response, reverse("orders:detail", kwargs={"order_number": order.order_number}))
+        confirmation.refresh_from_db()
+        self.assertNotEqual(confirmation.qr_token, old_token)
+        self.assertGreater(confirmation.expires_at, timezone.now())
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_payment_confirmation_email_contains_price_location_and_code(self):
+        _, order = self.create_checkout_order(quantity=2, delivery_address="Bole Road, Addis Ababa")
+
+        mark_order_paid(order, reference="TX-EMAIL", payload={"status": "success"})
+
+        self.assertGreaterEqual(len(mail.outbox), 1)
+        receipt_message = next(message for message in mail.outbox if order.order_number in message.subject)
+        self.assertIn(str(order.total), receipt_message.body)
+        self.assertIn(order.delivery_address, receipt_message.body)
+        self.assertIn(order.confirmation.otp_code, receipt_message.body)
+        self.assertIn("Total paid", receipt_message.body)
 
     def test_agent_pending_orders_json_is_empty_for_auto_reserved_checkout(self):
         self.create_checkout_order(quantity=1, delivery_address="Piassa")
@@ -344,20 +527,26 @@ class OrderFlowTests(TestCase):
         self.assertEqual(order.payment.status, PaymentStatus.PARTIALLY_REFUNDED)
         self.assertEqual(self.agent_stock.available_quantity, 6)
         cancellation_request = order.refund_requests.get()
-        self.assertEqual(cancellation_request.status, RefundRequestStatus.APPROVED)
+        self.assertEqual(cancellation_request.status, RefundRequestStatus.PROCESSED)
         self.assertGreater(cancellation_request.approved_amount, 0)
 
     def test_customer_can_request_refund_and_company_admin_can_approve_it(self):
         _, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
         mark_order_paid(order, reference="TX-REFUND", payload={"status": "success"})
         assign_driver(order, self.driver)
+        accept_delivery_assignment(order, self.driver_user)
+        mark_order_picked_up(order, self.driver_user)
         start_delivery(order, self.driver_user)
+        mark_order_arrived(order, self.driver_user)
         confirmation = order.confirmation
         complete_delivery_and_deduct_stock(order, confirmation.otp_code, "", self.driver_user)
 
         response = self.client.post(
             reverse("orders:request_refund", kwargs={"order_number": order.order_number}),
-            {"reason": "The delivery arrived damaged and spilled."},
+            {
+                "reason": "The delivery arrived damaged and spilled.",
+                "payout_method": RefundPayoutMethod.WALLET_CREDIT,
+            },
         )
         self.assertRedirects(response, reverse("orders:detail", kwargs={"order_number": order.order_number}))
 
@@ -376,7 +565,16 @@ class OrderFlowTests(TestCase):
         refund_request.refresh_from_db()
         order.payment.refresh_from_db()
         self.assertEqual(refund_request.status, RefundRequestStatus.APPROVED)
+        self.assertEqual(refund_request.payout_method, RefundPayoutMethod.WALLET_CREDIT)
+        self.assertEqual(order.payment.status, PaymentStatus.PAID)
+
+        process_refund_request(refund_request, processed_by=self.company_admin)
+        refund_request.refresh_from_db()
+        order.payment.refresh_from_db()
+        self.user.refresh_from_db()
+        self.assertEqual(refund_request.status, RefundRequestStatus.PROCESSED)
         self.assertEqual(order.payment.status, PaymentStatus.REFUNDED)
+        self.assertEqual(self.user.wallet_balance, order.total)
 
     def test_checkout_applies_company_premium_discount_after_customer_streak(self):
         self.company.premium_feature_enabled = True

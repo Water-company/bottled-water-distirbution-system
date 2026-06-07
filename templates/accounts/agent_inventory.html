@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+{% block title %}Agent Inventory{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Inventory System</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">{{ agent.name }}</h1>
+    <p class="text-secondary mb-3">Track stock levels, update reorder thresholds, log manual adjustments, and review the inventory audit trail.</p>
+    <div class="d-flex flex-wrap gap-2">
+        <a href="{% url 'accounts:agent_dashboard' %}" class="btn btn-outline-dark">Back to Dashboard</a>
+        <a href="{% url 'accounts:agent_drivers' %}" class="btn btn-outline-primary">Manage Drivers</a>
+    </div>
+</section>
+
+<section class="row g-4 mb-4">
+    <div class="col-md-6 col-xl-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Products</div><div class="display-6 fw-semibold">{{ inventory_metrics.product_count }}</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Units In Stock</div><div class="display-6 fw-semibold">{{ inventory_metrics.total_units }}</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Low Stock Alerts</div><div class="display-6 fw-semibold">{{ inventory_metrics.low_stock_count }}</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Transactions</div><div class="display-6 fw-semibold">{{ inventory_metrics.transaction_count }}</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Open Batch Balance</div><div class="display-6 fw-semibold">{{ credit_summary.outstanding_balance }}</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Credit Limit</div><div class="display-6 fw-semibold">{{ credit_summary.credit_limit }}</div></div></div>
+</section>
+
+<section class="row g-4 mb-4">
+    <div class="col-lg-7">
+        <div class="content-card p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 class="h4 mb-0">Current Stock</h2>
+                <span class="small text-secondary">Low stock rows should be restocked soon</span>
+            </div>
+            {% if stocks %}
+                <div class="table-responsive">
+                    <table class="table align-middle">
+                        <thead>
+                            <tr>
+                                <th>Product</th>
+                                <th>Units</th>
+                                <th>Reorder Level</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for stock in stocks %}
+                                <tr>
+                                    <td>{{ stock.product.name }}</td>
+                                    <td>{{ stock.available_quantity }}</td>
+                                    <td>
+                                        <form method="post" action="{% url 'accounts:agent_inventory_threshold' stock.pk %}" class="d-flex gap-2">
+                                            {% csrf_token %}
+                                            <input type="number" name="reorder_level" value="{{ stock.reorder_level }}" min="0" class="form-control">
+                                            <button class="btn btn-sm btn-outline-primary">Save</button>
+                                        </form>
+                                    </td>
+                                    <td>
+                                        {% if stock.low_stock %}
+                                            <span class="badge bg-danger-subtle text-danger">Low stock</span>
+                                        {% else %}
+                                            <span class="badge bg-success-subtle text-success">Healthy</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="text-secondary mb-0">No stock records exist for this branch yet.</p>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="content-card p-4 mb-4">
+            <h2 class="h4 mb-3">Request Company Stock by Batch</h2>
+            <div class="small text-secondary mb-3">
+                Current balance: {{ credit_summary.outstanding_balance }} | Credit limit: {{ credit_summary.credit_limit }} | Standard credit period: {{ credit_summary.credit_period_days }} days
+            </div>
+            <form method="post" action="{% url 'accounts:agent_batch_request_create' %}">
+                {% csrf_token %}
+                {% for field in batch_request_form %}
+                    <div class="mb-3">
+                        <label class="form-label">{{ field.label }}</label>
+                        {{ field }}
+                    </div>
+                {% endfor %}
+                <button class="btn btn-primary w-100">Submit Batch Stock Request</button>
+            </form>
+        </div>
+        <div class="content-card p-4 mb-4">
+            <h2 class="h4 mb-3">Manual Inventory Adjustment</h2>
+            <form method="post" action="{% url 'accounts:agent_inventory_adjust' %}">
+                {% csrf_token %}
+                {% for field in adjustment_form %}
+                    <div class="mb-3">
+                        <label class="form-label">{{ field.label }}</label>
+                        {{ field }}
+                    </div>
+                {% endfor %}
+                <button class="btn btn-primary w-100">Record Adjustment</button>
+            </form>
+        </div>
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Legacy Restock Request</h2>
+            <form method="post" action="{% url 'accounts:create_restock_request' %}">
+                {% csrf_token %}
+                <div class="mb-3">{{ restock_form.product }}</div>
+                <div class="mb-3">{{ restock_form.quantity_requested }}</div>
+                <div class="mb-3">{{ restock_form.note }}</div>
+                <button class="btn btn-outline-primary w-100">Send Restock Request</button>
+            </form>
+        </div>
+    </div>
+</section>
+
+<section class="row g-4">
+    <div class="col-lg-6">
+        <div class="content-card p-4 h-100 mb-4">
+            <h2 class="h4 mb-3">Batch Stock Requests and Approved Sales</h2>
+            {% if batch_sales %}
+                <div class="table-responsive">
+                    <table class="table align-middle">
+                        <thead>
+                            <tr>
+                                <th>Batch</th>
+                                <th>Requested / Approved</th>
+                                <th>Payment Type</th>
+                                <th>Status</th>
+                                <th>Outstanding</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for sale in batch_sales %}
+                                <tr>
+                                    <td>
+                                        <div class="fw-semibold">{{ sale.batch.batch_number }}</div>
+                                        <div class="small text-secondary">{{ sale.batch.product.name }}</div>
+                                    </td>
+                                    <td>{{ sale.quantity_requested }} / {{ sale.quantity_approved|default:0 }}</td>
+                                    <td>{{ sale.get_payment_type_display }}</td>
+                                    <td>
+                                        {{ sale.get_status_display }}
+                                        {% if sale.is_overdue %}
+                                            <div class="small text-danger">Overdue</div>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if sale.status == "approved" %}
+                                            {{ sale.outstanding_balance }}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% if sale.status == "approved" and sale.outstanding_balance > 0 %}
+                                    <tr>
+                                        <td colspan="5">
+                                            <form method="post" action="{% url 'accounts:agent_batch_payment_create' sale.pk %}" class="row g-2">
+                                                {% csrf_token %}
+                                                <div class="col-md-4">
+                                                    <input type="number" step="0.01" min="0.01" max="{{ sale.outstanding_balance }}" name="amount" class="form-control" placeholder="Payment amount">
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <input type="text" name="submitted_note" class="form-control" placeholder="Payment note">
+                                                </div>
+                                                <div class="col-md-2">
+                                                    <button class="btn btn-outline-primary w-100">Log Payment</button>
+                                                </div>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                {% endif %}
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="text-secondary mb-0">No batch-based stock requests have been submitted yet.</p>
+            {% endif %}
+        </div>
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Inventory Transactions</h2>
+            {% if inventory_transactions %}
+                <div class="table-responsive">
+                    <table class="table align-middle">
+                        <thead>
+                            <tr>
+                                <th>Product</th>
+                                <th>Type</th>
+                                <th>Change</th>
+                                <th>After</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for transaction in inventory_transactions %}
+                                <tr>
+                                    <td>
+                                        <div>{{ transaction.product.name }}</div>
+                                        <div class="small text-secondary">{{ transaction.reference|default:"Manual entry" }}</div>
+                                    </td>
+                                    <td>{{ transaction.get_transaction_type_display }}</td>
+                                    <td>{{ transaction.quantity_change }}</td>
+                                    <td>{{ transaction.stock_after }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="text-secondary mb-0">No inventory transactions have been logged yet.</p>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="content-card p-4 mb-4">
+            <h2 class="h4 mb-3">Payment Submission History</h2>
+            {% if batch_payments %}
+                {% for payment in batch_payments %}
+                    <div class="border-bottom py-2">
+                        <div class="fw-semibold">{{ payment.sale.batch.batch_number }} | {{ payment.amount }}</div>
+                        <div class="small text-secondary">
+                            {{ payment.get_status_display }}
+                            {% if payment.confirmed_by %}| Reviewed by {{ payment.confirmed_by.full_name }}{% endif %}
+                            {% if payment.rejection_reason %}| {{ payment.rejection_reason }}{% endif %}
+                        </div>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-secondary mb-0">No payment submissions have been logged yet.</p>
+            {% endif %}
+        </div>
+        <div class="content-card p-4 mb-4">
+            <h2 class="h4 mb-3">Recent Batches</h2>
+            {% if inventory_batches %}
+                {% for batch in inventory_batches %}
+                    <div class="border-bottom py-2">
+                        <div class="fw-semibold">{{ batch.product.name }} | {{ batch.batch_number }}</div>
+                        <div class="small text-secondary">Remaining {{ batch.quantity_remaining }} of {{ batch.quantity_received }} | Expires {{ batch.expires_at }}</div>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-secondary mb-0">No inventory batches have been received yet.</p>
+            {% endif %}
+        </div>
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Recent Restock Requests</h2>
+            {% if restock_requests %}
+                {% for request_item in restock_requests %}
+                    <div class="border-bottom py-2">
+                        <div class="fw-semibold">{{ request_item.product.name }} | {{ request_item.quantity_requested }} units</div>
+                        <div class="small text-secondary">{{ request_item.get_status_display }}{% if request_item.approved_by %} | Approved by {{ request_item.approved_by.full_name }}{% endif %}</div>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-secondary mb-0">No restock requests have been submitted yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+{% endblock %}

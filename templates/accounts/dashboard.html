@@ -12,6 +12,7 @@
             <a class="btn btn-primary" href="{% url 'companies:list' %}">Browse Companies</a>
             <a class="btn btn-outline-primary" href="{% url 'products:list' %}">Browse Products</a>
             <a class="btn btn-outline-dark" href="{% url 'orders:list' %}">View Orders</a>
+            <a class="btn btn-outline-dark" href="{% url 'accounts:addresses' %}">Saved Addresses</a>
             <a class="btn btn-outline-dark" href="{% url 'accounts:profile' %}">Edit Profile</a>
         </div>
     </div>
@@ -22,6 +23,7 @@
     <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Active Orders</span><h2>{{ stats.active_orders }}</h2></div></div>
     <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Delivered Orders</span><h2>{{ stats.delivered_orders }}</h2></div></div>
     <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Total Spent</span><h2>{{ stats.total_spent }}</h2></div></div>
+    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Wallet Credit</span><h2>{{ stats.wallet_balance }}</h2></div></div>
 </section>
 
 <section class="content-card p-4 mb-4">
@@ -74,6 +76,45 @@
 </section>
 
 <section class="content-card p-4">
+    {% if active_order %}
+        <div class="border rounded p-3 mb-4">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+                <div>
+                    <h2 class="h4 mb-1">Active Order</h2>
+                    <div class="fw-semibold">{{ active_order.order_number }}</div>
+                    <div class="small text-secondary">{{ active_order.get_status_display }} | {{ active_order.delivery_address }}</div>
+                </div>
+                <a href="{% url 'orders:tracking' active_order.order_number %}" class="btn btn-primary">Track Active Order</a>
+            </div>
+        </div>
+    {% endif %}
+    {% if quick_reorders %}
+        <div class="mb-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 class="h4 mb-0">Quick Re-order</h2>
+                <span class="small text-secondary">Your latest delivered orders</span>
+            </div>
+            <div class="row g-3">
+                {% for order in quick_reorders %}
+                    <div class="col-md-4">
+                        <div class="border rounded p-3 h-100">
+                            <div class="fw-semibold mb-1">{{ order.order_number }}</div>
+                            <div class="small text-secondary mb-2">{{ order.company.name }}</div>
+                            <div class="small mb-3">
+                                {% for item in order.items.all|slice:":2" %}
+                                    <div>{{ item.product_name }} x {{ item.quantity }}</div>
+                                {% endfor %}
+                            </div>
+                            <form method="post" action="{% url 'orders:reorder' order.order_number %}">
+                                {% csrf_token %}
+                                <button class="btn btn-outline-success w-100">Re-order</button>
+                            </form>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+    {% endif %}
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h2 class="h4 mb-0">Recent Orders</h2>
         <a href="{% url 'orders:list' %}" class="btn btn-sm btn-outline-primary">View all</a>
@@ -109,7 +150,61 @@
 <section class="row g-4 mt-1">
     <div class="col-lg-6">
         <div class="content-card p-4 h-100">
-            <h2 class="h4 mb-3">Notifications</h2>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 class="h4 mb-0">Saved Addresses</h2>
+                <a href="{% url 'accounts:addresses' %}" class="btn btn-sm btn-outline-primary">Manage</a>
+            </div>
+            {% if saved_addresses %}
+                {% for address in saved_addresses %}
+                    <div class="border rounded p-3 mb-3">
+                        <div class="d-flex justify-content-between align-items-start gap-3">
+                            <div>
+                                <div class="fw-semibold">{{ address.label }}</div>
+                                <div class="small text-secondary">{{ address.address_line }}</div>
+                            </div>
+                            {% if address.is_default %}
+                                <span class="badge text-bg-success">Default</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-secondary mb-0">Save delivery points for faster checkout next time.</p>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="content-card p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 class="h4 mb-0">Pending Feedback</h2>
+                <span class="small text-secondary">{{ pending_feedback_orders|length }} waiting</span>
+            </div>
+            {% if pending_feedback_orders %}
+                {% for order in pending_feedback_orders %}
+                    <div class="d-flex justify-content-between align-items-center border-bottom py-3">
+                        <div>
+                            <div class="fw-semibold">{{ order.order_number }}</div>
+                            <div class="small text-secondary">{{ order.company.name }} | {{ order.delivered_at|date:"M d, Y" }}</div>
+                        </div>
+                        <a href="{% url 'orders:detail' order.order_number %}" class="btn btn-sm btn-outline-primary">Rate</a>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-secondary mb-0">No delivered orders are waiting for feedback.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<section class="row g-4 mt-1">
+    <div class="col-lg-6">
+        <div class="content-card p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 class="h4 mb-0">Notifications</h2>
+                <a href="{% url 'accounts:notifications' %}" class="btn btn-sm btn-outline-primary">
+                    View all{% if unread_notifications_count %} ({{ unread_notifications_count }}){% endif %}
+                </a>
+            </div>
             {% if notifications %}
                 {% for notification in notifications %}
                     <div class="border-bottom pb-3 mb-3">

@@ -1,0 +1,236 @@
+{% extends "base.html" %}
+{% block title %}Company Inventory{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Company Admin</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">Aggregated Inventory</h1>
+    <p class="text-secondary mb-0">Create production batches, approve agent stock requests, confirm repayments, and monitor stock visibility across all agent branches.</p>
+</section>
+
+<section class="row g-4 mb-4">
+    <div class="col-lg-4">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Create Production Batch</h2>
+            <form method="post" action="{% url 'accounts:company_batch_create' %}">
+                {% csrf_token %}
+                {% for field in batch_form %}
+                    <div class="mb-3">
+                        <label class="form-label">{{ field.label }}</label>
+                        {{ field }}
+                    </div>
+                {% endfor %}
+                <button class="btn btn-primary w-100">Create Batch</button>
+            </form>
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Production Batches</h2>
+            {% if company_batches %}
+                <div class="table-responsive">
+                    <table class="table align-middle">
+                        <thead>
+                            <tr>
+                                <th>Batch</th>
+                                <th>Produced</th>
+                                <th>Unsold</th>
+                                <th>Recovery</th>
+                                <th>Status</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in company_batches %}
+                                <tr>
+                                    <td>
+                                        <div class="fw-semibold">{{ row.object.batch_number }}</div>
+                                        <div class="small text-secondary">{{ row.object.product.name }} | {{ row.object.production_date }}</div>
+                                    </td>
+                                    <td>{{ row.object.total_cases_produced }}</td>
+                                    <td>{{ row.object.unsold_cases_remaining }}</td>
+                                    <td>{{ row.cash_recovery_rate }}%</td>
+                                    <td>{{ row.object.get_status_display }}</td>
+                                    <td class="text-end">
+                                        <a class="btn btn-sm btn-outline-primary" href="{% url 'accounts:company_batch_detail' row.object.pk %}">Open</a>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="text-secondary mb-0">No production batches have been created yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<section class="content-card p-4 mb-4">
+    <h2 class="h4 mb-3">Pending Agent Stock Requests</h2>
+    {% if pending_batch_sales %}
+        {% for sale in pending_batch_sales %}
+            <div class="border rounded p-3 mb-3">
+                <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-2">
+                    <div>
+                        <div class="fw-semibold">{{ sale.agent.name }} requested {{ sale.quantity_requested }} cases</div>
+                        <div class="small text-secondary">{{ sale.batch.batch_number }} | {{ sale.batch.product.name }} | {{ sale.get_payment_type_display }}</div>
+                    </div>
+                    <span class="badge text-bg-light">{{ sale.get_status_display }}</span>
+                </div>
+                {% if sale.requested_note %}
+                    <div class="small mb-3"><strong>Request note:</strong> {{ sale.requested_note }}</div>
+                {% endif %}
+                <div class="row g-3">
+                    <div class="col-lg-7">
+                        <form method="post" action="{% url 'accounts:company_batch_sale_approve' sale.pk %}" class="row g-2">
+                            {% csrf_token %}
+                            <div class="col-md-2"><input type="hidden" name="next" value="{% url 'accounts:company_inventory' %}"><input type="number" min="1" max="{{ sale.batch.unsold_cases_remaining }}" name="quantity_approved" class="form-control" value="{{ sale.quantity_requested }}"></div>
+                            <div class="col-md-2"><input type="number" step="0.01" name="unit_price" class="form-control" value="{{ sale.batch.unit_price }}"></div>
+                            <div class="col-md-3"><input type="number" step="0.01" name="initial_payment_amount" class="form-control" value="{{ sale.requested_upfront_amount }}" placeholder="Initial payment"></div>
+                            <div class="col-md-3"><input type="date" name="credit_due_date" class="form-control"></div>
+                            <div class="col-md-2"><button class="btn btn-primary w-100">Approve</button></div>
+                            <div class="col-12"><textarea name="decision_note" class="form-control" rows="2" placeholder="Decision note"></textarea></div>
+                        </form>
+                    </div>
+                    <div class="col-lg-5">
+                        <form method="post" action="{% url 'accounts:company_batch_sale_reject' sale.pk %}">
+                            {% csrf_token %}
+                            <input type="hidden" name="next" value="{% url 'accounts:company_inventory' %}">
+                            <div class="mb-2"><textarea name="decision_note" class="form-control" rows="2" placeholder="Reason for rejection" required></textarea></div>
+                            <button class="btn btn-outline-danger">Reject Request</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p class="text-secondary mb-0">No pending agent stock requests right now.</p>
+    {% endif %}
+</section>
+
+<section class="content-card p-4 mb-4">
+    <h2 class="h4 mb-3">Pending Agent Payment Confirmations</h2>
+    {% if pending_batch_payments %}
+        {% for payment in pending_batch_payments %}
+            <div class="border rounded p-3 mb-3">
+                <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-2">
+                    <div>
+                        <div class="fw-semibold">{{ payment.sale.agent.name }} submitted {{ payment.amount }}</div>
+                        <div class="small text-secondary">{{ payment.sale.batch.batch_number }} | Outstanding after confirmation: {{ payment.sale.outstanding_balance }}</div>
+                    </div>
+                    <span class="badge text-bg-light">{{ payment.get_status_display }}</span>
+                </div>
+                {% if payment.submitted_note %}
+                    <div class="small mb-3"><strong>Payment note:</strong> {{ payment.submitted_note }}</div>
+                {% endif %}
+                <div class="d-flex flex-wrap gap-2">
+                    <form method="post" action="{% url 'accounts:company_batch_payment_confirm' payment.pk %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{% url 'accounts:company_inventory' %}">
+                        <button class="btn btn-primary btn-sm">Confirm Payment</button>
+                    </form>
+                    <form method="post" action="{% url 'accounts:company_batch_payment_reject' payment.pk %}" class="d-flex gap-2">
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{% url 'accounts:company_inventory' %}">
+                        <input type="text" name="rejection_reason" class="form-control form-control-sm" placeholder="Reason" required>
+                        <button class="btn btn-outline-danger btn-sm">Reject</button>
+                    </form>
+                </div>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p class="text-secondary mb-0">No pending payment confirmations right now.</p>
+    {% endif %}
+</section>
+
+<section class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="content-card p-4 h-100">
+            <div class="text-secondary small text-uppercase">Tracked Products</div>
+            <div class="display-6 fw-semibold mt-2">{{ inventory_summary.tracked_products }}</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="content-card p-4 h-100">
+            <div class="text-secondary small text-uppercase">Stock Rows</div>
+            <div class="display-6 fw-semibold mt-2">{{ inventory_summary.tracked_rows }}</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="content-card p-4 h-100">
+            <div class="text-secondary small text-uppercase">Units On Hand</div>
+            <div class="display-6 fw-semibold mt-2">{{ inventory_summary.total_units }}</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="content-card p-4 h-100">
+            <div class="text-secondary small text-uppercase">Low-Stock Rows</div>
+            <div class="display-6 fw-semibold mt-2 text-danger">{{ inventory_summary.low_stock_rows }}</div>
+        </div>
+    </div>
+</section>
+
+<section class="content-card p-4 mb-4">
+    <h2 class="h4 mb-3">By Product</h2>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Size</th>
+                    <th>Total Units</th>
+                    <th>Low-Stock Agents</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in product_rows %}
+                    <tr>
+                        <td>{{ row.product_name }}</td>
+                        <td>{{ row.size_label|default:"Not set" }}</td>
+                        <td>{{ row.total_units }}</td>
+                        <td>{% if row.low_stock_agents %}<span class="text-danger">{{ row.low_stock_agents }}</span>{% else %}0{% endif %}</td>
+                    </tr>
+                {% empty %}
+                    <tr><td colspan="4" class="text-center text-secondary py-4">No agent stock records found yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="content-card p-4">
+    <h2 class="h4 mb-3">By Agent Branch</h2>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th>Agent</th>
+                    <th>Product</th>
+                    <th>Available</th>
+                    <th>Reorder Level</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for stock in stock_rows %}
+                    <tr>
+                        <td>{{ stock.agent.name }}</td>
+                        <td>{{ stock.product.name }}</td>
+                        <td>{{ stock.available_quantity }}</td>
+                        <td>{{ stock.reorder_level }}</td>
+                        <td>
+                            {% if stock.low_stock %}
+                                <span class="badge text-bg-danger">Low stock</span>
+                            {% else %}
+                                <span class="badge text-bg-success">Healthy</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% empty %}
+                    <tr><td colspan="5" class="text-center text-secondary py-4">No stock records yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

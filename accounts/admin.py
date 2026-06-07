@@ -7,14 +7,14 @@ from accounts.models import RegistrationOTP, User
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     ordering = ("email",)
-    list_display = ("email", "first_name", "last_name", "phone_number", "is_active", "is_staff")
+    list_display = ("email", "first_name", "last_name", "role", "phone_number", "is_active", "is_staff")
     search_fields = ("email", "first_name", "last_name", "phone_number")
     readonly_fields = ("last_login", "date_joined", "created_at", "updated_at", "email_verified_at")
-    list_filter = ("is_active", "is_staff", "is_customer")
+    list_filter = ("role", "is_active", "is_staff", "is_customer")
 
     fieldsets = (
         (None, {"fields": ("email", "password")}),
-        ("Personal info", {"fields": ("first_name", "last_name", "phone_number", "profile_image")}),
+        ("Personal info", {"fields": ("first_name", "last_name", "phone_number", "profile_image", "role")}),
         ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser", "is_customer", "groups", "user_permissions")}),
         ("Dates", {"fields": ("last_login", "date_joined", "created_at", "updated_at", "email_verified_at")}),
     )
@@ -23,7 +23,7 @@ class UserAdmin(BaseUserAdmin):
             None,
             {
                 "classes": ("wide",),
-                "fields": ("email", "first_name", "last_name", "phone_number", "password1", "password2"),
+                "fields": ("email", "first_name", "last_name", "phone_number", "role", "password1", "password2"),
             },
         ),
     )

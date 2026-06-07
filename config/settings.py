@@ -45,6 +45,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
+    'core.middleware.SessionInactivityMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
@@ -128,3 +129,11 @@ NOMINATIM_BASE_URL = os.getenv("NOMINATIM_BASE_URL", "https://nominatim.openstre
 NOMINATIM_CONTACT_EMAIL = os.getenv("NOMINATIM_CONTACT_EMAIL", "")
 NOMINATIM_USER_AGENT = os.getenv("NOMINATIM_USER_AGENT", "AquaFlow Platform/1.0")
 NOMINATIM_VIEWBOX = os.getenv("NOMINATIM_VIEWBOX", "38.6485,9.0840,38.8472,8.8780")
+QR_TOKEN_SECRET = os.getenv("QR_TOKEN_SECRET", SECRET_KEY)
+QR_TOKEN_EXPIRY_HOURS = int(os.getenv("QR_TOKEN_EXPIRY_HOURS", "24"))
+DRIVER_DELIVERY_EARNING_AMOUNT = Decimal(os.getenv("DRIVER_DELIVERY_EARNING_AMOUNT", "50.00"))
+DRIVER_ON_TIME_TARGET_MINUTES = int(os.getenv("DRIVER_ON_TIME_TARGET_MINUTES", "60"))
+ETA_AVERAGE_SPEED_KMH = Decimal(os.getenv("ETA_AVERAGE_SPEED_KMH", "25"))
+ACCOUNT_LOCKOUT_THRESHOLD = int(os.getenv("ACCOUNT_LOCKOUT_THRESHOLD", "5"))
+ACCOUNT_LOCKOUT_MINUTES = int(os.getenv("ACCOUNT_LOCKOUT_MINUTES", "15"))
+SESSION_INACTIVITY_MINUTES = int(os.getenv("SESSION_INACTIVITY_MINUTES", "30"))

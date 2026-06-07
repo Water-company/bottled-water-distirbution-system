@@ -100,6 +100,12 @@
             {% else %}
                 <a href="{% url 'orders:tracking' order.order_number %}" class="btn btn-outline-primary w-100">Track Order</a>
             {% endif %}
+            {% if order.status == "delivered" %}
+                <form method="post" action="{% url 'orders:reorder' order.order_number %}" class="mt-2">
+                    {% csrf_token %}
+                    <button class="btn btn-outline-success w-100">Re-order These Items</button>
+                </form>
+            {% endif %}
         </div>
         <div class="content-card p-4 mb-4">
             <h2 class="h4 mb-3">Support Actions</h2>
@@ -119,9 +125,11 @@
             {% endif %}
             {% if order.can_request_refund and not existing_service_refund %}
                 <div class="small text-secondary mb-2">If the delivery arrived with an issue, request a refund before {{ order.refund_deadline|date:"M d, Y H:i" }}.</div>
-                <form method="post" action="{% url 'orders:request_refund' order.order_number %}">
+                <form method="post" action="{% url 'orders:request_refund' order.order_number %}" enctype="multipart/form-data">
                     {% csrf_token %}
-                    {{ refund_form.reason }}
+                    <div class="mb-2">{{ refund_form.reason }}</div>
+                    <div class="mb-2">{{ refund_form.payout_method }}</div>
+                    <div class="mb-2">{{ refund_form.photos }}</div>
                     <button class="btn btn-outline-primary w-100 mt-2">Request Refund Review</button>
                 </form>
             {% elif existing_service_refund %}
@@ -143,6 +151,7 @@
                             <span class="badge text-bg-light">{{ refund_request.get_status_display }}</span>
                         </div>
                         <div class="small mt-2">Requested: {{ refund_request.requested_amount }}</div>
+                        <div class="small">Refund method: {{ refund_request.get_payout_method_display }}</div>
                         {% if refund_request.fee_amount > 0 %}
                             <div class="small">Fee deducted: {{ refund_request.fee_amount }} ({{ refund_request.fee_percent }}%)</div>
                         {% endif %}
@@ -152,11 +161,62 @@
                         {% if refund_request.reason %}
                             <div class="small mt-2"><strong>Reason:</strong> {{ refund_request.reason }}</div>
                         {% endif %}
+                        {% if refund_request.evidences.all %}
+                            <div class="row g-2 mt-2">
+                                {% for evidence in refund_request.evidences.all %}
+                                    <div class="col-4">
+                                        <a href="{{ evidence.image.url }}" target="_blank">
+                                            <img src="{{ evidence.image.url }}" alt="Refund evidence" class="img-fluid rounded border">
+                                        </a>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
                         {% if refund_request.resolution_note %}
                             <div class="small text-secondary mt-2"><strong>Review note:</strong> {{ refund_request.resolution_note }}</div>
                         {% endif %}
+                        {% if refund_request.failure_reason %}
+                            <div class="small text-danger mt-2"><strong>Processing note:</strong> {{ refund_request.failure_reason }}</div>
+                        {% endif %}
                     </div>
                 {% endfor %}
+            </div>
+        {% endif %}
+        {% if order.status == "delivered" %}
+            <div class="content-card p-4 mb-4">
+                <h2 class="h4 mb-3">Driver Feedback</h2>
+                {% if feedback_record %}
+                    {% if feedback_record.was_skipped %}
+                        <p class="text-secondary mb-0">You skipped feedback for this delivery.</p>
+                    {% else %}
+                        <div class="mb-2"><strong>Rating:</strong> {{ feedback_record.rating }}/5</div>
+                        {% if feedback_record.comment %}<div class="small mb-2">{{ feedback_record.comment }}</div>{% endif %}
+                        {% if feedback_record.photo %}
+                            <img src="{{ feedback_record.photo.url }}" alt="Feedback photo" class="img-fluid rounded border">
+                        {% endif %}
+                    {% endif %}
+                {% else %}
+                    <form method="post" action="{% url 'orders:submit_feedback' order.order_number %}" enctype="multipart/form-data">
+                        {% csrf_token %}
+                        <div class="mb-3">
+                            <label class="form-label" for="{{ feedback_form.rating.id_for_label }}">Rating (1-5)</label>
+                            {{ feedback_form.rating }}
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="{{ feedback_form.comment.id_for_label }}">Comment</label>
+                            {{ feedback_form.comment }}
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="{{ feedback_form.photo.id_for_label }}">Photo</label>
+                            {{ feedback_form.photo }}
+                        </div>
+                        <button class="btn btn-primary w-100">Submit Feedback</button>
+                    </form>
+                    <form method="post" action="{% url 'orders:skip_feedback' order.order_number %}" class="mt-2">
+                        {% csrf_token %}
+                        <button class="btn btn-outline-secondary w-100">Skip Feedback</button>
+                    </form>
+                {% endif %}
             </div>
         {% endif %}
         {% if order.confirmation %}
@@ -166,8 +226,17 @@
                     <img src="{{ order.confirmation.qr_code_image.url }}" alt="Delivery QR code" class="qr-image mb-3">
                 {% endif %}
                 <p class="mb-2"><strong>OTP:</strong> <span class="otp-code">{{ order.confirmation.otp_code }}</span></p>
-                <p class="mb-2"><strong>QR Token:</strong> <code>{{ order.confirmation.qr_token }}</code></p>
-                <p class="small text-secondary mb-0">The driver can scan the QR code, paste the full QR payload, or enter this QR token manually.</p>
+                <p class="mb-2"><strong>QR expires:</strong> {{ order.confirmation.expires_at|date:"M d, Y H:i" }}</p>
+                {% if order.confirmation.scanned_at %}
+                    <p class="small text-success mb-2">This QR code was already used on {{ order.confirmation.scanned_at|date:"M d, Y H:i" }}.</p>
+                {% elif order.confirmation.is_expired %}
+                    <p class="small text-danger mb-2">This QR code expired. Request a fresh code before the driver confirms delivery.</p>
+                    <form method="post" action="{% url 'orders:refresh_qr' order.order_number %}" class="mb-2">
+                        {% csrf_token %}
+                        <button class="btn btn-outline-primary w-100">Generate Fresh QR Code</button>
+                    </form>
+                {% endif %}
+                <p class="small text-secondary mb-0">The driver should scan the QR code on arrival. OTP remains available as a manual fallback if scanning fails.</p>
             </div>
         {% endif %}
     </div>

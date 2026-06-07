@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Saved Addresses{% endblock %}
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-7">
+        <div class="content-card p-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <span class="eyebrow">Saved Addresses</span>
+                    <h1 class="h3 mt-2 mb-1">Manage your delivery locations</h1>
+                </div>
+                <a href="{% url 'orders:checkout' %}" class="btn btn-outline-primary">Go to Checkout</a>
+            </div>
+            {% if addresses %}
+                {% for address in addresses %}
+                    <div class="border rounded p-3 mb-3">
+                        <div class="d-flex flex-column flex-md-row justify-content-between gap-3">
+                            <div>
+                                <div class="fw-semibold">{{ address.label }} {% if address.is_default %}<span class="badge text-bg-success">Default</span>{% endif %}</div>
+                                <div class="small text-secondary">{{ address.address_line }}</div>
+                                <div class="small text-secondary mt-2">Coordinates: {{ address.latitude }}, {{ address.longitude }}</div>
+                                {% if address.notes %}<div class="small mt-2">{{ address.notes }}</div>{% endif %}
+                            </div>
+                            <div class="d-flex flex-wrap gap-2 align-items-start">
+                                {% if not address.is_default %}
+                                    <form method="post" action="{% url 'accounts:set_default_address' address.pk %}">
+                                        {% csrf_token %}
+                                        <button class="btn btn-sm btn-outline-primary">Set Default</button>
+                                    </form>
+                                {% endif %}
+                                <a href="{% url 'accounts:edit_address' address.pk %}" class="btn btn-sm btn-outline-dark">Edit</a>
+                                <form method="post" action="{% url 'accounts:delete_address' address.pk %}">
+                                    {% csrf_token %}
+                                    <button class="btn btn-sm btn-outline-danger">Delete</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-secondary mb-0">No saved addresses yet. Add your first address for faster checkout.</p>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="content-card p-4">
+            <h2 class="h4 mb-3">Add New Address</h2>
+            <form method="post" action="{% url 'accounts:create_address' %}" novalidate>
+                {% csrf_token %}
+                <div class="mb-3">
+                    <label class="form-label" for="{{ address_form.label.id_for_label }}">Label</label>
+                    {{ address_form.label }}
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="{{ address_form.address_line.id_for_label }}">Address</label>
+                    {{ address_form.address_line }}
+                </div>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label" for="{{ address_form.latitude.id_for_label }}">Latitude</label>
+                        {{ address_form.latitude }}
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="{{ address_form.longitude.id_for_label }}">Longitude</label>
+                        {{ address_form.longitude }}
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <label class="form-label" for="{{ address_form.notes.id_for_label }}">Notes</label>
+                    {{ address_form.notes }}
+                </div>
+                <div class="form-check mt-3">
+                    {{ address_form.is_default }}
+                    <label class="form-check-label" for="{{ address_form.is_default.id_for_label }}">Set as default address</label>
+                </div>
+                <button class="btn btn-primary mt-4 w-100">Save Address</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

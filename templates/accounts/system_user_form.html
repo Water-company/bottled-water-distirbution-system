@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Edit User{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">System Admin</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">Edit User</h1>
+    <p class="text-secondary mb-0">Update role assignment, activation state, and contact details for {{ managed_user.email }}.</p>
+</section>
+
+<section class="content-card p-4">
+    <form method="post" class="row g-3">
+        {% csrf_token %}
+        {% for field in form %}
+            <div class="col-md-6">
+                <label class="form-label">{{ field.label }}</label>
+                {{ field }}
+                {% if field.errors %}<div class="text-danger small mt-1">{{ field.errors|join:", " }}</div>{% endif %}
+            </div>
+        {% endfor %}
+        <div class="col-12 d-flex gap-2">
+            <button class="btn btn-primary">Save User</button>
+            <a class="btn btn-outline-primary" href="{% url 'accounts:system_users' %}">Back to Users</a>
+        </div>
+    </form>
+    <hr class="my-4">
+    <form method="post" action="{% url 'accounts:system_user_send_reset' managed_user.pk %}">
+        {% csrf_token %}
+        <button class="btn btn-outline-dark">Send Password Reset Email</button>
+    </form>
+</section>
+{% endblock %}

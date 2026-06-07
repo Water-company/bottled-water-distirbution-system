@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Platform Reports{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">System Admin</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">Platform Reports</h1>
+    <p class="text-secondary mb-0">Review platform sales, user growth, and company comparisons for the selected reporting window.</p>
+</section>
+
+<section class="content-card p-4 mb-4">
+    <div class="d-flex flex-wrap justify-content-between gap-3 align-items-end">
+        <form method="get" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">Date From</label>
+                <input type="date" name="date_from" class="form-control" value="{{ date_from|date:'Y-m-d' }}">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Date To</label>
+                <input type="date" name="date_to" class="form-control" value="{{ date_to|date:'Y-m-d' }}">
+            </div>
+            <div class="col-md-4 d-flex gap-2">
+                <button class="btn btn-primary">Apply</button>
+                <a class="btn btn-outline-primary" href="{% url 'accounts:system_reports' %}">Reset</a>
+            </div>
+        </form>
+        <div class="d-flex gap-2">
+            <a class="btn btn-outline-primary" href="{{ excel_export_url }}">Export Excel</a>
+            <a class="btn btn-primary" href="{{ pdf_export_url }}">Export PDF</a>
+        </div>
+    </div>
+</section>
+
+<section class="row g-3 mb-4">
+    <div class="col-md-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Companies</div><div class="display-6 fw-semibold mt-2">{{ summary.companies }}</div></div></div>
+    <div class="col-md-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Verified</div><div class="display-6 fw-semibold mt-2">{{ summary.verified_companies }}</div></div></div>
+    <div class="col-md-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Users</div><div class="display-6 fw-semibold mt-2">{{ summary.users }}</div></div></div>
+    <div class="col-md-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Revenue</div><div class="display-6 fw-semibold mt-2">{{ revenue_display }}</div></div></div>
+</section>
+
+<section class="row g-4">
+    <div class="col-xl-4">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">User Growth</h2>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Role</th><th>New Users</th></tr></thead>
+                    <tbody>
+                        {% for row in growth_rows %}
+                            <tr><td>{{ row.label }}</td><td>{{ row.count }}</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-8">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Company Comparison</h2>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Company</th><th>Status</th><th>Agents</th><th>Users</th><th>Orders</th><th>Revenue</th></tr></thead>
+                    <tbody>
+                        {% for row in company_rows %}
+                            <tr>
+                                <td>{{ row.name }}</td>
+                                <td>{{ row.status }}</td>
+                                <td>{{ row.agents }}</td>
+                                <td>{{ row.users }}</td>
+                                <td>{{ row.orders }}</td>
+                                <td>{{ row.revenue_display }}</td>
+                            </tr>
+                        {% empty %}
+                            <tr><td colspan="6" class="text-center text-secondary py-4">No company data in this range.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

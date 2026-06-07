@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}System Audit Logs{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">System Admin</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">Audit Logs</h1>
+    <p class="text-secondary mb-0">Read-only trace of governance actions across the platform, including actor, entity, before/after data, and source IP.</p>
+</section>
+
+<section class="content-card p-4 mb-4">
+    <form method="get" class="row g-3 align-items-end">
+        <div class="col-md-3"><input type="text" name="action" class="form-control" placeholder="Action filter" value="{{ action_filter }}"></div>
+        <div class="col-md-3"><input type="text" name="entity_type" class="form-control" placeholder="Entity type" value="{{ entity_filter }}"></div>
+        <div class="col-md-4"><input type="text" name="search" class="form-control" placeholder="Search actor, label, or entity ID" value="{{ search }}"></div>
+        <div class="col-md-2 d-flex gap-2">
+            <button class="btn btn-primary">Filter</button>
+            <a class="btn btn-outline-primary" href="{{ export_url }}">Export CSV</a>
+        </div>
+    </form>
+</section>
+
+<section class="content-card p-4">
+    <div class="small text-secondary mb-3">Best viewed on desktop for full column visibility.</div>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th>Timestamp</th><th>Actor</th><th>Action</th><th>Entity</th><th>IP</th><th>Old Values</th><th>New Values</th></tr></thead>
+            <tbody>
+                {% for log in audit_logs %}
+                    <tr>
+                        <td>{{ log.created_at|date:"Y-m-d H:i:s" }}</td>
+                        <td>{{ log.actor.full_name|default:"System" }}</td>
+                        <td>{{ log.action }}</td>
+                        <td>{{ log.entity_type }}{% if log.entity_label %}<div class="small text-secondary">{{ log.entity_label }}</div>{% endif %}</td>
+                        <td>{{ log.ip_address|default:"-" }}</td>
+                        <td><code class="small">{{ log.old_values }}</code></td>
+                        <td><code class="small">{{ log.new_values }}</code></td>
+                    </tr>
+                {% empty %}
+                    <tr><td colspan="7" class="text-center text-secondary py-4">No audit records found.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

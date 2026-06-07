@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Driver Detail{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Driver Performance</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">{{ driver.user.full_name }}</h1>
+    <p class="text-secondary mb-3">Review delivery history, current assignments, feedback, and live availability for this driver.</p>
+    <div class="d-flex flex-wrap gap-2">
+        <a href="{% url 'accounts:agent_drivers' %}" class="btn btn-outline-dark">Back to Drivers</a>
+        <a href="{% url 'accounts:agent_fleet' %}" class="btn btn-outline-primary">Open Fleet Map</a>
+    </div>
+</section>
+
+<section class="row g-4 mb-4">
+    <div class="col-md-6 col-xl-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Completed</div><div class="display-6 fw-semibold">{{ performance.completed_deliveries }}</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">This Month</div><div class="display-6 fw-semibold">{{ performance.month_completed }}</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Active</div><div class="display-6 fw-semibold">{{ performance.active_deliveries }}</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Average Rating</div><div class="display-6 fw-semibold">{% if performance.average_rating %}{{ performance.average_rating|floatformat:1 }}{% else %}-{% endif %}</div></div></div>
+</section>
+
+<section class="row g-4 mb-4">
+    <div class="col-lg-5">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Driver Snapshot</h2>
+            <div class="mb-2"><strong>Email:</strong> {{ driver.user.email }}</div>
+            <div class="mb-2"><strong>Phone:</strong> {{ driver.phone_number|default:driver.user.phone_number }}</div>
+            <div class="mb-2"><strong>Vehicle:</strong> {{ driver.vehicle_identifier|default:"Not set" }}</div>
+            <div class="mb-2"><strong>Status:</strong> {% if driver.is_active %}Active{% else %}Inactive{% endif %}</div>
+            <div class="mb-2"><strong>Live availability:</strong> {% if driver.is_online %}Online{% else %}Offline{% endif %}</div>
+            {% if current_location %}
+                <div class="mb-2"><strong>Last coordinates:</strong> {{ current_location.latitude }}, {{ current_location.longitude }}</div>
+                <div class="small text-secondary">Last ping at {{ current_location.last_ping_at }}</div>
+            {% else %}
+                <div class="small text-secondary">No live location has been shared by this driver yet.</div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-lg-7">
+        <div class="content-card p-4 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 class="h4 mb-0">Current Assignments</h2>
+                <span class="small text-secondary">{{ active_orders|length }} active</span>
+            </div>
+            {% if active_orders %}
+                {% for order in active_orders %}
+                    <div class="border rounded p-3 mb-3">
+                        <div class="fw-semibold">{{ order.order_number }} | {{ order.get_status_display }}</div>
+                        <div class="small text-secondary">{{ order.customer.full_name }} | {{ order.delivery_address }}</div>
+                        <div class="small text-secondary">Updated {{ order.updated_at }}</div>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-secondary mb-0">This driver has no active deliveries right now.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<section class="row g-4">
+    <div class="col-lg-7">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Recent Delivery History</h2>
+            {% if recent_orders %}
+                <div class="table-responsive">
+                    <table class="table align-middle">
+                        <thead>
+                            <tr>
+                                <th>Order</th>
+                                <th>Customer</th>
+                                <th>Status</th>
+                                <th>Delivered</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for order in recent_orders %}
+                                <tr>
+                                    <td>{{ order.order_number }}</td>
+                                    <td>{{ order.customer.full_name }}</td>
+                                    <td>{{ order.get_status_display }}</td>
+                                    <td>{{ order.delivered_at|default:"-" }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="text-secondary mb-0">No delivery history yet.</p>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Recent Feedback</h2>
+            {% if recent_feedback %}
+                {% for feedback in recent_feedback %}
+                    <div class="border-bottom py-3">
+                        <div class="fw-semibold">{{ feedback.order.order_number }} | {{ feedback.rating }}/5</div>
+                        <div class="small text-secondary">{{ feedback.customer.full_name }}</div>
+                        {% if feedback.comment %}<div class="small mt-1">{{ feedback.comment }}</div>{% endif %}
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-secondary mb-0">No customer ratings have been left for this driver yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+{% endblock %}

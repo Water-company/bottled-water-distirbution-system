@@ -12,7 +12,9 @@
             <h1 class="h4 mb-1">{{ request.user.full_name }}</h1>
             <p class="text-secondary mb-2">{{ request.user.email }}</p>
             <p class="small text-secondary mb-3">{{ request.user.get_role_display }}</p>
+            <p class="small fw-semibold mb-3">Wallet Credit: {{ request.user.wallet_balance }}</p>
             <a href="{% url 'accounts:password_change' %}" class="btn btn-outline-primary btn-sm">Change Password</a>
+            <a href="{% url 'accounts:addresses' %}" class="btn btn-outline-dark btn-sm mt-2">Manage Addresses</a>
         </div>
     </div>
     <div class="col-lg-8">
@@ -44,6 +46,22 @@
                 {% for error in form.non_field_errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
                 <button type="submit" class="btn btn-primary mt-4">Save Changes</button>
             </form>
+        </div>
+        <div class="content-card p-4 mt-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 class="h4 mb-0">Saved Addresses</h2>
+                <a href="{% url 'accounts:addresses' %}" class="btn btn-sm btn-outline-primary">Manage</a>
+            </div>
+            {% if saved_addresses %}
+                {% for address in saved_addresses %}
+                    <div class="border rounded p-3 mb-3">
+                        <div class="fw-semibold">{{ address.label }}{% if address.is_default %} <span class="badge text-bg-success">Default</span>{% endif %}</div>
+                        <div class="small text-secondary">{{ address.address_line }}</div>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-secondary mb-0">You have not saved any delivery addresses yet.</p>
+            {% endif %}
         </div>
     </div>
 </div>

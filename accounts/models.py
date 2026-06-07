@@ -1,3 +1,6 @@
+from decimal import Decimal
+
+from django.conf import settings
 from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.core.validators import RegexValidator
@@ -62,11 +65,15 @@ class User(TimeStampedModel, AbstractBaseUser, PermissionsMixin):
     phone_number = models.CharField(max_length=20, unique=True, validators=[phone_validator])
     profile_image = models.ImageField(upload_to="profiles/", blank=True, null=True)
     role = models.CharField(max_length=30, choices=UserRole.choices, default=UserRole.CUSTOMER)
+    wallet_balance = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     is_customer = models.BooleanField(default=True)
     date_joined = models.DateTimeField(default=timezone.now)
     email_verified_at = models.DateTimeField(blank=True, null=True)
+    failed_login_attempts = models.PositiveSmallIntegerField(default=0)
+    locked_until = models.DateTimeField(blank=True, null=True)
+    last_failed_login_at = models.DateTimeField(blank=True, null=True)
 
     objects = UserManager()
 
@@ -111,6 +118,33 @@ class User(TimeStampedModel, AbstractBaseUser, PermissionsMixin):
         self.email_verified_at = timezone.now()
         self.save(update_fields=["is_active", "email_verified_at", "updated_at"])
 
+    @property
+    def is_locked(self):
+        return bool(self.locked_until and self.locked_until > timezone.now())
+
+    def register_failed_login(self):
+        now = timezone.now()
+        attempts = (self.failed_login_attempts or 0) + 1
+        self.last_failed_login_at = now
+        if attempts >= settings.ACCOUNT_LOCKOUT_THRESHOLD:
+            self.failed_login_attempts = 0
+            self.locked_until = now + timezone.timedelta(minutes=settings.ACCOUNT_LOCKOUT_MINUTES)
+        else:
+            self.failed_login_attempts = attempts
+        self.save(update_fields=["failed_login_attempts", "locked_until", "last_failed_login_at", "updated_at"])
+        return self.locked_until
+
+    def clear_login_lock(self):
+        if self.failed_login_attempts or self.locked_until or self.last_failed_login_at:
+            self.failed_login_attempts = 0
+            self.locked_until = None
+            self.last_failed_login_at = None
+            self.save(update_fields=["failed_login_attempts", "locked_until", "last_failed_login_at", "updated_at"])
+
+    def credit_wallet(self, amount):
+        self.wallet_balance = Decimal(self.wallet_balance) + Decimal(amount)
+        self.save(update_fields=["wallet_balance", "updated_at"])
+
 
 class RegistrationOTP(TimeStampedModel):
     user = models.ForeignKey(
@@ -136,3 +170,35 @@ class RegistrationOTP(TimeStampedModel):
     def mark_consumed(self):
         self.consumed_at = timezone.now()
         self.save(update_fields=["consumed_at", "updated_at"])
+
+
+class CustomerAddress(TimeStampedModel):
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="saved_addresses",
+    )
+    label = models.CharField(max_length=80)
+    address_line = models.TextField()
+    latitude = models.DecimalField(max_digits=9, decimal_places=6)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6)
+    notes = models.TextField(blank=True)
+    is_default = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ("-is_default", "label", "-updated_at")
+        constraints = [
+            models.UniqueConstraint(fields=["user", "label"], name="unique_customer_address_label"),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} - {self.label}"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if self.is_default:
+            self.user.saved_addresses.exclude(pk=self.pk).update(is_default=False)
+
+    def set_as_default(self):
+        self.is_default = True
+        self.save(update_fields=["is_default", "updated_at"])

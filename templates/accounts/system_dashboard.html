@@ -5,14 +5,23 @@
     <span class="eyebrow">System Admin</span>
     <h1 class="display-6 fw-semibold mt-2 mb-2">Platform Control Center</h1>
     <p class="text-secondary mb-2">Manage companies, role accounts, and system-wide order activity without relying on Django admin.</p>
-    <a href="/admin/" class="btn btn-outline-dark btn-sm">Open Django Admin (Optional)</a>
+    <div class="d-flex flex-wrap gap-2">
+        <a href="{% url 'accounts:system_companies' %}" class="btn btn-primary btn-sm">Companies</a>
+        <a href="{% url 'accounts:system_users' %}" class="btn btn-outline-primary btn-sm">Users</a>
+        <a href="{% url 'accounts:system_audit_logs' %}" class="btn btn-outline-primary btn-sm">Audit Logs</a>
+        <a href="{% url 'accounts:system_reports' %}" class="btn btn-outline-primary btn-sm">Reports</a>
+        <a href="{% url 'accounts:system_announcements' %}" class="btn btn-outline-primary btn-sm">Announcements</a>
+        <a href="/admin/" class="btn btn-outline-dark btn-sm">Open Django Admin (Optional)</a>
+    </div>
 </section>
 
 <section class="row g-4 mb-4">
     <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Companies</span><h2>{{ stats.companies }}</h2></div></div>
-    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Agents</span><h2>{{ stats.agents }}</h2></div></div>
-    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Drivers</span><h2>{{ stats.drivers }}</h2></div></div>
-    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Orders</span><h2>{{ stats.orders }}</h2></div></div>
+    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Pending EFDA</span><h2>{{ stats.pending_companies }}</h2></div></div>
+    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Verified Companies</span><h2>{{ stats.verified_companies }}</h2></div></div>
+    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Users</span><h2>{{ stats.users }}</h2></div></div>
+    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Suspended Companies</span><h2>{{ stats.suspended_companies }}</h2></div></div>
+    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Locked Users</span><h2>{{ stats.locked_users }}</h2></div></div>
 </section>
 
 <section class="row g-4 mb-4">
@@ -21,6 +30,7 @@
             <h2 class="h4 mb-3">Create Company Admin</h2>
             <form method="post" action="{% url 'accounts:create_company_admin' %}">
                 {% csrf_token %}
+                <input type="hidden" name="next" value="{% url 'accounts:system_dashboard' %}">
                 {% for field in company_admin_form %}<div class="mb-3">{{ field }}</div>{% endfor %}
                 <button class="btn btn-primary w-100">Create Company Admin</button>
             </form>
@@ -29,6 +39,7 @@
             <h2 class="h4 mb-3">Create System Admin</h2>
             <form method="post" action="{% url 'accounts:create_system_admin' %}">
                 {% csrf_token %}
+                <input type="hidden" name="next" value="{% url 'accounts:system_dashboard' %}">
                 {% for field in system_admin_form %}<div class="mb-3">{{ field }}</div>{% endfor %}
                 <button class="btn btn-outline-primary w-100">Create System Admin</button>
             </form>
@@ -39,6 +50,7 @@
             <h2 class="h4 mb-3">Register Water Company</h2>
             <form method="post" action="{% url 'accounts:create_company' %}" enctype="multipart/form-data" class="row g-3">
                 {% csrf_token %}
+                <input type="hidden" name="next" value="{% url 'accounts:system_dashboard' %}">
                 {% for field in company_form %}
                     <div class="col-md-6">{{ field }}</div>
                 {% endfor %}
@@ -52,7 +64,7 @@
     <h2 class="h4 mb-3">Registered Companies</h2>
     <div class="table-responsive">
         <table class="table align-middle">
-            <thead><tr><th>Company</th><th>Admin</th><th>Location</th><th>EFDA Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Company</th><th>Admin</th><th>Location</th><th>EFDA Status</th><th>Platform Access</th><th>Actions</th></tr></thead>
             <tbody>
                 {% for company in companies %}
                     <tr>
@@ -66,10 +78,18 @@
                             </span>
                         </td>
                         <td>
+                            {% if company.is_active %}
+                                <span class="badge text-bg-success">Active</span>
+                            {% else %}
+                                <span class="badge text-bg-danger">Suspended</span>
+                            {% endif %}
+                        </td>
+                        <td>
                             <div class="d-flex flex-wrap gap-2">
                                 {% if company.verification_status != "verified" %}
                                     <form method="post" action="{% url 'accounts:verify_company' company.pk %}" class="d-flex gap-2">
                                         {% csrf_token %}
+                                        <input type="hidden" name="next" value="{% url 'accounts:system_dashboard' %}">
                                         <input type="text" name="efda_reference" class="form-control form-control-sm" placeholder="EFDA Ref" style="max-width: 140px;">
                                         <button class="btn btn-sm btn-primary">Verify</button>
                                     </form>
@@ -77,13 +97,28 @@
                                 {% if company.verification_status != "rejected" %}
                                     <form method="post" action="{% url 'accounts:reject_company' company.pk %}">
                                         {% csrf_token %}
+                                        <input type="hidden" name="next" value="{% url 'accounts:system_dashboard' %}">
                                         <button class="btn btn-sm btn-outline-danger">Reject</button>
                                     </form>
                                 {% endif %}
                                 {% if company.verification_status == "rejected" %}
                                     <form method="post" action="{% url 'accounts:resubmit_company' company.pk %}">
                                         {% csrf_token %}
+                                        <input type="hidden" name="next" value="{% url 'accounts:system_dashboard' %}">
                                         <button class="btn btn-sm btn-outline-primary">Resubmit</button>
+                                    </form>
+                                {% endif %}
+                                {% if company.is_active %}
+                                    <form method="post" action="{% url 'accounts:suspend_company' company.pk %}">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="next" value="{% url 'accounts:system_dashboard' %}">
+                                        <button class="btn btn-sm btn-outline-danger">Suspend</button>
+                                    </form>
+                                {% else %}
+                                    <form method="post" action="{% url 'accounts:reactivate_company' company.pk %}">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="next" value="{% url 'accounts:system_dashboard' %}">
+                                        <button class="btn btn-sm btn-outline-success">Reactivate</button>
                                     </form>
                                 {% endif %}
                             </div>
@@ -116,21 +151,29 @@
 </section>
 
 <section class="content-card p-4">
-    <h2 class="h4 mb-3">Company Admin Coverage</h2>
-    <div class="table-responsive">
-        <table class="table align-middle">
-            <thead><tr><th>Company</th><th>Admin</th><th>Verification</th><th>Agents</th></tr></thead>
-            <tbody>
-                {% for company in companies %}
-                    <tr>
-                        <td>{{ company.name }}</td>
-                        <td>{{ company.admin.full_name|default:"Unassigned" }}</td>
-                        <td>{{ company.get_verification_status_display }}</td>
-                        <td>{{ company.agents.count }}</td>
-                    </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <div class="row g-4">
+        <div class="col-lg-6">
+            <h2 class="h4 mb-3">Recent Audit Activity</h2>
+            {% for log in recent_audit_logs %}
+                <div class="border rounded p-3 mb-2">
+                    <div class="fw-semibold">{{ log.action }}</div>
+                    <div class="small text-secondary">{{ log.entity_type }} | {{ log.entity_label|default:log.entity_id }} | {{ log.created_at|date:"Y-m-d H:i" }}</div>
+                </div>
+            {% empty %}
+                <p class="text-secondary mb-0">No audit activity yet.</p>
+            {% endfor %}
+        </div>
+        <div class="col-lg-6">
+            <h2 class="h4 mb-3">Recent Announcements</h2>
+            {% for announcement in recent_announcements %}
+                <div class="border rounded p-3 mb-2">
+                    <div class="fw-semibold">{{ announcement.title }}</div>
+                    <div class="small text-secondary">{{ announcement.get_target_role_display }} | {{ announcement.sent_count }} sent | {{ announcement.created_at|date:"Y-m-d H:i" }}</div>
+                </div>
+            {% empty %}
+                <p class="text-secondary mb-0">No announcements sent yet.</p>
+            {% endfor %}
+        </div>
     </div>
 </section>
 {% endblock %}

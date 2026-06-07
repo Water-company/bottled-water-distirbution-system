@@ -1,35 +1,170 @@
 {% extends "base.html" %}
 {% block title %}Login{% endblock %}
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-6 col-lg-5">
-        <div class="hero-card p-4 p-lg-5">
-            <span class="eyebrow">Welcome Back</span>
-            <h1 class="h2 fw-semibold mt-2">Login to your account</h1>
-            <form method="post" class="mt-4" novalidate>
-                {% csrf_token %}
-                <div class="mb-3">
-                    <label class="form-label" for="{{ form.email.id_for_label }}">Email</label>
-                    {{ form.email }}
-                    {% for error in form.email.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
-                </div>
-                <div class="mb-3">
-                    <label class="form-label" for="{{ form.password.id_for_label }}">Password</label>
-                    {{ form.password }}
-                    {% for error in form.password.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
-                </div>
-                <div class="form-check mb-3">
-                    {{ form.remember_me }}
-                    <label class="form-check-label" for="{{ form.remember_me.id_for_label }}">Remember me</label>
-                </div>
-                {% for error in form.non_field_errors %}<div class="text-danger small mb-3">{{ error }}</div>{% endfor %}
-                <button type="submit" class="btn btn-primary w-100">Login</button>
-            </form>
-            <div class="d-flex justify-content-between flex-wrap gap-2 mt-3 small">
-                <a href="{% url 'accounts:password_reset' %}">Forgot password?</a>
-                <a href="{% url 'accounts:register' %}">Create account</a>
-            </div>
-        </div>
+<!-- Stitch Design Styling Applied -->
+<div class="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900">
+  <!-- BEGIN: MainHeader -->
+  <header class="w-full max-w-7xl mx-auto px-6 py-8 flex items-center justify-between">
+
+    <nav class="hidden md:flex items-center space-x-8 text-sm font-medium text-slate-500">
+      <a class="hover:text-blue-700 transition-colors" href="{% url 'home' %}">Home</a>
+    </nav>
+    <div class="flex items-center space-x-6">
+      <a class="text-sm font-semibold text-[#1e3a8a] border-b-2 border-[#1e3a8a]" href="{% url 'accounts:login' %}">Login</a>
+      <a class="bg-[#0038a8] text-white px-5 py-2 rounded-md text-sm font-semibold hover:bg-blue-800 transition-all" href="{% url 'accounts:register' %}">Sign Up</a>
     </div>
+  </header>
+  <!-- END: MainHeader -->
+
+  <!-- BEGIN: LoginSection -->
+  <main class="flex-grow flex items-center justify-center px-4 py-12 relative overflow-hidden">
+    <!-- Decorative dots pattern background element -->
+    <div aria-hidden="true" class="absolute right-[20%] top-1/2 -translate-y-1/2 opacity-20 hidden lg:block">
+      <div class="grid grid-cols-3 gap-3">
+        <div class="w-2 h-2 bg-slate-400 rounded-full"></div>
+        <div class="w-2 h-2 bg-slate-400 rounded-full"></div>
+        <div class="w-2 h-2 bg-slate-400 rounded-full"></div>
+        <div class="w-2 h-2 bg-slate-400 rounded-full"></div>
+        <div class="w-2 h-2 bg-slate-400 rounded-full"></div>
+        <div class="w-2 h-2 bg-slate-400 rounded-full"></div>
+        <div class="w-2 h-2 bg-slate-400 rounded-full"></div>
+        <div class="w-2 h-2 bg-slate-400 rounded-full"></div>
+        <div class="w-2 h-2 bg-slate-400 rounded-full"></div>
+      </div>
+    </div>
+
+    <!-- BEGIN: LoginCard -->
+    <div class="bg-white w-full max-w-md p-8 md:p-12 rounded-2xl shadow-xl shadow-blue-900/5 z-10">
+      <div class="flex flex-col items-center text-center mb-8">
+        <!-- Brand Icon (Water Drop) -->
+        <div class="w-14 h-14 bg-[#0038a8] rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-blue-200">
+          <svg class="h-8 w-8 text-white" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 21.5c-4.142 0-7.5-3.358-7.5-7.5 0-4.142 7.5-12.5 7.5-12.5s7.5 8.358 7.5 12.5c0 4.142-3.358 7.5-7.5 7.5z"></path>
+          </svg>
+        </div>
+        <h1 class="text-3xl font-bold text-slate-800 mb-3">Welcome Back</h1>
+        <p class="text-slate-500 text-sm max-w-[280px] leading-relaxed">
+          Log in to manage your fluid distribution ecosystem.
+        </p>
+      </div>
+
+      <!-- BEGIN: LoginForm -->
+      <form method="post" class="space-y-6">
+        {% csrf_token %}
+        
+        <!-- Email Field -->
+        <div class="space-y-2">
+          <label class="block text-[10px] uppercase tracking-widest font-bold text-slate-400" for="{{ form.email.id_for_label }}">
+            Email Address
+          </label>
+          <div class="relative">
+            {{ form.email }}
+            <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+              <svg class="h-5 w-5 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+              </svg>
+            </div>
+          </div>
+          {% for error in form.email.errors %}
+            <div class="text-red-500 text-xs mt-1">{{ error }}</div>
+          {% endfor %}
+        </div>
+
+        <!-- Password Field -->
+        <div class="space-y-2">
+          <label class="block text-[10px] uppercase tracking-widest font-bold text-slate-400" for="{{ form.password.id_for_label }}">
+            Password
+          </label>
+          <div class="relative">
+            {{ form.password }}
+            <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+              <svg class="h-5 w-5 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+              </svg>
+            </div>
+          </div>
+          {% for error in form.password.errors %}
+            <div class="text-red-500 text-xs mt-1">{{ error }}</div>
+          {% endfor %}
+        </div>
+
+        <!-- Remember Me & Forgot Password -->
+        <div class="flex items-center justify-between text-xs sm:text-sm font-medium">
+          <label class="flex items-center text-slate-600 cursor-pointer">
+            {{ form.remember_me }}
+            <span class="ml-2">Remember Me</span>
+          </label>
+          <a class="text-[#1e3a8a] font-bold hover:underline" href="{% url 'accounts:password_reset' %}">Forgot Password?</a>
+        </div>
+
+        <!-- Non-field errors -->
+        {% for error in form.non_field_errors %}
+          <div class="text-red-500 text-xs text-center">{{ error }}</div>
+        {% endfor %}
+
+        <!-- Submit Button -->
+        <button type="submit" class="w-full bg-[#0038a8] text-white py-4 rounded-xl font-bold flex items-center justify-center space-x-2 hover:bg-blue-800 transition-all shadow-lg shadow-blue-100 group">
+          <span>Login</span>
+          <svg class="h-5 w-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M14 5l7 7m0 0l-7 7m7-7H3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+          </svg>
+        </button>
+
+        <!-- Signup Link -->
+        <div class="text-center pt-2">
+          <p class="text-slate-500 text-sm">
+            Don't have an account? 
+            <a class="text-[#1e3a8a] font-bold hover:underline" href="{% url 'accounts:register' %}">Sign Up</a>
+          </p>
+        </div>
+      </form>
+      <!-- END: LoginForm -->
+    </div>
+    <!-- END: LoginCard -->
+  </main>
+  <!-- END: LoginSection -->
+
+  <!-- BEGIN: MainFooter -->
+  <footer class="w-full max-w-7xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-400 border-t border-slate-100">
+    <div class="mb-4 sm:mb-0">
+      <span class="font-bold text-[#1e3a8a] mr-8">AquaFlow</span>
+    </div>
+    <div class="text-center sm:text-right">
+      © 2024 AquaFlow Logistics. All rights reserved.
+    </div>
+  </footer>
+  <!-- END: MainFooter -->
 </div>
+
+<style>
+  /* Input field styling to match Stitch design */
+  input[type="email"], 
+  input[type="password"],
+  input[type="text"] {
+    width: 100% !important;
+    background-color: #f8fafc !important;
+    border: none !important;
+    border-radius: 0.5rem !important;
+    padding: 0.75rem 2.5rem 0.75rem 1rem !important;
+    color: #1e293b !important;
+    font-size: 0.875rem !important;
+    outline: none !important;
+    box-shadow: none !important;
+  }
+  
+  input[type="email"]:focus, 
+  input[type="password"]:focus {
+    box-shadow: 0 0 0 2px #3b82f6 !important;
+  }
+
+  input[type="checkbox"] {
+    border-radius: 0.25rem;
+    border: 1px solid #cbd5e1;
+    color: #0038a8;
+    width: 1rem;
+    height: 1rem;
+  }
+</style>
+
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 {% endblock %}

@@ -22,6 +22,11 @@
         {% if company.premium_feature_enabled %}
             <span class="map-summary-chip">Premium: {{ company.premium_discount_percent }}% after {{ company.premium_streak_threshold }} consecutive deliveries</span>
         {% endif %}
+        <a class="btn btn-sm btn-outline-primary" href="{% url 'accounts:company_products' %}">Products</a>
+        <a class="btn btn-sm btn-outline-primary" href="{% url 'accounts:company_agents' %}">Agents</a>
+        <a class="btn btn-sm btn-outline-primary" href="{% url 'accounts:company_inventory' %}">Inventory</a>
+        <a class="btn btn-sm btn-primary" href="{% url 'accounts:company_reports' %}">Reports</a>
+        <a class="btn btn-sm btn-outline-primary" href="{% url 'accounts:company_ai_insights' %}">AI Insights</a>
     </div>
 </section>
 
@@ -156,7 +161,19 @@
                 <div class="small text-secondary mb-3">
                     Requested: {{ refund_request.requested_amount }}
                     {% if refund_request.approved_amount %}| Approved: {{ refund_request.approved_amount }}{% endif %}
+                    | Method: {{ refund_request.get_payout_method_display }}
                 </div>
+                {% if refund_request.evidences.all %}
+                    <div class="row g-2 mb-3">
+                        {% for evidence in refund_request.evidences.all %}
+                            <div class="col-4">
+                                <a href="{{ evidence.image.url }}" target="_blank">
+                                    <img src="{{ evidence.image.url }}" alt="Refund evidence" class="img-fluid rounded border">
+                                </a>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
                 {% if refund_request.status == "pending" %}
                     <div class="row g-2">
                         <div class="col-lg-6">
@@ -175,10 +192,28 @@
                             </form>
                         </div>
                     </div>
+                {% elif refund_request.status == "approved" or refund_request.status == "failed" %}
+                    <div class="row g-2">
+                        <div class="col-lg-6">
+                            <form method="post" action="{% url 'accounts:process_refund' refund_request.pk %}">
+                                {% csrf_token %}
+                                <button class="btn btn-success btn-sm">{% if refund_request.status == "failed" %}Retry Processing{% else %}Mark as Processed{% endif %}</button>
+                            </form>
+                        </div>
+                        <div class="col-lg-6">
+                            <form method="post" action="{% url 'accounts:fail_refund' refund_request.pk %}" class="row g-2">
+                                {% csrf_token %}
+                                <div class="col-12"><input type="text" name="failure_reason" class="form-control" placeholder="Reason processing failed" required></div>
+                                <div class="col-12"><button class="btn btn-outline-danger btn-sm">Mark Processing Failed</button></div>
+                            </form>
+                        </div>
+                    </div>
                 {% else %}
                     <div class="small text-secondary">
                         Reviewed by {{ refund_request.reviewed_by.full_name|default:"System" }}
                         {% if refund_request.resolution_note %}| Note: {{ refund_request.resolution_note }}{% endif %}
+                        {% if refund_request.failure_reason %}| Failure: {{ refund_request.failure_reason }}{% endif %}
+                        {% if refund_request.processed_at %}| Processed: {{ refund_request.processed_at|date:"M d, Y H:i" }}{% endif %}
                     </div>
                 {% endif %}
             </div>
@@ -189,45 +224,39 @@
 </section>
 
 <section class="content-card p-4 mb-4">
-    <h2 class="h4 mb-3">Restock Requests</h2>
-    {% if restock_requests %}
-        {% for request_item in restock_requests %}
+    <h2 class="h4 mb-3">Pending Batch Stock Requests</h2>
+    {% if pending_batch_sales %}
+        {% for request_item in pending_batch_sales %}
             <div class="border rounded p-3 mb-3">
                 <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
                     <div>
                         <strong>{{ request_item.agent.name }}</strong>
-                        <div class="small text-secondary">{{ request_item.product.name }} | Requested: {{ request_item.quantity_requested }}</div>
+                        <div class="small text-secondary">{{ request_item.batch.product.name }} | Batch {{ request_item.batch.batch_number }} | Requested: {{ request_item.quantity_requested }}</div>
                     </div>
                     <span class="badge text-bg-light">{{ request_item.get_status_display }}</span>
                 </div>
                 {% if request_item.status == "pending" %}
-                    <form method="post" action="{% url 'accounts:approve_restock' request_item.pk %}" class="row g-2">
+                    <form method="post" action="{% url 'accounts:company_batch_sale_approve' request_item.pk %}" class="row g-2">
                         {% csrf_token %}
+                        <input type="hidden" name="next" value="{% url 'accounts:company_dashboard' %}">
                         <div class="col-md-2"><input type="number" name="quantity_approved" class="form-control" value="{{ request_item.quantity_requested }}"></div>
-                        <div class="col-md-2"><input type="date" name="due_date" class="form-control"></div>
-                        <div class="col-md-2"><input type="number" step="0.01" name="base_price" class="form-control" placeholder="Base"></div>
-                        <div class="col-md-2"><input type="number" step="0.01" name="excise_tax" class="form-control" placeholder="Excise"></div>
-                        <div class="col-md-2"><input type="number" step="0.01" name="vat" class="form-control" placeholder="VAT"></div>
-                        <div class="col-md-2"><input type="number" step="0.01" name="transport_cost" class="form-control" placeholder="Transport"></div>
-                        <div class="col-md-3"><input type="number" step="0.01" name="amount_paid" class="form-control" placeholder="Amount Paid" value="0"></div>
-                        <div class="col-md-3">
-                            <select name="status" class="form-select">
-                                <option value="pending">Pending</option>
-                                <option value="partial">Partial</option>
-                                <option value="paid">Paid</option>
-                                <option value="overdue">Overdue</option>
-                            </select>
-                        </div>
-                        <div class="col-md-3"><input type="text" name="batch_number" class="form-control" placeholder="Batch Number"></div>
-                        <div class="col-md-3"><input type="date" name="received_at" class="form-control"></div>
-                        <div class="col-md-3"><input type="date" name="expires_at" class="form-control"></div>
-                        <div class="col-md-12"><button class="btn btn-primary">Approve & Create Schedule</button></div>
+                        <div class="col-md-3"><input type="number" step="0.01" name="unit_price" class="form-control" value="{{ request_item.batch.unit_price }}" placeholder="Unit price"></div>
+                        <div class="col-md-3"><input type="number" step="0.01" name="initial_payment_amount" class="form-control" value="{{ request_item.requested_upfront_amount }}" placeholder="Initial payment"></div>
+                        <div class="col-md-2"><input type="date" name="credit_due_date" class="form-control"></div>
+                        <div class="col-md-12"><textarea name="decision_note" class="form-control" rows="2" placeholder="Approval note"></textarea></div>
+                        <div class="col-md-12"><button class="btn btn-primary">Approve Stock Request</button></div>
+                    </form>
+                    <form method="post" action="{% url 'accounts:company_batch_sale_reject' request_item.pk %}" class="row g-2 mt-2">
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{% url 'accounts:company_dashboard' %}">
+                        <div class="col-md-9"><input type="text" name="decision_note" class="form-control" placeholder="Rejection reason" required></div>
+                        <div class="col-md-3"><button class="btn btn-outline-danger w-100">Reject</button></div>
                     </form>
                 {% endif %}
             </div>
         {% endfor %}
     {% else %}
-        <p class="text-secondary mb-0">No restock requests yet.</p>
+        <p class="text-secondary mb-0">No pending agent stock requests right now.</p>
     {% endif %}
 </section>
 
@@ -254,26 +283,29 @@
 <section class="row g-4">
     <div class="col-lg-6">
         <div class="content-card p-4 h-100">
-            <h2 class="h4 mb-3">Payment Schedules</h2>
-            {% if payment_schedules %}
-                <div class="table-responsive">
-                    <table class="table align-middle">
-                        <thead><tr><th>Agent</th><th>Product</th><th>Due</th><th>Status</th><th>Total</th></tr></thead>
-                        <tbody>
-                            {% for schedule in payment_schedules %}
-                                <tr>
-                                    <td>{{ schedule.restock_request.agent.name }}</td>
-                                    <td>{{ schedule.restock_request.product.name }}</td>
-                                    <td>{{ schedule.due_date }}</td>
-                                    <td>{{ schedule.get_status_display }}</td>
-                                    <td>{{ schedule.total_amount }}</td>
-                                </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
+            <h2 class="h4 mb-3">Pending Agent Payment Confirmations</h2>
+            {% if pending_batch_payments %}
+                {% for payment in pending_batch_payments %}
+                    <div class="border rounded p-3 mb-3">
+                        <div class="fw-semibold">{{ payment.sale.agent.name }} submitted {{ payment.amount }}</div>
+                        <div class="small text-secondary mb-2">{{ payment.sale.batch.batch_number }} | {{ payment.sale.batch.product.name }}</div>
+                        <div class="d-flex flex-wrap gap-2">
+                            <form method="post" action="{% url 'accounts:company_batch_payment_confirm' payment.pk %}">
+                                {% csrf_token %}
+                                <input type="hidden" name="next" value="{% url 'accounts:company_dashboard' %}">
+                                <button class="btn btn-primary btn-sm">Confirm</button>
+                            </form>
+                            <form method="post" action="{% url 'accounts:company_batch_payment_reject' payment.pk %}" class="d-flex gap-2">
+                                {% csrf_token %}
+                                <input type="hidden" name="next" value="{% url 'accounts:company_dashboard' %}">
+                                <input type="text" name="rejection_reason" class="form-control form-control-sm" placeholder="Reason" required>
+                                <button class="btn btn-outline-danger btn-sm">Reject</button>
+                            </form>
+                        </div>
+                    </div>
+                {% endfor %}
             {% else %}
-                <p class="text-secondary mb-0">No payment schedules created yet.</p>
+                <p class="text-secondary mb-0">No pending payment confirmations right now.</p>
             {% endif %}
         </div>
     </div>

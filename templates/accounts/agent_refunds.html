@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Refund Management{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Refund Management</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">{{ agent.name }}</h1>
+    <p class="text-secondary mb-3">Review refund requests for deliveries handled by this branch and record written decisions for every outcome.</p>
+    <div class="d-flex flex-wrap gap-2">
+        <a href="{% url 'accounts:agent_dashboard' %}" class="btn btn-outline-dark">Back to Dashboard</a>
+        <a href="{% url 'accounts:agent_fleet' %}" class="btn btn-outline-primary">Open Fleet</a>
+    </div>
+</section>
+
+<section class="row g-4 mb-4">
+    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Pending</div><div class="display-6 fw-semibold">{{ refund_summary.pending }}</div></div></div>
+    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Approved</div><div class="display-6 fw-semibold">{{ refund_summary.approved }}</div></div></div>
+    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Rejected</div><div class="display-6 fw-semibold">{{ refund_summary.rejected }}</div></div></div>
+    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Processed</div><div class="display-6 fw-semibold">{{ refund_summary.processed }}</div></div></div>
+    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Failed</div><div class="display-6 fw-semibold text-danger">{{ refund_summary.failed }}</div></div></div>
+</section>
+
+<section class="content-card p-4 mb-4">
+    <form method="get" class="row g-3 align-items-end">
+        <div class="col-md-4">
+            <label class="form-label">Filter by Status</label>
+            <select name="status" class="form-select">
+                <option value="">All statuses</option>
+                {% for value, label in status_choices %}
+                    <option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button class="btn btn-outline-primary w-100">Apply</button>
+        </div>
+    </form>
+</section>
+
+<section class="content-card p-4">
+    <h2 class="h4 mb-3">Refund Queue</h2>
+    {% if refund_requests %}
+        {% for refund_request in refund_requests %}
+            <div class="border rounded p-3 mb-3">
+                <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-2">
+                    <div>
+                        <strong>{{ refund_request.order.order_number }}</strong>
+                        <div class="small text-secondary">
+                            {{ refund_request.order.customer.full_name }} | {{ refund_request.get_request_type_display }}
+                        </div>
+                    </div>
+                    <span class="badge text-bg-light">{{ refund_request.get_status_display }}</span>
+                </div>
+                <div class="small mb-2"><strong>Reason:</strong> {{ refund_request.reason|default:"No reason provided." }}</div>
+                <div class="small text-secondary mb-3">
+                    Requested amount: {{ refund_request.requested_amount }}
+                    {% if refund_request.approved_amount %}| Approved amount: {{ refund_request.approved_amount }}{% endif %}
+                    | Method: {{ refund_request.get_payout_method_display }}
+                </div>
+                {% if refund_request.evidences.all %}
+                    <div class="row g-2 mb-3">
+                        {% for evidence in refund_request.evidences.all %}
+                            <div class="col-4">
+                                <a href="{{ evidence.image.url }}" target="_blank">
+                                    <img src="{{ evidence.image.url }}" alt="Refund evidence" class="img-fluid rounded border">
+                                </a>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+                {% if refund_request.status == "pending" %}
+                    <div class="row g-3">
+                        <div class="col-lg-6">
+                            <form method="post" action="{% url 'accounts:agent_approve_refund' refund_request.pk %}" class="row g-2">
+                                {% csrf_token %}
+                                <div class="col-md-4">
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        name="approved_amount"
+                                        class="form-control"
+                                        value="{{ refund_request.requested_amount }}"
+                                        placeholder="Amount"
+                                    >
+                                </div>
+                                <div class="col-md-8">
+                                    <input type="text" name="resolution_note" class="form-control" placeholder="Approval reason" required>
+                                </div>
+                                <div class="col-12">
+                                    <button class="btn btn-primary btn-sm">Approve Refund</button>
+                                </div>
+                            </form>
+                        </div>
+                        <div class="col-lg-6">
+                            <form method="post" action="{% url 'accounts:agent_reject_refund' refund_request.pk %}" class="row g-2">
+                                {% csrf_token %}
+                                <div class="col-12">
+                                    <input type="text" name="resolution_note" class="form-control" placeholder="Rejection reason" required>
+                                </div>
+                                <div class="col-12">
+                                    <button class="btn btn-outline-danger btn-sm">Reject Refund</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                {% elif refund_request.status == "approved" or refund_request.status == "failed" %}
+                    <div class="row g-3">
+                        <div class="col-lg-6">
+                            <form method="post" action="{% url 'accounts:agent_process_refund' refund_request.pk %}">
+                                {% csrf_token %}
+                                <button class="btn btn-success btn-sm">{% if refund_request.status == "failed" %}Retry Processing{% else %}Mark as Processed{% endif %}</button>
+                            </form>
+                        </div>
+                        <div class="col-lg-6">
+                            <form method="post" action="{% url 'accounts:agent_fail_refund' refund_request.pk %}" class="row g-2">
+                                {% csrf_token %}
+                                <div class="col-12">
+                                    <input type="text" name="failure_reason" class="form-control" placeholder="Why processing failed?" required>
+                                </div>
+                                <div class="col-12">
+                                    <button class="btn btn-outline-danger btn-sm">Mark Processing Failed</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                {% else %}
+                    <div class="small text-secondary">
+                        Reviewed by {{ refund_request.reviewed_by.full_name|default:"System" }}
+                        {% if refund_request.reviewed_at %}| Reviewed at {{ refund_request.reviewed_at }}{% endif %}
+                        {% if refund_request.resolution_note %}| Note: {{ refund_request.resolution_note }}{% endif %}
+                        {% if refund_request.failure_reason %}| Failure: {{ refund_request.failure_reason }}{% endif %}
+                        {% if refund_request.processed_at %}| Processed at {{ refund_request.processed_at }}{% endif %}
+                    </div>
+                {% endif %}
+            </div>
+        {% endfor %}
+    {% else %}
+        <p class="text-secondary mb-0">No refund requests match this view yet.</p>
+    {% endif %}
+</section>
+{% endblock %}

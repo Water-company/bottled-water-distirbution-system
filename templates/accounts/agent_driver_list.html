@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Driver Management{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Agent Drivers</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">{{ agent.name }}</h1>
+    <p class="text-secondary mb-3">Create, update, activate, deactivate, and safely remove delivery drivers for this branch.</p>
+    <div class="d-flex flex-wrap gap-2">
+        <a href="{% url 'accounts:agent_dashboard' %}" class="btn btn-outline-dark">Back to Dashboard</a>
+        <a href="{% url 'accounts:agent_inventory' %}" class="btn btn-outline-primary">Open Inventory</a>
+    </div>
+</section>
+
+<section class="row g-4">
+    <div class="col-lg-4">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Add Driver</h2>
+            <form method="post" action="{% url 'accounts:agent_driver_create' %}">
+                {% csrf_token %}
+                {% for field in driver_form %}
+                    <div class="mb-3">
+                        <label class="form-label">{{ field.label }}</label>
+                        {{ field }}
+                    </div>
+                {% endfor %}
+                <button class="btn btn-primary w-100">Create Driver Account</button>
+            </form>
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <div class="content-card p-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 class="h4 mb-0">Driver Fleet</h2>
+                <span class="text-secondary small">{{ drivers|length }} driver{{ drivers|length|pluralize }}</span>
+            </div>
+            {% if drivers %}
+                <div class="table-responsive">
+                    <table class="table align-middle">
+                        <thead>
+                            <tr>
+                                <th>Driver</th>
+                                <th>Vehicle</th>
+                                <th>Status</th>
+                                <th>Performance</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for driver in drivers %}
+                                <tr>
+                                    <td>
+                                        <div class="fw-semibold">{{ driver.user.full_name }}</div>
+                                        <div class="small text-secondary">{{ driver.user.email }}</div>
+                                        <div class="small text-secondary">{{ driver.phone_number|default:driver.user.phone_number }}</div>
+                                    </td>
+                                    <td>{{ driver.vehicle_identifier|default:"Not set" }}</td>
+                                    <td>
+                                        {% if driver.is_active %}
+                                            <span class="badge bg-success-subtle text-success">Active</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary-subtle text-secondary">Inactive</span>
+                                        {% endif %}
+                                        <div class="small text-secondary mt-1">
+                                            {{ driver.get_availability_status_display }}{% if driver.is_online %} | Online now{% else %} | Offline{% endif %}
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="small">Completed: {{ driver.completed_deliveries }}</div>
+                                        <div class="small">Active: {{ driver.active_deliveries }}</div>
+                                        <div class="small">Rating: {% if driver.average_rating %}{{ driver.average_rating|floatformat:1 }}/5{% else %}No ratings yet{% endif %}</div>
+                                    </td>
+                                    <td class="text-end">
+                                        <div class="d-flex gap-2 justify-content-end flex-wrap">
+                                            <a href="{% url 'accounts:agent_driver_detail' driver.pk %}" class="btn btn-sm btn-outline-dark">View</a>
+                                            <a href="{% url 'accounts:agent_driver_edit' driver.pk %}" class="btn btn-sm btn-outline-primary">Edit</a>
+                                            <form method="post" action="{% url 'accounts:agent_driver_toggle' driver.pk %}">
+                                                {% csrf_token %}
+                                                <button class="btn btn-sm {% if driver.is_active %}btn-outline-warning{% else %}btn-outline-success{% endif %}">
+                                                    {% if driver.is_active %}Deactivate{% else %}Activate{% endif %}
+                                                </button>
+                                            </form>
+                                            <form method="post" action="{% url 'accounts:agent_driver_delete' driver.pk %}">
+                                                {% csrf_token %}
+                                                <button class="btn btn-sm btn-outline-danger">Remove</button>
+                                            </form>
+                                        </div>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p class="text-secondary mb-0">No drivers have been added to this branch yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+{% endblock %}

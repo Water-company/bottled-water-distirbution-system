@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Driver History{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Driver</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">Delivery History</h1>
+    <p class="text-secondary mb-0">Review completed, failed, and in-progress deliveries with performance totals for {{ driver.user.full_name }}.</p>
+</section>
+
+<section class="row g-3 mb-4">
+    <div class="col-md-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">All Time Delivered</div><div class="display-6 fw-semibold mt-2">{{ performance.delivered_all_time }}</div></div></div>
+    <div class="col-md-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">On-Time Rate</div><div class="display-6 fw-semibold mt-2">{{ performance.on_time_rate }}%</div></div></div>
+    <div class="col-md-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Average Rating</div><div class="display-6 fw-semibold mt-2">{% if performance.average_rating %}{{ performance.average_rating|floatformat:1 }}{% else %}-{% endif %}</div></div></div>
+    <div class="col-md-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">This Month Earnings</div><div class="display-6 fw-semibold mt-2">{{ performance.earnings_month }}</div></div></div>
+</section>
+
+<section class="content-card p-4 mb-4">
+    <form method="get" class="row g-3">
+        <div class="col-md-4">
+            <select name="status" class="form-select">
+                <option value="">All statuses</option>
+                {% for value, label in status_choices %}
+                    <option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3"><input type="date" name="date_from" value="{{ date_from }}" class="form-control"></div>
+        <div class="col-md-3"><input type="date" name="date_to" value="{{ date_to }}" class="form-control"></div>
+        <div class="col-md-2 d-flex gap-2">
+            <button class="btn btn-primary">Filter</button>
+            <a class="btn btn-outline-primary" href="{% url 'accounts:driver_history' %}">Reset</a>
+        </div>
+    </form>
+</section>
+
+<section class="content-card p-4">
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Date</th><th>Rating</th><th>Value</th></tr></thead>
+            <tbody>
+                {% for order in orders %}
+                    <tr>
+                        <td>{{ order.order_number }}</td>
+                        <td>{{ order.customer.full_name }}</td>
+                        <td>{{ order.get_status_display }}</td>
+                        <td>{{ order.created_at|date:"M d, Y H:i" }}</td>
+                        <td>
+                            {% if order.feedback and order.feedback.rating %}
+                                {{ order.feedback.rating }}/5
+                            {% elif order.feedback and order.feedback.was_skipped %}
+                                Skipped
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td>{{ order.total }}</td>
+                    </tr>
+                {% empty %}
+                    <tr><td colspan="6" class="text-center text-secondary py-4">No deliveries match this filter.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

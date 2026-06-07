@@ -1,86 +1,618 @@
-{% extends "base.html" %}
-{% block title %}Smart Water Distribution{% endblock %}
-{% block content %}
-<section class="landing-hero mb-5">
-    <div class="landing-hero__media">
-        <img src="https://images.unsplash.com/photo-1517586979036-b7d1e86b3345?auto=format&fit=crop&w=1600&q=80" alt="Clean bottled water delivery">
-    </div>
-    <div class="landing-hero__overlay">
-        <div class="landing-hero__content">
-            <span class="eyebrow">Smart Water Delivery</span>
-            <h1 class="landing-title">Order bottled water from trusted companies near you.</h1>
-            <p class="landing-copy">Browse water companies publicly, compare their offers, and move into secure ordering when you are ready.</p>
-            <div class="d-flex flex-wrap gap-2">
-                <a class="btn btn-primary btn-lg" href="#companies">Browse Companies</a>
-                <a class="btn btn-outline-light btn-lg" href="{% url 'accounts:login' %}">Login</a>
-            </div>
-        </div>
-    </div>
-</section>
+<!doctype html>
 
-<section id="companies" class="mb-5">
-    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
-        <div>
-            <span class="eyebrow">Available Companies</span>
-            <h2 class="display-6 fw-semibold mt-2 mb-1">Browse different water companies</h2>
-            <p class="text-secondary mb-0">You can explore companies before logging in. Product details and checkout require authentication.</p>
+<html class="scroll-smooth" lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Water Distribution</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+      rel="stylesheet"
+    />
+    <script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "primary-container": "#0047ab",
+              "tertiary-container": "#4b4e50",
+              "on-primary-fixed": "#001946",
+              "on-tertiary-fixed-variant": "#444749",
+              "on-primary-container": "#a5bdff",
+              "on-error": "#ffffff",
+              "on-surface": "#0d1c2e",
+              "surface-container-low": "#eff4ff",
+              "secondary-fixed-dim": "#b7c9d5",
+              "on-tertiary": "#ffffff",
+              "on-secondary-fixed-variant": "#384953",
+              background: "#f8f9ff",
+              "surface-container": "#e6eeff",
+              "primary-fixed-dim": "#b1c5ff",
+              "tertiary-fixed-dim": "#c4c7c9",
+              surface: "#f8f9ff",
+              "inverse-primary": "#b1c5ff",
+              "on-tertiary-container": "#bcbfc1",
+              outline: "#737784",
+              "on-secondary-container": "#566771",
+              "inverse-on-surface": "#eaf1ff",
+              "surface-dim": "#ccdbf3",
+              "surface-container-highest": "#d5e3fc",
+              "on-background": "#0d1c2e",
+              "surface-variant": "#d5e3fc",
+              "on-primary-fixed-variant": "#00419e",
+              "primary-fixed": "#dae2ff",
+              "on-secondary": "#ffffff",
+              secondary: "#50616b",
+              "secondary-container": "#d3e5f1",
+              "on-secondary-fixed": "#0c1e26",
+              "error-container": "#ffdad6",
+              "surface-bright": "#f8f9ff",
+              "inverse-surface": "#233144",
+              "secondary-fixed": "#d3e5f1",
+              "tertiary-fixed": "#e0e3e5",
+              "surface-container-high": "#dce9ff",
+              error: "#ba1a1a",
+              "on-tertiary-fixed": "#191c1e",
+              tertiary: "#343739",
+              "on-primary": "#ffffff",
+              primary: "#00327d",
+              "outline-variant": "#c3c6d5",
+              "on-error-container": "#93000a",
+              "surface-variant": "#d5e3fc",
+              "on-surface-variant": "#434653",
+            },
+            borderRadius: {
+              DEFAULT: "0.25rem",
+              lg: "0.5rem",
+              xl: "0.75rem",
+              full: "9999px",
+            },
+            spacing: {
+              "margin-desktop": "64px",
+              "container-max": "1280px",
+              "section-gap": "80px",
+              gutter: "24px",
+              "stack-md": "16px",
+              "stack-lg": "32px",
+              "stack-sm": "8px",
+              "margin-mobile": "20px",
+            },
+            fontFamily: {
+              display: ["Inter", "sans-serif"],
+              "body-lg": ["Inter", "sans-serif"],
+              "label-sm": ["Inter", "sans-serif"],
+              "display-mobile": ["Inter", "sans-serif"],
+              "headline-lg": ["Inter", "sans-serif"],
+              "headline-md": ["Inter", "sans-serif"],
+              "body-md": ["Inter", "sans-serif"],
+            },
+            fontSize: {
+              display: [
+                "48px",
+                {
+                  lineHeight: "1.1",
+                  letterSpacing: "-0.02em",
+                  fontWeight: "800",
+                },
+              ],
+              "body-lg": ["18px", { lineHeight: "28px", fontWeight: "400" }],
+              "label-sm": [
+                "14px",
+                {
+                  lineHeight: "20px",
+                  letterSpacing: "0.05em",
+                  fontWeight: "600",
+                },
+              ],
+              "display-mobile": [
+                "32px",
+                {
+                  lineHeight: "1.2",
+                  letterSpacing: "-0.02em",
+                  fontWeight: "800",
+                },
+              ],
+              "headline-lg": [
+                "30px",
+                {
+                  lineHeight: "36px",
+                  letterSpacing: "-0.01em",
+                  fontWeight: "700",
+                },
+              ],
+              "headline-md": [
+                "24px",
+                { lineHeight: "32px", fontWeight: "600" },
+              ],
+              "body-md": ["16px", { lineHeight: "24px", fontWeight: "400" }],
+              "headline-md-mobile": [
+                "20px",
+                { lineHeight: "28px", fontWeight: "600" },
+              ],
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      .material-symbols-outlined {
+        font-variation-settings:
+          "FILL" 0,
+          "wght" 400,
+          "GRAD" 0,
+          "opsz" 24;
+        display: inline-block;
+        vertical-align: middle;
+      }
+      .glass-header {
+        background: rgba(248, 249, 255, 0.8);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+      }
+      .hero-gradient-overlay {
+        background: linear-gradient(
+          to bottom,
+          rgba(13, 28, 46, 0.4) 0%,
+          rgba(248, 249, 255, 1) 100%
+        );
+      }
+    </style>
+    <style>
+      body {
+        min-height: max(884px, 100dvh);
+      }
+    </style>
+  </head>
+  <body class="bg-background text-on-surface font-body-md overflow-x-hidden">
+    <!-- Top Navigation Bar -->
+    <header class="fixed top-0 w-full z-50 glass-header shadow-sm h-16">
+      <div
+        class="flex items-center justify-between px-margin-mobile h-full w-full max-w-container-max mx-auto"
+      >
+        <div class="flex items-center gap-2">
+          <span class="material-symbols-outlined text-primary text-2xl"
+            >water_drop</span
+          >
+          <span
+            class="font-display text-headline-md-mobile font-extrabold text-primary tracking-tight"
+            >AquaFlow</span
+          >
         </div>
-    </div>
-    <form method="get" class="row g-3 mb-4">
-        <div class="col-md-5">{{ filter_form.search }}</div>
-        <div class="col-md-5">{{ filter_form.location }}</div>
-        <div class="col-md-2 d-grid"><button class="btn btn-primary">Search</button></div>
-    </form>
-    <div class="row g-4">
-        {% for company in companies %}
-            <div class="col-md-6 col-xl-4">
-                <div class="content-card h-100 p-4">
-                    {% if company.logo %}
-                        <img src="{{ company.logo.url }}" class="catalog-image mb-3" alt="{{ company.name }}">
-                    {% else %}
-                        <div class="catalog-image placeholder-tile mb-3"></div>
-                    {% endif %}
-                    <div class="d-flex justify-content-between align-items-start gap-2">
-                        <h3 class="h4 mb-0">{{ company.name }}</h3>
-                        <span class="badge {% if company.is_verified %}text-bg-success{% else %}text-bg-secondary{% endif %}">
-                            {% if company.is_verified %}Verified{% else %}Pending{% endif %}
-                        </span>
+        <nav class="hidden md:flex items-center gap-8">
+          <a
+            class="text-primary font-bold border-b-2 border-primary py-1"
+            href="#"
+            >Home</a
+          >
+          <a
+            class="text-on-surface-variant font-medium hover:text-primary transition-colors"
+            href="#companies"
+            >Catalog</a
+          >
+          <a
+            class="text-on-surface-variant font-medium hover:text-primary transition-colors"
+            href="#about"
+            >About</a
+          >
+          <a
+            class="text-on-surface-variant font-medium hover:text-primary transition-colors"
+            href="#contact"
+            >Contact</a
+          >
+        </nav>
+        <div class="flex items-center gap-4">
+          <button
+            class="material-symbols-outlined text-on-surface-variant cursor-pointer"
+          >
+            notifications
+          </button>
+        </div>
+      </div>
+    </header>
+    <main>
+      {% block content %}
+      <!-- Hero Section -->
+      <section
+        class="relative min-h-[751px] flex flex-col justify-center items-center text-center px-margin-mobile pt-20 pb-section-gap overflow-hidden"
+      >
+        <div class="absolute inset-0 z-0">
+          <img
+            alt="Clean bottled water delivery"
+            class="w-full h-full object-cover"
+            data-alt="A macro cinematic shot of crystalline water splashes frozen in time against a clean, soft-lit studio background. The aesthetic is ultra-modern and minimalist, emphasizing purity and freshness. High-key lighting highlights the liquid textures and transparency, creating an airy and premium atmosphere that aligns with a professional corporate water distribution brand."
+            src="https://lh3.googleusercontent.com/aida-public/AB6AXuDv3PtT6QUJhbVjpAk4T7qAE2r-GuhvFEO1NTRcfkA4tITXZA6J8cYdSgQB1fkn_v_2DZzxwk3LIBq9_dYWUSuGWshOMBY2rxr8bQtvxfd5DWY4ysMIb5cpQ70WUncz0Ch5EJee2Cicx9yb4hnf231qKg29iK3m5ciNbxBln4V5G2-4yJ4wAC1hl0H1elg9s4gccEpu4Ys8zhdzzHIBPcSFhzAIep0RNXdPL7GxpgErn8Qwo5j5fZizcI0ZY4UYnt60u4M8QkHBa3QP"
+          />
+          <div class="absolute inset-0 hero-gradient-overlay"></div>
+        </div>
+        <div class="relative z-10 max-w-2xl mx-auto space-y-stack-md">
+          <span
+            class="font-label-sm text-label-sm text-primary-container uppercase tracking-widest block"
+            >Water Delivery</span
+          >
+          <h1
+            class="font-display-mobile text-display-mobile md:font-display md:text-display text-on-surface leading-tight"
+          >
+            Never run out.<br /><span class="text-primary">Always</span> in
+            stock.
+          </h1>
+          <p
+            class="font-body-lg text-body-lg text-on-surface-variant max-w-xl mx-auto"
+          >
+            Explore water providers, compare prices and options, and order
+            securely in just a few steps.
+          </p>
+          <p class="text-sm text-on-surface-variant/80 max-w-lg mx-auto">
+            Browse different water companies and choose the delivery partner that fits your business.
+          </p>
+          <div
+            class="pt-stack-lg flex flex-col sm:flex-row items-center justify-center gap-4"
+          >
+            <a
+              class="w-full sm:w-auto px-8 py-4 bg-primary text-on-primary font-bold rounded-lg shadow-lg hover:bg-primary-container transition-all active:scale-95 text-center"
+              href="#companies"
+            >
+              Browse Companies
+            </a>
+            <a
+              class="w-full sm:w-auto px-8 py-4 border border-outline text-on-surface font-bold rounded-lg hover:bg-surface-container transition-all active:scale-95 text-center"
+              href="{% url 'accounts:login' %}"
+            >
+              Login to Portal
+            </a>
+          </div>
+        </div>
+        <!-- Trusted Partners Row -->
+        <div class="relative z-10 mt-16">
+          <p
+            class="text-on-surface-variant/60 font-label-sm uppercase tracking-tighter text-[10px] mb-4"
+          >
+            TRUSTED BY 300+ BUSINESSES
+          </p>
+          <div
+            class="flex flex-wrap justify-center items-center gap-8 opacity-40 grayscale"
+          >
+            <div class="flex items-center gap-1">
+              <span class="material-symbols-outlined text-sm">hotel</span>
+              <span class="text-xs font-bold">Hotels</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <span class="material-symbols-outlined text-sm">local_cafe</span>
+              <span class="text-xs font-bold">Cafes</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <span class="material-symbols-outlined text-sm"
+                >corporate_fare</span
+              >
+              <span class="text-xs font-bold">Offices</span>
+            </div>
+          </div>
+        </div>
+      </section>
+      <!-- Search & Companies Section -->
+      <section
+        class="max-w-container-max mx-auto px-margin-mobile py-section-gap"
+        id="companies"
+      >
+        <div
+          class="flex flex-col md:flex-row justify-between items-start md:items-end gap-stack-lg mb-12"
+        >
+          <div class="max-w-xl">
+            <span
+              class="font-label-sm text-label-sm text-primary uppercase tracking-widest"
+              >Partnered Companies</span
+            >
+          </div>
+        </div>
+        <!-- Modern Search Bar -->
+        <div
+          class="bg-surface-container-low p-4 rounded-xl mb-12 border border-secondary-container"
+        >
+          <form class="grid grid-cols-1 md:grid-cols-12 gap-4" method="get">
+            <div class="md:col-span-5 relative group">
+              <span
+                class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors"
+                >search</span
+              >
+              <input
+                class="w-full pl-12 pr-4 py-4 bg-surface-container-lowest border-outline-variant rounded-lg focus:border-primary focus:ring-1 focus:ring-primary transition-all text-body-md"
+                name="search"
+                placeholder="Search by name..."
+                type="text"
+              />
+            </div>
+            <div class="md:col-span-5 relative group">
+              <span
+                class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors"
+                >location_on</span
+              >
+              <input
+                class="w-full pl-12 pr-4 py-4 bg-surface-container-lowest border-outline-variant rounded-lg focus:border-primary focus:ring-1 focus:ring-primary transition-all text-body-md"
+                name="location"
+                placeholder="City or area..."
+                type="text"
+              />
+            </div>
+            <div class="md:col-span-2">
+              <button
+                class="w-full h-full py-4 bg-primary text-on-primary font-bold rounded-lg hover:shadow-md active:scale-95 transition-all"
+              >
+                Search
+              </button>
+            </div>
+          </form>
+        </div>
+        <!-- Bento-ish Grid for Companies -->
+
+        <div
+          class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+        >
+          {% for company in companies %}
+          <div
+            class="bg-surface-container-lowest border border-outline-variant rounded-2xl p-6 shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 flex flex-col items-center text-center"
+          >
+            <!-- Logo/Icon Wrapper - Centered, rounded, with hover effect -->
+            <div
+              class="w-16 h-16 rounded-xl bg-primary-container/10 flex items-center justify-center mb-4 transition-all duration-300"
+            >
+              {% if company.logo %}
+              <img
+                alt="{{ company.name }}"
+                class="w-10 h-10 object-contain"
+                src="{{ company.logo.url }}"
+              />
+              {% else %}
+              <span class="material-symbols-outlined text-3xl text-primary">
+                water_drop
+              </span>
+              {% endif %}
+            </div>
+
+            <!-- Company Name -->
+            <h3
+              class="text-base font-bold text-on-surface mb-4 text-center line-clamp-1"
+            >
+              {{ company.name }}
+            </h3>
+
+            <!-- Action Buttons - Single button centered -->
+            <a
+              class="w-full px-4 py-2.5 rounded-xl border border-primary text-primary font-semibold text-sm bg-transparent hover:bg-primary hover:text-white transition-all duration-300 text-center"
+              href="{% url 'products:list' %}?company={{ company.pk }}"
+            >
+              View Products
+            </a>
+          </div>
+          {% empty %}
+          <div
+            class="col-span-full py-section-gap flex flex-col items-center justify-center text-center"
+          >
+            <div
+              class="w-20 h-20 rounded-full bg-surface-container flex items-center justify-center mb-6"
+            >
+              <span class="material-symbols-outlined text-4xl text-outline"
+                >search_off</span
+              >
+            </div>
+            <h4 class="font-headline-md text-on-surface">
+              No companies matched.
+            </h4>
+            <p class="text-on-surface-variant mt-2">
+              Try adjusting your search filters or browse other areas.
+            </p>
+          </div>
+          {% endfor %}
+        </div>
+        <!-- Pagination (Placeholder) -->
+        <div class="mt-12 flex justify-center">
+          {% include "includes/pagination.html" %}
+        </div>
+      </section>
+      <!-- About Section -->
+      <section class="bg-surface-container-low py-section-gap" id="about">
+        <div class="max-w-container-max mx-auto px-margin-mobile">
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+            <div class="lg:col-span-5 space-y-4">
+              <span
+                class="font-label-sm text-label-sm text-primary uppercase tracking-widest"
+                >About the Platform</span
+              >
+              <h2
+                class="font-display-mobile md:font-headline-lg md:text-headline-lg text-on-surface"
+              >
+                A multi-company delivery platform for bottled water.
+              </h2>
+              <p class="font-body-md text-on-surface-variant leading-relaxed">
+                We bridge the gap between large-scale water producers and
+                individual business requirements through a unified logistics
+                layer.
+              </p>
+            </div>
+            <div class="lg:col-span-7">
+              <div
+                class="bg-surface-container-lowest p-stack-lg md:p-12 rounded-3xl border border-secondary-container shadow-sm relative overflow-hidden group"
+              >
+                <div
+                  class="absolute -right-16 -top-16 w-64 h-64 bg-primary-container/5 rounded-full blur-3xl group-hover:bg-primary-container/10 transition-all duration-700"
+                ></div>
+                <div class="relative z-10 space-y-6">
+                  <div class="flex items-start gap-4">
+                    <div
+                      class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0"
+                    >
+                      <span
+                        class="material-symbols-outlined text-primary text-xl"
+                        >map</span
+                      >
                     </div>
-                    <p class="text-secondary mt-2 mb-3">{{ company.description|truncatewords:24 }}</p>
-                    <p class="small mb-3"><strong>Location:</strong> {{ company.location }}</p>
-                    <div class="d-flex gap-2">
-                        <a class="btn btn-outline-primary" href="{% url 'products:list' %}?company={{ company.pk }}">See More</a>
-                        <a class="btn btn-primary" href="{% url 'products:list' %}?company={{ company.pk }}">Order Now</a>
+                    <p class="font-body-md text-on-surface-variant">
+                      Customers can browse water companies publicly, order from
+                      the company they trust, choose delivery location using
+                      maps, and pay digitally after a nearby agent accepts the
+                      request.
+                    </p>
+                  </div>
+                  <div class="flex items-start gap-4">
+                    <div
+                      class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0"
+                    >
+                      <span
+                        class="material-symbols-outlined text-primary text-xl"
+                        >inventory</span
+                      >
                     </div>
+                    <p class="font-body-md text-on-surface-variant">
+                      Behind the scenes, the platform coordinates
+                      company-specific agents, drivers, delivery confirmation,
+                      and inventory-aware fulfillment to ensure no drop is lost.
+                    </p>
+                  </div>
                 </div>
+              </div>
             </div>
-        {% empty %}
-            <div class="col-12"><div class="content-card p-4 text-center text-secondary">No companies matched your search.</div></div>
-        {% endfor %}
-    </div>
-    {% include "includes/pagination.html" %}
-</section>
-
-<section id="about" class="py-4 mb-4">
-    <div class="row g-4 align-items-start">
-        <div class="col-lg-5">
-            <span class="eyebrow">About</span>
-            <h2 class="display-6 fw-semibold mt-2">A multi-company delivery platform for bottled water.</h2>
+          </div>
         </div>
-        <div class="col-lg-7">
-            <div class="content-card p-4">
-                <p class="mb-2">Customers can browse water companies publicly, order from the company they trust, choose delivery location using maps, and pay digitally after a nearby agent accepts the request.</p>
-                <p class="mb-0">Behind the scenes, the platform coordinates company-specific agents, drivers, delivery confirmation, and inventory-aware fulfillment.</p>
+      </section>
+      <!-- Contact Section -->
+      <section
+        class="max-w-container-max mx-auto px-margin-mobile py-section-gap"
+        id="contact"
+      >
+        <div
+          class="bg-primary text-on-primary p-stack-lg md:p-16 rounded-[2rem] shadow-xl relative overflow-hidden"
+        >
+          <div class="absolute inset-0 opacity-10 pointer-events-none">
+            <div class="grid grid-cols-12 h-full w-full">
+              <div class="col-span-1 border-r border-white/20"></div>
+              <div class="col-span-1 border-r border-white/20"></div>
+              <div class="col-span-1 border-r border-white/20"></div>
+              <div class="col-span-1 border-r border-white/20"></div>
+              <div class="col-span-1 border-r border-white/20"></div>
+              <div class="col-span-1 border-r border-white/20"></div>
+              <div class="col-span-1 border-r border-white/20"></div>
+              <div class="col-span-1 border-r border-white/20"></div>
+              <div class="col-span-1 border-r border-white/20"></div>
+              <div class="col-span-1 border-r border-white/20"></div>
+              <div class="col-span-1 border-r border-white/20"></div>
+              <div class="col-span-1 border-r border-white/20"></div>
             </div>
+          </div>
+          <div class="relative z-10 max-w-2xl">
+            <span
+              class="font-label-sm text-label-sm uppercase tracking-widest text-on-primary-container"
+              >Get in Touch</span
+            >
+            <h2
+              class="font-headline-lg text-headline-lg text-on-primary mt-4 mb-6"
+            >
+              Need help choosing a company or tracking an order?
+            </h2>
+            <p class="font-body-lg text-body-lg text-on-primary/80 mb-8">
+              Use the customer portal after login for real-time tracking and
+              push notifications. For immediate inquiries, our support team is
+              available 24/7 for our registered clients.
+            </p>
+            <button
+              class="px-8 py-4 bg-white text-primary font-bold rounded-lg hover:bg-surface-container transition-all active:scale-95 shadow-md"
+            >
+              Visit Support Center
+            </button>
+          </div>
         </div>
-    </div>
-</section>
+      </section>
+      {% endblock %}
+    </main>
+    <!-- Footer Component -->
+    <footer
+      class="bg-surface-container-lowest dark:bg-inverse-surface w-full py-section-gap mt-auto"
+    >
+      <div
+        class="flex flex-col items-center text-center px-margin-mobile gap-stack-lg w-full max-w-container-max mx-auto"
+      >
+        <div class="flex items-center gap-2 mb-2">
+          <span class="material-symbols-outlined text-primary text-3xl"
+            >water_drop</span
+          >
+          <span
+            class="font-display text-headline-md text-primary tracking-tight"
+            >AquaFlow</span
+          >
+        </div>
+        <hr class="w-full border-outline-variant max-w-md" />
+        <p class="font-body-md text-body-md text-secondary-fixed-variant">
+          © 2024 AquaFlow Distribution Systems. The Fluid Workspace. All rights
+          reserved.
+        </p>
+      </div>
+    </footer>
+    <!-- Mobile Bottom Navigation Shell -->
+    <nav
+      class="md:hidden fixed bottom-0 left-0 w-full glass-header flex justify-around items-center px-4 py-3 pb-safe z-50 border-t border-outline-variant/10 shadow-[0px_-4px_20px_rgba(0,0,0,0.03)]"
+    >
+      <a
+        class="flex flex-col items-center justify-center bg-primary-container text-on-primary-container rounded-full px-4 py-1"
+        href="#"
+      >
+        <span
+          class="material-symbols-outlined"
+          style="font-variation-settings: &quot;FILL&quot; 1"
+          >home</span
+        >
+        <span class="font-label-sm text-[10px] mt-0.5">Home</span>
+      </a>
+      <a
+        class="flex flex-col items-center justify-center text-on-surface-variant"
+        href="#companies"
+      >
+        <span class="material-symbols-outlined">grid_view</span>
+        <span class="font-label-sm text-[10px] mt-0.5">Catalog</span>
+      </a>
+      <a
+        class="flex flex-col items-center justify-center text-on-surface-variant"
+        href="#about"
+      >
+        <span class="material-symbols-outlined">info</span>
+        <span class="font-label-sm text-[10px] mt-0.5">About</span>
+      </a>
+      <a
+        class="flex flex-col items-center justify-center text-on-surface-variant"
+        href="#contact"
+      >
+        <span class="material-symbols-outlined">mail</span>
+        <span class="font-label-sm text-[10px] mt-0.5">Contact</span>
+      </a>
+    </nav>
+    <script>
+      // Micro-interactions for scrolling
+      document.addEventListener("DOMContentLoaded", () => {
+        const observerOptions = {
+          threshold: 0.1,
+        };
 
-<section id="contact" class="py-4">
-    <div class="content-card p-4 p-lg-5">
-        <span class="eyebrow">Contact</span>
-        <h2 class="h2 fw-semibold mt-2">Need help choosing a company or tracking an order?</h2>
-        <p class="text-secondary mb-0">Use the customer portal after login for order tracking and notifications. For now, this public site is the browsing and entry point into the platform.</p>
-    </div>
-</section>
-{% endblock %}
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("opacity-100", "translate-y-0");
+              entry.target.classList.remove("opacity-0", "translate-y-10");
+            }
+          });
+        }, observerOptions);
+
+        document.querySelectorAll("section").forEach((section) => {
+          section.classList.add(
+            "transition-all",
+            "duration-700",
+            "opacity-0",
+            "translate-y-10",
+          );
+          observer.observe(section);
+        });
+      });
+    </script>
+  </body>
+</html>

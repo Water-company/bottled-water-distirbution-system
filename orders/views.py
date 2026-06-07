@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.serializers.json import DjangoJSONEncoder
@@ -8,17 +9,23 @@ from django.urls import reverse
 from django.views import View
 from django.views.generic import DetailView, FormView, ListView
 
+from accounts.models import CustomerAddress
 from cart.services import get_or_create_cart
+from catalog.models import haversine_km
 from core.mixins import CustomerRequiredMixin
 from core.policies import get_cart_pricing_summary
-from orders.forms import CheckoutForm, RefundRequestForm
+from orders.forms import CheckoutForm, DeliveryFeedbackForm, RefundRequestForm
 from orders.models import Order, OrderStatus, RefundRequestType
 from orders.services import (
     cancel_order,
     create_order_request_from_cart,
     get_agent_delivery_options,
     initialize_chapa_payment,
+    refresh_delivery_confirmation,
+    reorder_order_to_cart,
     request_order_refund,
+    skip_delivery_feedback,
+    submit_delivery_feedback,
     verify_chapa_payment,
 )
 
@@ -28,13 +35,23 @@ TRACKING_ORDER = [
     OrderStatus.PAYMENT_PENDING,
     OrderStatus.PAID,
     OrderStatus.DRIVER_ASSIGNED,
+    OrderStatus.DRIVER_ACCEPTED,
+    OrderStatus.PICKED_UP,
     OrderStatus.OUT_FOR_DELIVERY,
+    OrderStatus.ARRIVED,
     OrderStatus.DELIVERED,
 ]
 
 
 def _float_or_none(value):
     return float(value) if value not in (None, "") else None
+
+
+def estimate_eta_minutes(lat1, lon1, lat2, lon2):
+    distance_km = haversine_km(float(lat1), float(lon1), float(lat2), float(lon2))
+    speed_kmh = max(float(getattr(settings, "ETA_AVERAGE_SPEED_KMH", 25)), 1.0)
+    eta_minutes = max(1, round((distance_km / speed_kmh) * 60))
+    return eta_minutes, round(distance_km, 2)
 
 
 def build_order_tracking_payload(order):
@@ -70,6 +87,27 @@ def build_order_tracking_payload(order):
             "latitude": _float_or_none(getattr(driver_location, "latitude", None)),
             "longitude": _float_or_none(getattr(driver_location, "longitude", None)),
         }
+    if getattr(order, "confirmation", None):
+        payload["deliveryConfirmation"] = {
+            "expiresAt": order.confirmation.expires_at.isoformat() if order.confirmation.expires_at else "",
+            "scannedAt": order.confirmation.scanned_at.isoformat() if order.confirmation.scanned_at else "",
+        }
+    payload["etaMinutes"] = None
+    payload["distanceKm"] = None
+    if payload["driver"] and payload["driver"]["latitude"] is not None and payload["driver"]["longitude"] is not None:
+        payload["etaMinutes"], payload["distanceKm"] = estimate_eta_minutes(
+            payload["driver"]["latitude"],
+            payload["driver"]["longitude"],
+            payload["customer"]["latitude"],
+            payload["customer"]["longitude"],
+        )
+    elif payload["agent"]:
+        payload["etaMinutes"], payload["distanceKm"] = estimate_eta_minutes(
+            payload["agent"]["latitude"],
+            payload["agent"]["longitude"],
+            payload["customer"]["latitude"],
+            payload["customer"]["longitude"],
+        )
     return payload
 
 
@@ -83,9 +121,21 @@ class CheckoutView(LoginRequiredMixin, CustomerRequiredMixin, FormView):
             return redirect("products:list")
         return super().dispatch(request, *args, **kwargs)
 
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["user"] = self.request.user
+        return kwargs
+
     def get_initial(self):
         initial = super().get_initial()
         initial["phone_number"] = self.request.user.phone_number
+        default_address = self.request.user.saved_addresses.filter(is_default=True).first()
+        if default_address:
+            initial["saved_address_id"] = str(default_address.pk)
+            initial["delivery_address"] = default_address.address_line
+            initial["latitude"] = default_address.latitude
+            initial["longitude"] = default_address.longitude
+            initial["notes"] = default_address.notes
         return initial
 
     def get_context_data(self, **kwargs):
@@ -100,6 +150,7 @@ class CheckoutView(LoginRequiredMixin, CustomerRequiredMixin, FormView):
             "searchUrl": reverse("core:location_search"),
             "reverseUrl": reverse("core:reverse_geocode"),
         }
+        context["saved_addresses"] = self.request.user.saved_addresses.all()
         return context
 
     def form_valid(self, form):
@@ -128,13 +179,24 @@ class OrderListView(LoginRequiredMixin, CustomerRequiredMixin, ListView):
     paginate_by = 10
 
     def get_queryset(self):
-        queryset = self.request.user.orders.select_related("company", "selected_agent", "assigned_driver")
+        queryset = self.request.user.orders.select_related(
+            "company",
+            "selected_agent",
+            "assigned_driver__user",
+            "feedback",
+        ).prefetch_related("refund_requests")
         status = self.request.GET.get("status")
         search = self.request.GET.get("search")
+        date_from = self.request.GET.get("date_from")
+        date_to = self.request.GET.get("date_to")
         if status:
             queryset = queryset.filter(status=status)
         if search:
             queryset = queryset.filter(order_number__icontains=search)
+        if date_from:
+            queryset = queryset.filter(created_at__date__gte=date_from)
+        if date_to:
+            queryset = queryset.filter(created_at__date__lte=date_to)
         return queryset
 
     def get_context_data(self, **kwargs):
@@ -145,6 +207,8 @@ class OrderListView(LoginRequiredMixin, CustomerRequiredMixin, ListView):
         context["status_choices"] = OrderStatus.choices
         context["selected_status"] = self.request.GET.get("status", "")
         context["search_term"] = self.request.GET.get("search", "")
+        context["date_from"] = self.request.GET.get("date_from", "")
+        context["date_to"] = self.request.GET.get("date_to", "")
         return context
 
 
@@ -162,6 +226,7 @@ class OrderDetailView(LoginRequiredMixin, CustomerRequiredMixin, DetailView):
             "assigned_driver__user",
             "payment",
             "confirmation",
+            "feedback",
         ).prefetch_related("items__product", "status_history", "agent_requests__agent", "refund_requests")
 
     def get_context_data(self, **kwargs):
@@ -172,6 +237,8 @@ class OrderDetailView(LoginRequiredMixin, CustomerRequiredMixin, DetailView):
         context["existing_service_refund"] = self.object.refund_requests.filter(
             request_type=RefundRequestType.SERVICE_ISSUE
         ).first()
+        context["feedback_form"] = DeliveryFeedbackForm()
+        context["feedback_record"] = getattr(self.object, "feedback", None)
         return context
 
     @staticmethod
@@ -290,6 +357,12 @@ class NearbyAgentsPreviewView(LoginRequiredMixin, CustomerRequiredMixin, View):
                 "latitude": float(option["agent"].latitude),
                 "longitude": float(option["agent"].longitude),
                 "distance_km": float(option["distance_km"]),
+                "eta_minutes": estimate_eta_minutes(
+                    option["agent"].latitude,
+                    option["agent"].longitude,
+                    latitude,
+                    longitude,
+                )[0],
                 "service_radius_km": float(option["agent"].service_radius_km),
                 "within_radius": option["within_radius"],
                 "has_stock": option["has_stock"],
@@ -329,16 +402,101 @@ class RefundRequestCreateView(LoginRequiredMixin, CustomerRequiredMixin, View):
             request.user.orders.select_related("payment", "company__admin"),
             order_number=order_number,
         )
-        form = RefundRequestForm(request.POST)
+        form = RefundRequestForm(request.POST, request.FILES)
         if not form.is_valid():
             messages.error(request, "Please enter a clear reason for the refund request.")
             return redirect("orders:detail", order_number=order.order_number)
 
         try:
-            request_order_refund(order, request.user, form.cleaned_data["reason"])
+            request_order_refund(
+                order,
+                request.user,
+                form.cleaned_data["reason"],
+                payout_method=form.cleaned_data["payout_method"],
+                photos=form.cleaned_data.get("photos", []),
+            )
             messages.success(request, "Your refund request was submitted for review.")
         except ValidationError as exc:
             messages.error(request, exc.messages[0] if exc.messages else "Unable to submit a refund request.")
+        return redirect("orders:detail", order_number=order.order_number)
+
+
+class ReorderOrderView(LoginRequiredMixin, CustomerRequiredMixin, View):
+    def post(self, request, order_number):
+        order = get_object_or_404(
+            request.user.orders.prefetch_related("items__product"),
+            order_number=order_number,
+        )
+        try:
+            reorder_order_to_cart(request.user, order)
+            messages.success(request, f"{order.order_number} was added back to your cart.")
+            return redirect("cart:detail")
+        except ValidationError as exc:
+            messages.error(request, exc.messages[0] if exc.messages else "Unable to reorder that delivery.")
+            return redirect("orders:detail", order_number=order.order_number)
+
+
+class SubmitDeliveryFeedbackView(LoginRequiredMixin, CustomerRequiredMixin, View):
+    def post(self, request, order_number):
+        order = get_object_or_404(
+            request.user.orders.select_related("assigned_driver", "selected_agent", "feedback"),
+            order_number=order_number,
+        )
+        form = DeliveryFeedbackForm(request.POST, request.FILES)
+        if not form.is_valid():
+            messages.error(request, "Please provide a valid rating before submitting your feedback.")
+            return redirect("orders:detail", order_number=order.order_number)
+
+        try:
+            submit_delivery_feedback(
+                order,
+                request.user,
+                form.cleaned_data["rating"],
+                form.cleaned_data.get("comment", ""),
+                form.cleaned_data.get("photo"),
+            )
+            messages.success(request, "Thanks for rating this delivery.")
+        except ValidationError as exc:
+            messages.error(request, exc.messages[0] if exc.messages else "Unable to save your feedback.")
+        return redirect("orders:detail", order_number=order.order_number)
+
+
+class SkipDeliveryFeedbackView(LoginRequiredMixin, CustomerRequiredMixin, View):
+    def post(self, request, order_number):
+        order = get_object_or_404(
+            request.user.orders.select_related("assigned_driver", "selected_agent", "feedback"),
+            order_number=order_number,
+        )
+        try:
+            skip_delivery_feedback(order, request.user)
+            messages.info(request, "Feedback skipped for this delivery.")
+        except ValidationError as exc:
+            messages.error(request, exc.messages[0] if exc.messages else "Unable to skip feedback for this order.")
+        return redirect("orders:detail", order_number=order.order_number)
+
+
+class RefreshDeliveryQRCodeView(LoginRequiredMixin, CustomerRequiredMixin, View):
+    def post(self, request, order_number):
+        order = get_object_or_404(
+            request.user.orders.select_related("confirmation"),
+            order_number=order_number,
+        )
+        if not hasattr(order, "confirmation"):
+            messages.error(request, "Your order does not have a delivery QR code yet.")
+            return redirect("orders:detail", order_number=order.order_number)
+        if order.status not in {
+            OrderStatus.PAID,
+            OrderStatus.DRIVER_ASSIGNED,
+            OrderStatus.DRIVER_ACCEPTED,
+            OrderStatus.PICKED_UP,
+            OrderStatus.OUT_FOR_DELIVERY,
+            OrderStatus.ARRIVED,
+        }:
+            messages.error(request, "A fresh QR code can only be requested while delivery is still in progress.")
+            return redirect("orders:detail", order_number=order.order_number)
+
+        refresh_delivery_confirmation(order, force=True)
+        messages.success(request, "A fresh delivery QR code has been generated.")
         return redirect("orders:detail", order_number=order.order_number)
 
 

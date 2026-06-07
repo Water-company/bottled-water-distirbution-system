@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Notifications{% endblock %}
+{% block content %}
+<div class="content-card p-4">
+    <div class="d-flex flex-column flex-md-row justify-content-between gap-3 align-items-md-center mb-4">
+        <div>
+            <span class="eyebrow">Notifications</span>
+            <h1 class="h3 mt-2 mb-1">Stay updated on your account activity</h1>
+            <p class="text-secondary mb-0">{{ unread_count }} unread notification{{ unread_count|pluralize }}.</p>
+        </div>
+        {% if unread_count %}
+            <form method="post" action="{% url 'accounts:mark_notifications_read' %}">
+                {% csrf_token %}
+                <button class="btn btn-outline-primary">Mark All Read</button>
+            </form>
+        {% endif %}
+    </div>
+    {% if notifications %}
+        {% for notification in notifications %}
+            <div class="border rounded p-3 mb-3 {% if not notification.is_read %}border-primary{% endif %}">
+                <div class="d-flex justify-content-between gap-3">
+                    <div>
+                        <div class="fw-semibold">{{ notification.title }}</div>
+                        <div class="small text-secondary mb-2">{{ notification.created_at|date:"M d, Y H:i" }}</div>
+                        <div>{{ notification.message }}</div>
+                    </div>
+                    {% if not notification.is_read %}
+                        <span class="badge text-bg-info">Unread</span>
+                    {% endif %}
+                </div>
+                {% if notification.link %}
+                    <div class="mt-3">
+                        <a href="{{ notification.link }}" class="btn btn-sm btn-outline-primary">Open</a>
+                    </div>
+                {% endif %}
+            </div>
+        {% endfor %}
+    {% else %}
+        <p class="text-secondary mb-0">No notifications yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

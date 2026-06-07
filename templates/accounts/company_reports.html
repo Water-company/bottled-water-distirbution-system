@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}Company Reports{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Company Admin</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">Reports</h1>
+    <p class="text-secondary mb-0">Review delivered volume, branch performance, and export your operating report as Excel or PDF.</p>
+</section>
+
+<section class="content-card p-4 mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3">
+        <form method="get" class="row g-3 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label">Date From</label>
+                <input type="date" name="date_from" class="form-control" value="{{ date_from|date:'Y-m-d' }}">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Date To</label>
+                <input type="date" name="date_to" class="form-control" value="{{ date_to|date:'Y-m-d' }}">
+            </div>
+            <div class="col-md-4 d-flex gap-2">
+                <button class="btn btn-primary">Apply</button>
+                <a class="btn btn-outline-primary" href="{% url 'accounts:company_reports' %}">Reset</a>
+            </div>
+        </form>
+        <div class="d-flex gap-2">
+            <a class="btn btn-outline-primary" href="{{ excel_export_url }}">Export Excel</a>
+            <a class="btn btn-primary" href="{{ pdf_export_url }}">Export PDF</a>
+        </div>
+    </div>
+</section>
+
+<section class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="content-card p-4 h-100">
+            <div class="text-secondary small text-uppercase">Orders</div>
+            <div class="display-6 fw-semibold mt-2">{{ summary.total_orders }}</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="content-card p-4 h-100">
+            <div class="text-secondary small text-uppercase">Delivered</div>
+            <div class="display-6 fw-semibold mt-2">{{ summary.delivered_orders }}</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="content-card p-4 h-100">
+            <div class="text-secondary small text-uppercase">Revenue</div>
+            <div class="display-6 fw-semibold mt-2">{{ revenue_display }}</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="content-card p-4 h-100">
+            <div class="text-secondary small text-uppercase">Approved Refunds</div>
+            <div class="display-6 fw-semibold mt-2">{{ refunds_display }}</div>
+        </div>
+    </div>
+</section>
+
+<section class="row g-4">
+    <div class="col-xl-6">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Product Performance</h2>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead>
+                        <tr>
+                            <th>Product</th>
+                            <th>Units Sold</th>
+                            <th>Revenue</th>
+                            <th>Stock</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in product_rows %}
+                            <tr>
+                                <td>{{ row.name }}{% if row.size_label %}<div class="text-secondary small">{{ row.size_label }}</div>{% endif %}</td>
+                                <td>{{ row.units_sold }}</td>
+                                <td>{{ row.revenue_display }}</td>
+                                <td>{{ row.stock_total }}</td>
+                            </tr>
+                        {% empty %}
+                            <tr><td colspan="4" class="text-center text-secondary py-4">No delivered product data in this period.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-6">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Agent Performance</h2>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead>
+                        <tr>
+                            <th>Agent</th>
+                            <th>Drivers</th>
+                            <th>Delivered</th>
+                            <th>Revenue</th>
+                            <th>Rating</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in agent_rows %}
+                            <tr>
+                                <td>{{ row.name }}<div class="text-secondary small">{{ row.manager_name }}</div></td>
+                                <td>{{ row.drivers_count }}</td>
+                                <td>{{ row.delivered_orders }}</td>
+                                <td>{{ row.revenue_display }}</td>
+                                <td>{{ row.average_rating_display }}</td>
+                            </tr>
+                        {% empty %}
+                            <tr><td colspan="5" class="text-center text-secondary py-4">No branch activity in this period.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section class="content-card p-4 mt-4">
+    <h2 class="h4 mb-3">Recent Orders In Range</h2>
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead>
+                <tr>
+                    <th>Order</th>
+                    <th>Agent</th>
+                    <th>Status</th>
+                    <th>Total</th>
+                    <th>Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for order in orders %}
+                    <tr>
+                        <td>{{ order.order_number }}</td>
+                        <td>{{ order.selected_agent.name|default:"Unassigned" }}</td>
+                        <td>{{ order.get_status_display }}</td>
+                        <td>{{ order.total }}</td>
+                        <td>{{ order.created_at|date:"Y-m-d H:i" }}</td>
+                    </tr>
+                {% empty %}
+                    <tr><td colspan="5" class="text-center text-secondary py-4">No orders found for this range.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

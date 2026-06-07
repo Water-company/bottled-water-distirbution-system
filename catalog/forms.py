@@ -29,6 +29,6 @@ class ProductFilterForm(forms.Form):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["company"].queryset = Company.objects.filter(is_verified=True).order_by("name")
+        self.fields["company"].queryset = Company.objects.filter(is_verified=True, is_active=True).order_by("name")
         for name, field in self.fields.items():
             field.widget.attrs["class"] = "form-select" if name in {"company", "sort"} else "form-control"

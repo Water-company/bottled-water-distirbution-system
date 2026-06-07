@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Agent Orders{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Agent Manager</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">Order Management</h1>
+    <p class="text-secondary mb-0">Filter branch orders by status, driver, and date to review assignment and delivery progress.</p>
+</section>
+
+<section class="content-card p-4 mb-4">
+    <form method="get" class="row g-3">
+        <div class="col-md-3">
+            <select name="status" class="form-select">
+                <option value="">All statuses</option>
+                {% for value, label in status_choices %}
+                    <option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <select name="driver" class="form-select">
+                <option value="">All drivers</option>
+                {% for driver in drivers %}
+                    <option value="{{ driver.pk }}" {% if selected_driver == driver.pk|stringformat:"s" %}selected{% endif %}>{{ driver.user.full_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2"><input type="date" name="date_from" class="form-control" value="{{ date_from }}"></div>
+        <div class="col-md-2"><input type="date" name="date_to" class="form-control" value="{{ date_to }}"></div>
+        <div class="col-md-2 d-flex gap-2">
+            <button class="btn btn-primary">Filter</button>
+            <a class="btn btn-outline-primary" href="{% url 'accounts:agent_orders' %}">Reset</a>
+        </div>
+    </form>
+</section>
+
+<section class="content-card p-4">
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th>Order</th><th>Customer</th><th>Driver</th><th>Status</th><th>Date</th><th>Total</th></tr></thead>
+            <tbody>
+                {% for order in orders %}
+                    <tr>
+                        <td>{{ order.order_number }}</td>
+                        <td>{{ order.customer.full_name }}</td>
+                        <td>{{ order.assigned_driver.user.full_name|default:"Unassigned" }}</td>
+                        <td>{{ order.get_status_display }}</td>
+                        <td>{{ order.created_at|date:"M d, Y H:i" }}</td>
+                        <td>{{ order.total }}</td>
+                    </tr>
+                {% empty %}
+                    <tr><td colspan="6" class="text-center text-secondary py-4">No orders match this filter.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

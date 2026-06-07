@@ -15,7 +15,7 @@ class CompanyListView(ListView):
     paginate_by = 8
 
     def get_queryset(self):
-        queryset = Company.objects.filter(is_verified=True)
+        queryset = Company.objects.filter(is_verified=True, is_active=True)
         self.filter_form = CompanyFilterForm(self.request.GET or None)
         if self.filter_form.is_valid():
             search = self.filter_form.cleaned_data.get("search")
@@ -42,7 +42,11 @@ class ProductListView(ListView):
     paginate_by = 9
 
     def get_queryset(self):
-        queryset = Product.objects.select_related("company").filter(is_active=True, company__is_verified=True)
+        queryset = Product.objects.select_related("company").filter(
+            is_active=True,
+            company__is_verified=True,
+            company__is_active=True,
+        )
         self.filter_form = ProductFilterForm(self.request.GET or None)
         if self.filter_form.is_valid():
             search = self.filter_form.cleaned_data.get("search")
@@ -89,6 +93,7 @@ class ProductDetailView(DetailView):
         return Product.objects.select_related("company").prefetch_related("gallery").filter(
             is_active=True,
             company__is_verified=True,
+            company__is_active=True,
         )
 
     def dispatch(self, request, *args, **kwargs):
@@ -101,7 +106,7 @@ class ProductDetailView(DetailView):
         context = super().get_context_data(**kwargs)
         context["add_to_cart_form"] = AddToCartForm()
         context["related_products"] = (
-            Product.objects.filter(company=self.object.company, is_active=True)
+            Product.objects.filter(company=self.object.company, is_active=True, company__is_active=True)
             .exclude(pk=self.object.pk)[:4]
         )
         return context

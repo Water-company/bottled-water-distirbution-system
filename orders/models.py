@@ -1,14 +1,18 @@
 import random
+import secrets
 import string
+import json
 from io import BytesIO
 
 import qrcode
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.db import models
 from django.utils import timezone
 
 from core.models import TimeStampedModel
+from orders.qr_tokens import build_customer_token_id, build_signed_qr_token
 
 
 class LocationSource(models.TextChoices):
@@ -21,9 +25,13 @@ class OrderStatus(models.TextChoices):
     REJECTED = "rejected", "Rejected by Agent"
     PAYMENT_PENDING = "payment_pending", "Accepted - Payment Required"
     PAID = "paid", "Paid - Preparing Delivery"
-    DRIVER_ASSIGNED = "driver_assigned", "Driver Assigned"
-    OUT_FOR_DELIVERY = "out_for_delivery", "Out for Delivery"
+    DRIVER_ASSIGNED = "driver_assigned", "Assigned"
+    DRIVER_ACCEPTED = "driver_accepted", "Accepted"
+    PICKED_UP = "picked_up", "Picked Up"
+    OUT_FOR_DELIVERY = "out_for_delivery", "On the Way"
+    ARRIVED = "arrived", "Arrived"
     DELIVERED = "delivered", "Delivered"
+    FAILED = "failed", "Failed"
     CANCELLED = "cancelled", "Cancelled"
 
 
@@ -55,6 +63,21 @@ class RefundRequestStatus(models.TextChoices):
     PENDING = "pending", "Pending Review"
     APPROVED = "approved", "Approved"
     REJECTED = "rejected", "Rejected"
+    PROCESSED = "processed", "Processed"
+    FAILED = "failed", "Failed"
+
+
+class RefundPayoutMethod(models.TextChoices):
+    GATEWAY = "gateway", "Refund via Gateway"
+    WALLET_CREDIT = "wallet_credit", "Wallet Credit"
+
+
+class DeliveryIssueType(models.TextChoices):
+    CUSTOMER_NOT_FOUND = "customer_not_found", "Customer not found"
+    WRONG_ADDRESS = "wrong_address", "Wrong address"
+    TRAFFIC_DELAY = "traffic_delay", "Traffic / delay"
+    VEHICLE_ISSUE = "vehicle_issue", "Vehicle issue"
+    OTHER = "other", "Other"
 
 
 class Order(TimeStampedModel):
@@ -93,8 +116,12 @@ class Order(TimeStampedModel):
     rejected_at = models.DateTimeField(blank=True, null=True)
     paid_at = models.DateTimeField(blank=True, null=True)
     driver_assigned_at = models.DateTimeField(blank=True, null=True)
+    driver_accepted_at = models.DateTimeField(blank=True, null=True)
+    picked_up_at = models.DateTimeField(blank=True, null=True)
     out_for_delivery_at = models.DateTimeField(blank=True, null=True)
+    arrived_at = models.DateTimeField(blank=True, null=True)
     delivered_at = models.DateTimeField(blank=True, null=True)
+    failed_at = models.DateTimeField(blank=True, null=True)
     agent_response_deadline = models.DateTimeField(blank=True, null=True)
     cancellation_deadline = models.DateTimeField(blank=True, null=True)
 
@@ -147,7 +174,7 @@ class Order(TimeStampedModel):
     def can_cancel(self):
         if self.status == OrderStatus.PAYMENT_PENDING:
             return True
-        if self.status in {OrderStatus.PAID, OrderStatus.DRIVER_ASSIGNED}:
+        if self.status in {OrderStatus.PAID, OrderStatus.DRIVER_ASSIGNED, OrderStatus.DRIVER_ACCEPTED}:
             return self.cancellation_window_open
         return False
 
@@ -167,6 +194,14 @@ class Order(TimeStampedModel):
         if self.refund_deadline is None:
             return False
         return timezone.now() <= self.refund_deadline
+
+    @property
+    def feedback_record(self):
+        return getattr(self, "feedback", None)
+
+    @property
+    def can_leave_feedback(self):
+        return self.status == OrderStatus.DELIVERED and not hasattr(self, "feedback")
 
 
 class OrderItem(TimeStampedModel):
@@ -239,9 +274,18 @@ class Payment(TimeStampedModel):
 
 class DeliveryConfirmation(TimeStampedModel):
     order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name="confirmation")
-    qr_token = models.CharField(max_length=64, unique=True, editable=False)
+    qr_token = models.CharField(max_length=512, unique=True, editable=False)
     qr_code_image = models.ImageField(upload_to="orders/qr_codes/", blank=True, null=True)
     otp_code = models.CharField(max_length=6, editable=False)
+    expires_at = models.DateTimeField(blank=True, null=True)
+    scanned_at = models.DateTimeField(blank=True, null=True)
+    scanned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="scanned_delivery_confirmations",
+        blank=True,
+        null=True,
+    )
     verified_at = models.DateTimeField(blank=True, null=True)
     verified_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -258,21 +302,132 @@ class DeliveryConfirmation(TimeStampedModel):
         return f"Confirmation for {self.order.order_number}"
 
     def save(self, *args, **kwargs):
+        if not self.expires_at:
+            self.expires_at = timezone.now() + timezone.timedelta(hours=settings.QR_TOKEN_EXPIRY_HOURS)
         if not self.qr_token:
-            self.qr_token = "".join(random.choices(string.ascii_letters + string.digits, k=32))
+            self.qr_token = self._generate_signed_qr_token()
         if not self.otp_code:
             self.otp_code = "".join(random.choices(string.digits, k=6))
         if not self.qr_code_image:
             self._generate_qr_code_image()
         super().save(*args, **kwargs)
 
+    @property
+    def customer_token_id(self):
+        return build_customer_token_id(self.order.customer_id)
+
+    @property
+    def qr_payload(self):
+        return {
+            "order_id": self.order.order_number,
+            "customer_id": self.customer_token_id,
+            "token": self.qr_token,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else "",
+        }
+
+    @property
+    def qr_payload_json(self):
+        return json.dumps(self.qr_payload, separators=(",", ":"))
+
+    @property
+    def is_expired(self):
+        return bool(self.expires_at and timezone.now() >= self.expires_at)
+
+    def refresh_qr_assets(self, save=True):
+        self.expires_at = timezone.now() + timezone.timedelta(hours=settings.QR_TOKEN_EXPIRY_HOURS)
+        self.qr_token = self._generate_signed_qr_token()
+        self.scanned_at = None
+        self.scanned_by = None
+        self.verified_at = None
+        self.verified_by = None
+        self._generate_qr_code_image()
+        if save:
+            self.save(
+                update_fields=[
+                    "qr_token",
+                    "qr_code_image",
+                    "expires_at",
+                    "scanned_at",
+                    "scanned_by",
+                    "verified_at",
+                    "verified_by",
+                    "updated_at",
+                ]
+            )
+        return self
+
+    def _generate_signed_qr_token(self):
+        return build_signed_qr_token(
+            order_id=self.order.order_number,
+            customer_id=self.customer_token_id,
+            expires_at=self.expires_at,
+            nonce=secrets.token_hex(8),
+        )
+
     def _generate_qr_code_image(self):
-        payload = f"{self.order.order_number}|{self.qr_token}|{self.otp_code}"
-        image = qrcode.make(payload)
+        qr_code = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=4)
+        qr_code.add_data(self.qr_payload_json)
+        qr_code.make(fit=True)
+        image = qr_code.make_image(fill_color="black", back_color="white")
         buffer = BytesIO()
         image.save(buffer, format="PNG")
         filename = f"{self.order.order_number.lower()}-confirmation.png"
         self.qr_code_image.save(filename, ContentFile(buffer.getvalue()), save=False)
+
+
+class DeliveryIssue(TimeStampedModel):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="delivery_issues")
+    reported_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="reported_delivery_issues",
+        blank=True,
+        null=True,
+    )
+    issue_type = models.CharField(max_length=40, choices=DeliveryIssueType.choices)
+    description = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return f"{self.order.order_number} - {self.get_issue_type_display()}"
+
+
+class DeliveryFeedback(TimeStampedModel):
+    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name="feedback")
+    customer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="delivery_feedback_entries",
+    )
+    driver = models.ForeignKey(
+        "catalog.Driver",
+        on_delete=models.SET_NULL,
+        related_name="delivery_feedback_entries",
+        blank=True,
+        null=True,
+    )
+    rating = models.PositiveSmallIntegerField(blank=True, null=True)
+    comment = models.TextField(blank=True)
+    photo = models.ImageField(upload_to="orders/feedback/", blank=True, null=True)
+    skipped_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return f"Feedback for {self.order.order_number}"
+
+    def clean(self):
+        if self.rating is not None and not 1 <= self.rating <= 5:
+            raise ValidationError({"rating": "Rating must be between 1 and 5."})
+        if self.skipped_at and self.rating is not None:
+            raise ValidationError("Skipped feedback cannot also have a rating.")
+
+    @property
+    def was_skipped(self):
+        return self.skipped_at is not None
 
 
 class OrderStatusHistory(models.Model):
@@ -300,6 +455,7 @@ class RefundRequest(TimeStampedModel):
     )
     request_type = models.CharField(max_length=30, choices=RefundRequestType.choices)
     status = models.CharField(max_length=20, choices=RefundRequestStatus.choices, default=RefundRequestStatus.PENDING)
+    payout_method = models.CharField(max_length=20, choices=RefundPayoutMethod.choices, default=RefundPayoutMethod.GATEWAY)
     reason = models.TextField(blank=True)
     requested_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     fee_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
@@ -314,10 +470,29 @@ class RefundRequest(TimeStampedModel):
     )
     reviewed_at = models.DateTimeField(blank=True, null=True)
     processed_at = models.DateTimeField(blank=True, null=True)
+    processed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="processed_refunds",
+        blank=True,
+        null=True,
+    )
     resolution_note = models.TextField(blank=True)
+    failure_reason = models.TextField(blank=True)
 
     class Meta:
         ordering = ("-created_at",)
 
     def __str__(self):
         return f"{self.order.order_number} {self.get_request_type_display()}"
+
+
+class RefundEvidence(TimeStampedModel):
+    refund_request = models.ForeignKey(RefundRequest, on_delete=models.CASCADE, related_name="evidences")
+    image = models.ImageField(upload_to="orders/refunds/")
+
+    class Meta:
+        ordering = ("created_at",)
+
+    def __str__(self):
+        return f"Evidence for {self.refund_request.order.order_number}"

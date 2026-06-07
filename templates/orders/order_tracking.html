@@ -55,6 +55,8 @@
                                 Waiting for driver assignment
                             {% endif %}
                         </p>
+                        <div class="small text-secondary mt-3 mb-2">ETA</div>
+                        <p class="mb-0" id="tracking-eta-summary">{% if tracking_map_payload.etaMinutes %}{{ tracking_map_payload.etaMinutes }} mins{% else %}Waiting for route data{% endif %}</p>
                     </div>
                 </div>
             </div>
@@ -112,6 +114,7 @@
         const agentSummary = document.getElementById("tracking-agent-summary");
         const driverSummary = document.getElementById("tracking-driver-summary");
         const driverChip = document.getElementById("tracking-driver-chip");
+        const etaSummary = document.getElementById("tracking-eta-summary");
 
         function hasCoords(item) {
             return item && Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude));
@@ -205,6 +208,12 @@
                 mapStatus.textContent = "Agent branch shown. Driver coordinates will appear once a driver is assigned.";
             } else {
                 mapStatus.textContent = "Waiting for agent and driver coordinates.";
+            }
+
+            if (payload.etaMinutes) {
+                etaSummary.textContent = `${payload.etaMinutes} mins${payload.distanceKm ? ` (${payload.distanceKm.toFixed(2)} km)` : ""}`;
+            } else {
+                etaSummary.textContent = "Waiting for route data";
             }
 
             if (!hasFitInitialBounds) {

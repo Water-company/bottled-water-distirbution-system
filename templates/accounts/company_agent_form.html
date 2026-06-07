@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Edit Agent Branch{% endblock %}
+{% block content %}
+<section class="hero-card p-4 p-lg-5 mb-4">
+    <span class="eyebrow">Company Admin</span>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">Edit Agent Branch</h1>
+    <p class="text-secondary mb-0">Update branch details, service coverage, and manager assignment for {{ agent.name }}.</p>
+</section>
+
+<section class="content-card p-4">
+    <form method="post" class="row g-3">
+        {% csrf_token %}
+        {% for field in form %}
+            <div class="{% if field.name == 'description' or field.name == 'address' %}col-12{% else %}col-md-6{% endif %}">
+                <label class="form-label">{{ field.label }}</label>
+                {{ field }}
+                {% if field.errors %}<div class="text-danger small mt-1">{{ field.errors|join:", " }}</div>{% endif %}
+            </div>
+        {% endfor %}
+        <div class="col-12 d-flex gap-2">
+            <button class="btn btn-primary">Save Branch</button>
+            <a class="btn btn-outline-primary" href="{% url 'accounts:company_agents' %}">Back to Agents</a>
+        </div>
+    </form>
+</section>
+{% endblock %}

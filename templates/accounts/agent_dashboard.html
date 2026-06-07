@@ -10,6 +10,34 @@
             <span class="status-light {% if agent_online %}status-light--online{% else %}status-light--offline{% endif %}"></span>
             {% if agent_online %}Agent online{% else %}Agent offline{% endif %}
         </span>
+        <span class="badge text-bg-light">Open batch balance: {{ open_batch_balance }}</span>
+        <a href="{% url 'accounts:agent_orders' %}" class="btn btn-sm btn-outline-primary">Order History</a>
+        <a href="{% url 'accounts:agent_drivers' %}" class="btn btn-sm btn-outline-primary">Manage Drivers</a>
+        <a href="{% url 'accounts:agent_fleet' %}" class="btn btn-sm btn-outline-primary">Live Fleet</a>
+        <a href="{% url 'accounts:agent_feedback' %}" class="btn btn-sm btn-outline-primary">Feedback</a>
+        <a href="{% url 'accounts:agent_inventory' %}" class="btn btn-sm btn-outline-dark">Open Inventory</a>
+        <a href="{% url 'accounts:agent_refunds' %}" class="btn btn-sm btn-outline-dark">Refunds {% if pending_refund_count %}({{ pending_refund_count }}){% endif %}</a>
+    </div>
+</section>
+
+<section class="row g-4 mb-4">
+    <div class="col-md-4">
+        <div class="content-card p-4 h-100">
+            <div class="text-secondary small text-uppercase">Online Drivers</div>
+            <div class="display-6 fw-semibold">{{ online_driver_count }}</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="content-card p-4 h-100">
+            <div class="text-secondary small text-uppercase">Pending Refunds</div>
+            <div class="display-6 fw-semibold">{{ pending_refund_count }}</div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="content-card p-4 h-100">
+            <div class="text-secondary small text-uppercase">Active Drivers</div>
+            <div class="display-6 fw-semibold">{{ drivers|length }}</div>
+        </div>
     </div>
 </section>
 
@@ -68,13 +96,13 @@
     </div>
     <div class="col-lg-5">
         <div class="content-card p-4 mb-4">
-            <h2 class="h4 mb-3">Restock Request</h2>
-            <form method="post" action="{% url 'accounts:create_restock_request' %}">
+            <h2 class="h4 mb-3">Batch Stock Request</h2>
+            <form method="post" action="{% url 'accounts:agent_batch_request_create' %}">
                 {% csrf_token %}
-                <div class="mb-3">{{ restock_form.product }}</div>
-                <div class="mb-3">{{ restock_form.quantity_requested }}</div>
-                <div class="mb-3">{{ restock_form.note }}</div>
-                <button class="btn btn-primary w-100">Submit Request</button>
+                {% for field in batch_request_form %}
+                    <div class="mb-3">{{ field }}</div>
+                {% endfor %}
+                <button class="btn btn-primary w-100">Submit Batch Request</button>
             </form>
         </div>
         <div class="content-card p-4">
@@ -115,18 +143,18 @@
                             <td>{{ order.customer.full_name }}</td>
                             <td>{{ order.get_status_display }}</td>
                             <td>
-                                {% if order.status == "paid" %}
+                                {% if assignable_drivers %}
                                             <form method="post" action="{% url 'accounts:assign_driver' order.order_number %}" class="d-flex gap-2">
                                                 {% csrf_token %}
                                                 <select name="driver_id" class="form-select">
-                                                    {% for driver in drivers %}
+                                                    {% for driver in assignable_drivers %}
                                                 <option value="{{ driver.pk }}">{{ driver.user.full_name }} {% if driver.is_online %}(Online){% else %}(Offline){% endif %}</option>
                                             {% endfor %}
                                         </select>
-                                        <button class="btn btn-primary">Assign</button>
+                                        <button class="btn btn-primary">{% if order.assigned_driver %}Reassign{% else %}Assign{% endif %}</button>
                                     </form>
                                 {% else %}
-                                    <span class="text-secondary">Driver already handled</span>
+                                    <span class="text-secondary">No active drivers available</span>
                                 {% endif %}
                             </td>
                         </tr>
@@ -136,6 +164,39 @@
         </div>
     {% else %}
         <p class="text-secondary mb-0">No accepted orders yet.</p>
+    {% endif %}
+</section>
+
+<section class="content-card p-4 mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="h4 mb-0">Recent Inventory Activity</h2>
+        <a href="{% url 'accounts:agent_inventory' %}" class="btn btn-sm btn-outline-primary">Full Inventory Log</a>
+    </div>
+    {% if recent_inventory_transactions %}
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th>Product</th>
+                        <th>Type</th>
+                        <th>Change</th>
+                        <th>Stock After</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for transaction in recent_inventory_transactions %}
+                        <tr>
+                            <td>{{ transaction.product.name }}</td>
+                            <td>{{ transaction.get_transaction_type_display }}</td>
+                            <td>{{ transaction.quantity_change }}</td>
+                            <td>{{ transaction.stock_after }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="text-secondary mb-0">Inventory activity will appear here after the first restock, return, adjustment, or sale.</p>
     {% endif %}
 </section>
 
