@@ -13,6 +13,7 @@ from django.db.models import Sum
 from django.urls import reverse
 from django.utils import timezone
 
+from accounts.services import get_company_admin_users
 from core.services import notify_user
 from core.policies import get_cart_pricing_summary, quantize_money
 from cart.services import add_product_to_cart, get_or_create_cart
@@ -91,6 +92,31 @@ def reorder_order_to_cart(user, order):
     return cart
 
 
+@transaction.atomic
+def restore_rejected_order_to_cart(user, order):
+    if order.customer_id != user.id:
+        raise ValidationError("You can only retry your own orders.")
+    if order.status != OrderStatus.REJECTED:
+        raise ValidationError("You can only choose another agent after an order has been rejected.")
+    if not order.items.exists():
+        raise ValidationError("This order does not have any items to retry.")
+
+    cart = get_or_create_cart(user)
+    cart.items.all().delete()
+    unavailable_products = []
+    for item in order.items.select_related("product"):
+        if not item.product.is_active:
+            unavailable_products.append(item.product_name)
+            continue
+        add_product_to_cart(user, item.product, item.quantity)
+
+    if unavailable_products:
+        raise ValidationError(
+            f"Some products are no longer available for retry: {', '.join(unavailable_products)}."
+        )
+    return cart
+
+
 def get_eligible_agents(company, items, latitude, longitude):
     eligible_agents = []
     for option in get_agent_delivery_options(company, items, latitude, longitude):
@@ -160,8 +186,45 @@ def _set_latest_status_note(order, note):
         latest_history.save(update_fields=["note"])
 
 
+@transaction.atomic
+def expire_order_request_if_needed(order):
+    if order.status != OrderStatus.REQUESTED or not order.agent_response_deadline:
+        return False
+
+    now = timezone.now()
+    if order.agent_response_deadline > now:
+        return False
+
+    pending_requests = list(order.agent_requests.select_for_update().filter(status=AgentRequestStatus.PENDING))
+    if not pending_requests:
+        order.agent_response_deadline = None
+        order.save(update_fields=["agent_response_deadline", "updated_at"])
+        return False
+
+    timeout_note = "The selected agent did not confirm this order within the response window."
+    for pending_request in pending_requests:
+        pending_request.status = AgentRequestStatus.REJECTED
+        pending_request.note = timeout_note
+        pending_request.responded_at = now
+        pending_request.save(update_fields=["status", "note", "responded_at", "updated_at"])
+
+    order.status = OrderStatus.REJECTED
+    order.rejected_at = now
+    order.agent_response_deadline = None
+    order.rejection_reason = timeout_note
+    order.save()
+    _set_latest_status_note(order, timeout_note)
+    notify_user(
+        order.customer,
+        "Order request timed out",
+        f"{order.order_number} was not confirmed in time. Please choose another agent and try again.",
+        link=reverse("orders:detail", kwargs={"order_number": order.order_number}),
+    )
+    return True
+
+
 def release_reserved_stock(order):
-    if not order.selected_agent_id:
+    if not order.selected_agent_id or order.status not in RESERVED_STOCK_ORDER_STATUSES:
         return
 
     for item in order.items.select_related("product"):
@@ -283,9 +346,10 @@ def create_order_request_from_cart(user, cleaned_data):
 
     selected_agent = selected_option["agent"]
     selected_distance = selected_option["distance_km"]
-    now = timezone.now()
     pricing_summary = get_cart_pricing_summary(cart)
-    _reserve_stock_for_items(selected_agent, items)
+    now = timezone.now()
+    total_units = sum(item.quantity for item in items)
+    primary_product = items[0].product.name if items else "water products"
 
     order = Order.objects.create(
         customer=user,
@@ -303,8 +367,8 @@ def create_order_request_from_cart(user, cleaned_data):
         premium_streak_count=pricing_summary["premium_offer"]["streak"],
         delivery_fee=pricing_summary["delivery_fee"],
         total=pricing_summary["total"],
-        status=OrderStatus.PAYMENT_PENDING,
-        accepted_at=now,
+        status=OrderStatus.REQUESTED,
+        agent_response_deadline=now + timezone.timedelta(minutes=settings.AGENT_REQUEST_RESPONSE_MINUTES),
     )
 
     for item in items:
@@ -319,28 +383,36 @@ def create_order_request_from_cart(user, cleaned_data):
     OrderAgentRequest.objects.create(
         order=order,
         agent=selected_agent,
-        status=AgentRequestStatus.ACCEPTED,
+        status=AgentRequestStatus.PENDING,
         distance_km=selected_distance,
-        note="Automatically selected during checkout.",
-        responded_at=now,
-    )
-
-    Payment.objects.update_or_create(
-        order=order,
-        defaults={
-            "provider": PaymentProvider.CHAPA,
-            "status": PaymentStatus.PENDING,
-            "amount": order.total,
-            "reference": generate_payment_reference(order),
-        },
+        note="Chosen by the customer during checkout and waiting for agent confirmation.",
     )
 
     cart.items.all().delete()
     notify_user(
         user,
-        "Order ready for payment",
-        f"{order.order_number} has been prepared with {selected_agent.name}. Complete payment to confirm delivery.",
-        link=reverse("orders:payment", kwargs={"order_number": order.order_number}),
+        "Order request submitted",
+        f"{order.order_number} was sent to {selected_agent.name}. Please wait while the agent confirms the order.",
+        link=reverse("orders:detail", kwargs={"order_number": order.order_number}),
+    )
+    if selected_agent.admin:
+        notify_user(
+            selected_agent.admin,
+            "New customer order request",
+            f"You have a new order of {total_units} units of {primary_product} from {user.full_name}. Accept or decline {order.order_number} to continue.",
+            link=reverse("accounts:agent_dashboard"),
+        )
+    else:
+        for admin_user in get_company_admin_users(company):
+            notify_user(
+                admin_user,
+                "New customer order request",
+                f"You have a new order of {total_units} units of {primary_product} from {user.full_name}.",
+                link=reverse("accounts:company_dashboard"),
+            )
+    _set_latest_status_note(
+        order,
+        f"Waiting for {selected_agent.name} to confirm the order before payment. Response window: {settings.AGENT_REQUEST_RESPONSE_MINUTES} minutes.",
     )
     return order
 
@@ -363,13 +435,15 @@ def accept_agent_request(agent_request, note="", accepted_by=None):
     order.selected_agent = agent_request.agent
     order.status = OrderStatus.PAYMENT_PENDING
     order.accepted_at = now
+    order.agent_response_deadline = None
     order.rejection_reason = ""
     order.save()
+    _set_latest_status_note(order, note or "Agent accepted the order. Payment can now begin.")
     if order.customer:
         notify_user(
             order.customer,
             "Order accepted",
-            f"{order.order_number} was accepted. You can proceed to payment now.",
+            f"{order.order_number} was accepted by {agent_request.agent.name}. Chapa payment is now ready.",
             link=reverse("orders:payment", kwargs={"order_number": order.order_number}),
         )
 
@@ -408,8 +482,10 @@ def reject_agent_request(agent_request, note=""):
     if not order.agent_requests.filter(status=AgentRequestStatus.PENDING).exists():
         order.status = OrderStatus.REJECTED
         order.rejected_at = now
+        order.agent_response_deadline = None
         order.rejection_reason = note or "All nearby agents declined the request."
         order.save()
+        _set_latest_status_note(order, order.rejection_reason)
         if order.customer:
             notify_user(
                 order.customer,
@@ -1204,17 +1280,17 @@ def request_order_refund(order, requested_by, reason, payout_method=RefundPayout
             f"{order.order_number} has a new service refund request waiting for review.",
             link=reverse("accounts:agent_refunds"),
         )
-    if order.company.admin and (
-        not order.selected_agent
-        or not order.selected_agent.admin_id
-        or order.company.admin_id != order.selected_agent.admin_id
-    ):
-        notify_user(
-            order.company.admin,
-            "New refund request",
-            f"{order.order_number} has a new service refund request waiting for review.",
-            link=reverse("accounts:company_dashboard"),
-        )
+    company_admins = list(get_company_admin_users(order.company))
+    if company_admins:
+        selected_agent_admin_id = getattr(order.selected_agent, "admin_id", None)
+        for admin_user in company_admins:
+            if not order.selected_agent or not selected_agent_admin_id or admin_user.pk != selected_agent_admin_id:
+                notify_user(
+                    admin_user,
+                    "New refund request",
+                    f"{order.order_number} has a new service refund request waiting for review.",
+                    link=reverse("accounts:company_dashboard"),
+                )
     notify_user(
         order.customer,
         "Refund request received",

@@ -15,20 +15,25 @@ def search_addis_locations(query, limit=6):
     if not normalized_query:
         return []
 
-    payload = nominatim_request(
-        "search",
-        {
-            "q": normalized_query,
-            "format": "jsonv2",
-            "addressdetails": 1,
-            "limit": limit,
-            "countrycodes": "et",
-            "viewbox": settings.NOMINATIM_VIEWBOX or ADDIS_ABABA_VIEWBOX,
-            "bounded": 1,
-            "dedupe": 1,
-            "email": settings.NOMINATIM_CONTACT_EMAIL,
-        },
-    )
+    search_params = {
+        "q": normalized_query,
+        "format": "jsonv2",
+        "addressdetails": 1,
+        "limit": limit,
+        "countrycodes": "et",
+        "viewbox": settings.NOMINATIM_VIEWBOX or ADDIS_ABABA_VIEWBOX,
+        "bounded": 1,
+        "dedupe": 1,
+        "email": settings.NOMINATIM_CONTACT_EMAIL,
+    }
+    payload = nominatim_request("search", search_params)
+    if not payload:
+        fallback_params = {
+            **search_params,
+            "q": f"{normalized_query}, Addis Ababa, Ethiopia",
+            "bounded": 0,
+        }
+        payload = nominatim_request("search", fallback_params)
     return [
         {
             "display_name": item.get("display_name", ""),

@@ -1,293 +1,478 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}Agent Manager Dashboard{% endblock %}
-{% block content %}
-<section class="hero-card p-4 p-lg-5 mb-4">
-    <span class="eyebrow">Agent Manager</span>
-    <h1 class="display-6 fw-semibold mt-2 mb-2">{{ agent.name }}</h1>
-    <p class="text-secondary mb-2">Review incoming orders, assign drivers, and manage branch inventory for {{ agent.company.name }}.</p>
-    <div class="d-flex flex-wrap gap-2">
-        <span class="status-pill {% if agent_online %}status-pill--online{% else %}status-pill--offline{% endif %}">
-            <span class="status-light {% if agent_online %}status-light--online{% else %}status-light--offline{% endif %}"></span>
-            {% if agent_online %}Agent online{% else %}Agent offline{% endif %}
-        </span>
-        <span class="badge text-bg-light">Open batch balance: {{ open_batch_balance }}</span>
-        <a href="{% url 'accounts:agent_orders' %}" class="btn btn-sm btn-outline-primary">Order History</a>
-        <a href="{% url 'accounts:agent_drivers' %}" class="btn btn-sm btn-outline-primary">Manage Drivers</a>
-        <a href="{% url 'accounts:agent_fleet' %}" class="btn btn-sm btn-outline-primary">Live Fleet</a>
-        <a href="{% url 'accounts:agent_feedback' %}" class="btn btn-sm btn-outline-primary">Feedback</a>
-        <a href="{% url 'accounts:agent_inventory' %}" class="btn btn-sm btn-outline-dark">Open Inventory</a>
-        <a href="{% url 'accounts:agent_refunds' %}" class="btn btn-sm btn-outline-dark">Refunds {% if pending_refund_count %}({{ pending_refund_count }}){% endif %}</a>
-    </div>
-</section>
+{% block body_class %}dashboard-body manager-dashboard-body{% endblock %}
+{% block navigation %}{% endblock %}
+{% block extra_head %}
+<link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+>
+{% endblock %}
+{% block page_body %}
+<div class="dashboard-shell">
+    <aside class="dashboard-sidebar dashboard-sidebar--soft">
+        <div class="dashboard-sidebar__brand">
+            <div class="h5 fw-bold mb-0">Manager Portal</div>
+            <span class="dashboard-sidebar__eyebrow">Operations Hub</span>
+        </div>
 
-<section class="row g-4 mb-4">
-    <div class="col-md-4">
-        <div class="content-card p-4 h-100">
-            <div class="text-secondary small text-uppercase">Online Drivers</div>
-            <div class="display-6 fw-semibold">{{ online_driver_count }}</div>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="content-card p-4 h-100">
-            <div class="text-secondary small text-uppercase">Pending Refunds</div>
-            <div class="display-6 fw-semibold">{{ pending_refund_count }}</div>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="content-card p-4 h-100">
-            <div class="text-secondary small text-uppercase">Active Drivers</div>
-            <div class="display-6 fw-semibold">{{ drivers|length }}</div>
-        </div>
-    </div>
-</section>
+        <nav class="dashboard-sidebar__nav">
+            <a class="dashboard-nav-link dashboard-nav-link--pill is-active" href="{% url 'accounts:agent_dashboard' %}">
+                <i class="bi bi-grid"></i>
+                <span>Dashboard</span>
+            </a>
+            <a class="dashboard-nav-link" href="{% url 'accounts:agent_inventory' %}">
+                <i class="bi bi-box-seam"></i>
+                <span>Inventory</span>
+            </a>
+            <a class="dashboard-nav-link" href="{% url 'accounts:agent_drivers' %}">
+                <i class="bi bi-truck"></i>
+                <span>Drivers</span>
+            </a>
+            <a class="dashboard-nav-link" href="{% url 'accounts:agent_fleet' %}">
+                <i class="bi bi-signpost-split"></i>
+                <span>Routes</span>
+            </a>
+            <a class="dashboard-nav-link" href="#assignment-queue">
+                <i class="bi bi-list-check"></i>
+                <span>Assignments</span>
+            </a>
+        </nav>
 
-<section class="row g-4 mb-4">
-    <div class="col-lg-7">
-        <div class="content-card p-4 h-100">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h2 class="h4 mb-0">Pending Orders</h2>
-                <small class="text-secondary">Poll endpoint: `/orders/pending-orders-json/`</small>
-            </div>
-            <div class="alert alert-info small" id="agent-polling-status">
-                The dashboard checks for new incoming orders every 5 seconds.
-            </div>
-            {% if pending_requests %}
-                <div class="table-responsive">
-                    <table class="table align-middle">
-                        <thead>
-                            <tr>
-                                <th>Order</th>
-                                <th>Customer</th>
-                                <th>Distance</th>
-                                <th>Total</th>
-                                <th>Timer</th>
-                                <th></th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for item in pending_requests %}
-                                <tr>
-                                    <td>{{ item.order.order_number }}</td>
-                                    <td>{{ item.order.customer.full_name }}</td>
-                                    <td>{{ item.distance_km }} km</td>
-                                    <td>{{ item.order.total }}</td>
-                                    <td class="countdown-cell" data-deadline="{{ item.order.agent_response_deadline|date:'c' }}">{{ item.order.agent_response_deadline|date:"H:i:s" }}</td>
-                                    <td class="text-end">
-                                        <div class="d-flex gap-2 justify-content-end">
-                                            <form method="post" action="{% url 'accounts:accept_request' item.pk %}">
-                                                {% csrf_token %}
-                                                <button class="btn btn-sm btn-primary">Accept</button>
-                                            </form>
-                                            <form method="post" action="{% url 'accounts:reject_request' item.pk %}">
-                                                {% csrf_token %}
-                                                <button class="btn btn-sm btn-outline-danger">Reject</button>
-                                            </form>
-                                        </div>
-                                    </td>
-                                </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            {% else %}
-                <p class="text-secondary mb-0">No pending orders right now.</p>
-            {% endif %}
+        <div class="dashboard-sidebar__spacer"></div>
+
+        <div class="dashboard-sidebar__footer">
+            <a class="dashboard-nav-link" href="{% url 'accounts:profile' %}">
+                <i class="bi bi-gear"></i>
+                <span>Settings</span>
+            </a>
+            <a class="dashboard-nav-link" href="{% url 'accounts:notifications' %}">
+                <i class="bi bi-question-circle"></i>
+                <span>Support</span>
+            </a>
         </div>
-    </div>
-    <div class="col-lg-5">
-        <div class="content-card p-4 mb-4">
-            <h2 class="h4 mb-3">Batch Stock Request</h2>
-            <form method="post" action="{% url 'accounts:agent_batch_request_create' %}">
-                {% csrf_token %}
-                {% for field in batch_request_form %}
-                    <div class="mb-3">{{ field }}</div>
-                {% endfor %}
-                <button class="btn btn-primary w-100">Submit Batch Request</button>
-            </form>
-        </div>
-        <div class="content-card p-4">
-            <h2 class="h4 mb-3">Low Stock</h2>
-            {% if low_stock_items %}
-                {% for stock in low_stock_items %}
-                    <div class="d-flex justify-content-between border-bottom py-2">
-                        <span>{{ stock.product.name }}</span>
-                        <strong>{{ stock.available_quantity }}</strong>
+    </aside>
+
+    <main class="dashboard-main">
+        {% include "includes/flash_messages.html" %}
+
+        <div class="dashboard-topbar">
+            <div class="dashboard-search-bar" style="max-width: 420px; width: 100%;">
+                <i class="bi bi-search"></i>
+                <input type="text" value="" placeholder="Search orders, drivers...">
+            </div>
+            <div class="dashboard-topbar__actions">
+                <a class="dashboard-icon-button" href="{% url 'accounts:notifications' %}" aria-label="Notifications">
+                    <i class="bi bi-bell"></i>
+                    {% if notifications|length %}
+                        <span class="dashboard-icon-button__badge">{{ notifications|length }}</span>
+                    {% endif %}
+                </a>
+                <div class="dashboard-avatar">
+                    <div class="dashboard-avatar__fallback">{{ request.user.first_name|default:request.user.email|first|upper }}</div>
+                    <div class="dashboard-avatar__meta">
+                        <strong>{{ request.user.full_name|default:request.user.email }}</strong>
+                        <span>Senior Agent</span>
                     </div>
-                {% endfor %}
-            {% else %}
-                <p class="text-secondary mb-0">Inventory levels are healthy.</p>
-            {% endif %}
+                </div>
+            </div>
         </div>
-    </div>
-</section>
 
-<section class="content-card p-4">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h2 class="h4 mb-0">Paid Orders Waiting for Driver Assignment</h2>
-    </div>
-    {% if accepted_orders %}
-        <div class="table-responsive">
-            <table class="table align-middle">
-                <thead>
-                    <tr>
-                        <th>Order</th>
-                        <th>Customer</th>
-                        <th>Status</th>
-                        <th>Assign Driver</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for order in accepted_orders %}
-                        <tr>
-                            <td>{{ order.order_number }}</td>
-                            <td>{{ order.customer.full_name }}</td>
-                            <td>{{ order.get_status_display }}</td>
-                            <td>
-                                {% if assignable_drivers %}
-                                            <form method="post" action="{% url 'accounts:assign_driver' order.order_number %}" class="d-flex gap-2">
-                                                {% csrf_token %}
-                                                <select name="driver_id" class="form-select">
-                                                    {% for driver in assignable_drivers %}
-                                                <option value="{{ driver.pk }}">{{ driver.user.full_name }} {% if driver.is_online %}(Online){% else %}(Offline){% endif %}</option>
-                                            {% endfor %}
-                                        </select>
-                                        <button class="btn btn-primary">{% if order.assigned_driver %}Reassign{% else %}Assign{% endif %}</button>
-                                    </form>
-                                {% else %}
-                                    <span class="text-secondary">No active drivers available</span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+        <section class="dashboard-grid-4 mb-4">
+            <div class="dashboard-kpi-card">
+                <div class="dashboard-kpi-card__icon"><i class="bi bi-truck"></i></div>
+                <span class="dashboard-kpi-card__label">Deliveries Today</span>
+                <div class="dashboard-kpi-card__value">{{ dashboard_metrics.deliveries_today }}</div>
+                <div class="dashboard-kpi-card__meta dashboard-kpi-card__meta--success">
+                    <span class="dashboard-pill dashboard-pill--success"><i class="bi bi-arrow-up"></i> Live branch throughput</span>
+                </div>
+            </div>
+            <div class="dashboard-kpi-card">
+                <div class="dashboard-kpi-card__icon"><i class="bi bi-geo-alt"></i></div>
+                <span class="dashboard-kpi-card__label">Active Drivers</span>
+                <div class="dashboard-kpi-card__value">{{ dashboard_metrics.active_drivers }}</div>
+                <div class="dashboard-kpi-card__meta">{{ fleet_summary.onlineDrivers }} online right now</div>
+            </div>
+            <div class="dashboard-kpi-card dashboard-kpi-card--alert">
+                <div class="dashboard-kpi-card__icon"><i class="bi bi-exclamation-triangle"></i></div>
+                <span class="dashboard-kpi-card__label">Stock Alerts</span>
+                <div class="dashboard-kpi-card__value">{{ dashboard_metrics.stock_alerts|stringformat:"02d" }}</div>
+                <div class="dashboard-kpi-card__meta">Items below threshold in warehouse stock</div>
+            </div>
+            <div class="dashboard-dark-chart-card">
+                <div class="dashboard-card-panel__body">
+                    <div class="dashboard-card-action-row mb-3">
+                        <div>
+                            <div class="dashboard-sidebar__eyebrow text-white opacity-75">Real-Time Traffic</div>
+                            <div class="fw-semibold mt-1">Branch Movement</div>
+                        </div>
+                        <span class="dashboard-live-indicator small">Live</span>
+                    </div>
+                    <div id="agent-dashboard-map" class="dashboard-mini-map mb-3"></div>
+                    <div class="dashboard-card-action-row">
+                        <div class="small text-white-50" id="agent-dashboard-map-status">Refreshing route markers every 10 seconds.</div>
+                        <a class="btn btn-outline-light btn-sm" href="{% url 'accounts:agent_fleet' %}">Expand Map</a>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <div class="dashboard-grid-2 mb-4">
+            <section class="dashboard-card-panel">
+                <div class="dashboard-card-panel__body">
+                    <div class="dashboard-section-title">
+                        <span>Top Performing Drivers</span>
+                        <a href="{% url 'accounts:agent_fleet' %}">View Fleet</a>
+                    </div>
+                    {% if top_drivers %}
+                        <div class="dashboard-grid-2">
+                            {% for driver in top_drivers %}
+                                <div class="dashboard-list-item">
+                                    <div>
+                                        <span class="dashboard-row-title">{{ driver.user.full_name }}</span>
+                                        <span class="dashboard-row-subtitle">
+                                            {% if driver.active_deliveries %}<span class="text-success">On Delivery</span>{% else %}<span class="text-secondary">Standby</span>{% endif %}
+                                        </span>
+                                    </div>
+                                    <div class="text-end">
+                                        <div class="fw-semibold">{% if driver.average_rating %}{{ driver.average_rating|floatformat:1 }} star{% else %}-{% endif %}</div>
+                                        <div class="small text-secondary">{{ driver.completed_deliveries }} drops</div>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-secondary mb-0">No driver performance data yet.</p>
+                    {% endif %}
+                </div>
+            </section>
+
+            <section class="dashboard-card-panel">
+                <div class="dashboard-card-panel__body">
+                    <div class="dashboard-section-title">
+                        <span>Quick Batch Request</span>
+                        <a href="{% url 'accounts:agent_inventory' %}">Full Inventory</a>
+                    </div>
+                    <form method="post" action="{% url 'accounts:agent_batch_request_create' %}" class="row g-3">
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{% url 'accounts:agent_dashboard' %}">
+                        {% for field in batch_request_form %}
+                            <div class="col-12">{{ field }}</div>
+                        {% endfor %}
+                        <div class="col-12">
+                            <button class="btn btn-primary w-100">Submit Stock Request</button>
+                        </div>
+                    </form>
+                    <div class="small text-secondary mt-3">Current open batch balance: {{ open_batch_balance }}</div>
+                </div>
+            </section>
         </div>
-    {% else %}
-        <p class="text-secondary mb-0">No accepted orders yet.</p>
-    {% endif %}
-</section>
 
-<section class="content-card p-4 mt-4">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h2 class="h4 mb-0">Recent Inventory Activity</h2>
-        <a href="{% url 'accounts:agent_inventory' %}" class="btn btn-sm btn-outline-primary">Full Inventory Log</a>
-    </div>
-    {% if recent_inventory_transactions %}
-        <div class="table-responsive">
-            <table class="table align-middle">
-                <thead>
-                    <tr>
-                        <th>Product</th>
-                        <th>Type</th>
-                        <th>Change</th>
-                        <th>Stock After</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for transaction in recent_inventory_transactions %}
-                        <tr>
-                            <td>{{ transaction.product.name }}</td>
-                            <td>{{ transaction.get_transaction_type_display }}</td>
-                            <td>{{ transaction.quantity_change }}</td>
-                            <td>{{ transaction.stock_after }}</td>
-                        </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+        <div class="dashboard-grid-2 mb-4">
+            <section class="dashboard-card-panel dashboard-section-anchor" id="assignment-queue" data-pending-json-url="{{ pending_orders_json_url }}">
+                <div class="dashboard-card-panel__body">
+                    <div class="dashboard-section-title">
+                        <span>Pending Orders</span>
+                        <span class="dashboard-pill dashboard-pill--navy" id="pending-request-count">{{ pending_requests|length }} New</span>
+                    </div>
+                    {% if pending_requests %}
+                        <div class="dashboard-list" id="pending-request-list">
+                            {% for item in pending_requests %}
+                                <div class="dashboard-list-item dashboard-list-item--priority">
+                                    <div>
+                                        <span class="dashboard-row-title">#{{ item.order.order_number }} - {{ item.order.customer.full_name }}</span>
+                                        <span class="dashboard-row-subtitle">{{ item.order.delivery_address }} | {{ item.order.total }} | Est. {{ item.distance_km }} km</span>
+                                    </div>
+                                    <div class="d-flex gap-2">
+                                        <form method="post" action="{% url 'accounts:accept_request' item.pk %}">
+                                            {% csrf_token %}
+                                            <button class="btn btn-primary btn-sm">Accept</button>
+                                        </form>
+                                        <form method="post" action="{% url 'accounts:reject_request' item.pk %}">
+                                            {% csrf_token %}
+                                            <button class="btn btn-outline-primary btn-sm">Decline</button>
+                                        </form>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-secondary mb-0">No new pending orders right now.</p>
+                    {% endif %}
+
+                    <hr class="my-4">
+
+                    <div class="dashboard-section-title mb-3">
+                        <span>Paid Orders Waiting for Driver Assignment</span>
+                    </div>
+                    {% if accepted_orders %}
+                        <div class="table-responsive">
+                            <table class="table dashboard-data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Order</th>
+                                        <th>Customer</th>
+                                        <th>Status</th>
+                                        <th>Assign</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for order in accepted_orders %}
+                                        <tr>
+                                            <td>{{ order.order_number }}</td>
+                                            <td>{{ order.customer.full_name }}</td>
+                                            <td>{{ order.get_status_display }}</td>
+                                            <td>
+                                                {% if assignable_drivers %}
+                                                    <form method="post" action="{% url 'accounts:assign_driver' order.order_number %}" class="d-flex gap-2">
+                                                        {% csrf_token %}
+                                                        <select name="driver_id" class="form-select form-select-sm">
+                                                            {% for driver in assignable_drivers %}
+                                                                <option value="{{ driver.pk }}">{{ driver.user.full_name }}</option>
+                                                            {% endfor %}
+                                                        </select>
+                                                        <button class="btn btn-primary btn-sm">{% if order.assigned_driver %}Reassign{% else %}Assign{% endif %}</button>
+                                                    </form>
+                                                {% else %}
+                                                    <span class="text-secondary">No available drivers</span>
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <p class="text-secondary mb-0">No accepted orders are waiting for assignment.</p>
+                    {% endif %}
+                </div>
+            </section>
+
+            <section class="dashboard-card-panel">
+                <div class="dashboard-card-panel__body">
+                    <div class="dashboard-section-title">
+                        <span>Warehouse Stock</span>
+                        <a href="{% url 'accounts:agent_inventory' %}">Full Inventory Audit</a>
+                    </div>
+                    {% if warehouse_preview %}
+                        <div class="dashboard-list">
+                            {% for stock in warehouse_preview %}
+                                <div class="dashboard-list-item">
+                                    <div class="w-100">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <div>
+                                                <div class="small text-uppercase text-secondary">Bottle Size</div>
+                                                <span class="dashboard-row-title">{{ stock.product.name }}</span>
+                                            </div>
+                                            {% if stock.low_stock %}
+                                                <span class="dashboard-pill dashboard-pill--danger">{{ stock.available_quantity }} units</span>
+                                            {% else %}
+                                                <span class="dashboard-pill dashboard-pill--success">{{ stock.available_quantity }} units</span>
+                                            {% endif %}
+                                        </div>
+                                        <div class="dashboard-progress {% if stock.low_stock %}dashboard-progress--danger{% else %}dashboard-progress--success{% endif %}">
+                                            <span style="width: {% if stock.low_stock %}12{% else %}82{% endif %}%;"></span>
+                                        </div>
+                                        <div class="small text-secondary mt-2">Reorder level: {{ stock.reorder_level }}</div>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-secondary mb-0">No stock entries are tracked yet.</p>
+                    {% endif %}
+
+                    <hr class="my-4">
+
+                    <div class="dashboard-section-title">
+                        <span>Recent Inventory Activity</span>
+                    </div>
+                    {% if recent_inventory_transactions %}
+                        <div class="table-responsive">
+                            <table class="table dashboard-data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Product</th>
+                                        <th>Type</th>
+                                        <th>Change</th>
+                                        <th>Stock After</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for transaction in recent_inventory_transactions %}
+                                        <tr>
+                                            <td>{{ transaction.product.name }}</td>
+                                            <td>{{ transaction.get_transaction_type_display }}</td>
+                                            <td>{{ transaction.quantity_change }}</td>
+                                            <td>{{ transaction.stock_after }}</td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <p class="text-secondary mb-0">Inventory activity will appear here after the next warehouse movement.</p>
+                    {% endif %}
+                </div>
+            </section>
         </div>
-    {% else %}
-        <p class="text-secondary mb-0">Inventory activity will appear here after the first restock, return, adjustment, or sale.</p>
-    {% endif %}
-</section>
+    </main>
+</div>
 
+{{ fleet_payload|json_script:"agent-dashboard-map-payload" }}
+{% endblock %}
+{% block extra_scripts %}
+<script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+></script>
+<script src="{% static 'js/map-tools.js' %}"></script>
 <script>
-    const pendingOrdersUrl = "{% url 'orders:pending_orders_json' %}";
-    const pollingStatus = document.getElementById("agent-polling-status");
-    let knownPendingOrders = {{ pending_requests|length }};
+    (function () {
+        const maps = window.AquaFlowMaps;
+        const fleetUrl = "{{ fleet_json_url }}";
+        const initialPayload = JSON.parse(document.getElementById("agent-dashboard-map-payload").textContent);
+        const mapStatus = document.getElementById("agent-dashboard-map-status");
 
-    function playAlertTone() {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const oscillator = audioContext.createOscillator();
-        const gain = audioContext.createGain();
-        oscillator.type = "sine";
-        oscillator.frequency.value = 880;
-        oscillator.connect(gain);
-        gain.connect(audioContext.destination);
-        oscillator.start();
-        gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.4);
-        oscillator.stop(audioContext.currentTime + 0.4);
-    }
+        function hasCoords(item) {
+            return item && Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude));
+        }
 
-    function requestBrowserNotification(order) {
-        if (!("Notification" in window)) {
-            return;
+        function getInitialCenter(payload) {
+            if (hasCoords(payload.agent)) {
+                return [Number(payload.agent.latitude), Number(payload.agent.longitude)];
+            }
+            const firstDriver = (payload.drivers || []).find((driver) => hasCoords(driver));
+            if (firstDriver) {
+                return [Number(firstDriver.latitude), Number(firstDriver.longitude)];
+            }
+            return maps.defaultCenter;
         }
-        if (Notification.permission === "granted") {
-            new Notification("New water order request", {
-                body: `${order.order_number} from ${order.customer} is waiting for review.`,
-            });
-            return;
-        }
-        if (Notification.permission !== "denied") {
-            Notification.requestPermission();
-        }
-    }
 
-    async function pollPendingOrders() {
-        try {
-            const response = await fetch(pendingOrdersUrl, {
-                headers: { "X-Requested-With": "XMLHttpRequest" },
-            });
-            if (!response.ok) {
-                throw new Error("Polling failed");
-            }
-            const payload = await response.json();
-            const orders = payload.orders || [];
-            if (orders.length > knownPendingOrders && orders.length > 0) {
-                const newestOrder = orders[0];
-                playAlertTone();
-                requestBrowserNotification(newestOrder);
-                if (pollingStatus) {
-                    pollingStatus.className = "alert alert-warning small";
-                    pollingStatus.textContent = `New incoming order detected: ${newestOrder.order_number}. Refreshing shortly.`;
-                }
-                setTimeout(() => window.location.reload(), 1500);
-                return;
-            }
-            knownPendingOrders = orders.length;
-            if (pollingStatus) {
-                pollingStatus.className = "alert alert-info small";
-                pollingStatus.textContent = `Monitoring ${orders.length} pending order request(s).`;
-            }
-        } catch (error) {
-            if (pollingStatus) {
-                pollingStatus.className = "alert alert-secondary small";
-                pollingStatus.textContent = "Polling is temporarily unavailable. The page still supports manual accept/reject actions.";
-            }
-        }
-    }
-
-    function updateCountdowns() {
-        document.querySelectorAll(".countdown-cell").forEach((cell) => {
-            const deadline = cell.dataset.deadline ? new Date(cell.dataset.deadline) : null;
-            if (!deadline || Number.isNaN(deadline.getTime())) {
-                return;
-            }
-            const remainingMs = deadline.getTime() - Date.now();
-            if (remainingMs <= 0) {
-                cell.textContent = "Expired";
-                cell.classList.add("text-danger");
-                return;
-            }
-            const totalSeconds = Math.floor(remainingMs / 1000);
-            const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
-            const seconds = String(totalSeconds % 60).padStart(2, "0");
-            cell.textContent = `${minutes}:${seconds}`;
+        const map = maps.createMap("agent-dashboard-map", {
+            center: getInitialCenter(initialPayload),
+            zoom: 12,
+            zoomControl: false,
         });
-    }
+        const agentLayer = L.layerGroup().addTo(map);
+        const driverLayer = L.layerGroup().addTo(map);
+        const customerLayer = L.layerGroup().addTo(map);
+        const routeLayer = L.layerGroup().addTo(map);
+        let hasFitInitialBounds = false;
 
-    updateCountdowns();
-    setInterval(updateCountdowns, 1000);
-    setInterval(pollPendingOrders, 5000);
+        function renderPayload(payload) {
+            const points = [];
+            agentLayer.clearLayers();
+            driverLayer.clearLayers();
+            customerLayer.clearLayers();
+            routeLayer.clearLayers();
+
+            if (hasCoords(payload.agent)) {
+                const point = [Number(payload.agent.latitude), Number(payload.agent.longitude)];
+                points.push(point);
+                L.marker(point, { icon: maps.icons.agent }).addTo(agentLayer);
+            }
+
+            const driverLookup = new Map();
+            (payload.drivers || []).forEach((driver) => {
+                driverLookup.set(driver.id, driver);
+                if (!hasCoords(driver)) {
+                    return;
+                }
+                const point = [Number(driver.latitude), Number(driver.longitude)];
+                points.push(point);
+                L.marker(point, { icon: maps.icons.driver }).addTo(driverLayer);
+            });
+
+            (payload.orders || []).forEach((order) => {
+                if (!hasCoords(order)) {
+                    return;
+                }
+                const customerPoint = [Number(order.latitude), Number(order.longitude)];
+                points.push(customerPoint);
+                L.marker(customerPoint, { icon: maps.icons.customer }).addTo(customerLayer);
+                const driver = driverLookup.get(order.driverId);
+                if (driver && hasCoords(driver)) {
+                    L.polyline(
+                        [
+                            [Number(driver.latitude), Number(driver.longitude)],
+                            customerPoint,
+                        ],
+                        {
+                            color: "#22d3ee",
+                            weight: 3,
+                            opacity: 0.85,
+                        }
+                    ).addTo(routeLayer);
+                }
+            });
+
+            if (!hasFitInitialBounds) {
+                maps.fitMap(map, points, maps.defaultCenter, 12);
+                hasFitInitialBounds = true;
+            }
+        }
+
+        async function refreshFleet() {
+            try {
+                const response = await fetch(fleetUrl, {
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                });
+                if (!response.ok) {
+                    throw new Error("Unable to refresh fleet");
+                }
+                const payload = await response.json();
+                renderPayload(payload);
+                mapStatus.textContent = payload.summary.onlineDrivers
+                    ? "Live traffic card is tracking online drivers and active customer drops."
+                    : "No online drivers right now. Last known markers remain visible when available.";
+            } catch (error) {
+                mapStatus.textContent = "Unable to refresh live traffic right now.";
+            }
+        }
+
+        renderPayload(initialPayload);
+        window.setTimeout(() => map.invalidateSize(), 0);
+        window.setInterval(refreshFleet, 10000);
+    })();
+
+    (function () {
+        const assignmentQueue = document.getElementById("assignment-queue");
+        const pendingCount = document.getElementById("pending-request-count");
+        if (!assignmentQueue || !pendingCount) {
+            return;
+        }
+
+        const pendingJsonUrl = assignmentQueue.dataset.pendingJsonUrl;
+        let lastSignature = Array.from(document.querySelectorAll("#pending-request-list .dashboard-row-title"))
+            .map((item) => item.textContent.trim())
+            .join("|");
+
+        async function pollPendingOrders() {
+            try {
+                const response = await fetch(pendingJsonUrl, {
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                });
+                if (!response.ok) {
+                    return;
+                }
+                const payload = await response.json();
+                const orders = payload.orders || [];
+                const nextSignature = orders.map((item) => item.order_number).join("|");
+                pendingCount.textContent = `${orders.length} New`;
+                if (nextSignature !== lastSignature) {
+                    window.location.reload();
+                }
+            } catch (error) {
+                // Keep the current queue visible if polling fails.
+            }
+        }
+
+        window.setInterval(pollPendingOrders, 12000);
+    })();
 </script>
 {% endblock %}

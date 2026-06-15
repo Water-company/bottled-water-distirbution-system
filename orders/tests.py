@@ -21,6 +21,7 @@ from orders.models import (
     RefundRequestStatus,
 )
 from orders.services import (
+    accept_agent_request,
     accept_delivery_assignment,
     approve_refund_request,
     assign_driver,
@@ -29,6 +30,7 @@ from orders.services import (
     mark_order_picked_up,
     mark_order_paid,
     process_refund_request,
+    reject_agent_request,
     start_delivery,
 )
 
@@ -123,23 +125,29 @@ class OrderFlowTests(TestCase):
 
     def create_checkout_order(self, quantity=1, delivery_address="Piassa", notes=""):
         add_product_to_cart(self.user, self.product, quantity)
-        with patch("orders.views.initialize_chapa_payment", return_value=self.checkout_payment_stub()):
-            response = self.client.post(
-                reverse("orders:checkout"),
-                {
-                    "location_source": "current",
-                    "selected_agent_id": str(self.agent.pk),
-                    "delivery_address": delivery_address,
-                    "latitude": "9.031000",
-                    "longitude": "38.741000",
-                    "phone_number": "+251911000020",
-                    "notes": notes,
-                },
-            )
+        response = self.client.post(
+            reverse("orders:checkout"),
+            {
+                "location_source": "current",
+                "selected_agent_id": str(self.agent.pk),
+                "delivery_address": delivery_address,
+                "latitude": "9.031000",
+                "longitude": "38.741000",
+                "phone_number": "+251911000020",
+                "notes": notes,
+            },
+        )
         return response, Order.objects.order_by("-created_at").first()
+
+    def accept_checkout_order(self, order, note="Accepted for payment"):
+        agent_request = order.agent_requests.get()
+        accept_agent_request(agent_request, note=note, accepted_by=self.agent_manager)
+        order.refresh_from_db()
+        return order
 
     def create_delivered_order(self, quantity=1, delivery_address="Piassa"):
         _, order = self.create_checkout_order(quantity=quantity, delivery_address=delivery_address)
+        self.accept_checkout_order(order)
         mark_order_paid(order, reference=f"TX-{order.order_number}", payload={"status": "success"})
         assign_driver(order, self.driver)
         accept_delivery_assignment(order, self.driver_user)
@@ -150,20 +158,19 @@ class OrderFlowTests(TestCase):
         order.refresh_from_db()
         return order
 
-    def test_checkout_redirects_directly_to_chapa_and_reserves_stock(self):
+    def test_checkout_creates_pending_agent_request_before_payment(self):
         response, order = self.create_checkout_order(quantity=2, delivery_address="Bole Road, Addis Ababa", notes="Leave at reception")
 
-        self.assertRedirects(response, "https://checkout.chapa.co/pay/test-session", fetch_redirect_response=False)
+        self.assertRedirects(response, reverse("orders:detail", kwargs={"order_number": order.order_number}))
         self.assertEqual(order.company, self.company)
-        self.assertEqual(order.status, OrderStatus.PAYMENT_PENDING)
+        self.assertEqual(order.status, OrderStatus.REQUESTED)
         self.assertEqual(order.selected_agent, self.agent)
         self.assertEqual(order.items.count(), 1)
         self.assertEqual(order.agent_requests.count(), 1)
-        self.assertEqual(order.agent_requests.get().status, AgentRequestStatus.ACCEPTED)
-        self.assertTrue(hasattr(order, "payment"))
-        self.assertEqual(order.payment.status, PaymentStatus.PENDING)
+        self.assertEqual(order.agent_requests.get().status, AgentRequestStatus.PENDING)
+        self.assertFalse(hasattr(order, "payment"))
         self.agent_stock.refresh_from_db()
-        self.assertEqual(self.agent_stock.available_quantity, 4)
+        self.assertEqual(self.agent_stock.available_quantity, 6)
 
     def test_checkout_page_loads_successfully(self):
         add_product_to_cart(self.user, self.product, 1)
@@ -216,28 +223,28 @@ class OrderFlowTests(TestCase):
 
     def test_checkout_can_create_order_without_manually_typed_address_when_coordinates_exist(self):
         add_product_to_cart(self.user, self.product, 1)
-        with patch("orders.views.initialize_chapa_payment", return_value=self.checkout_payment_stub()):
-            response = self.client.post(
-                reverse("orders:checkout"),
-                {
-                    "location_source": "map",
-                    "selected_agent_id": str(self.agent.pk),
-                    "delivery_address": "",
-                    "latitude": "9.031000",
-                    "longitude": "38.741000",
-                    "phone_number": "+251911000020",
-                    "notes": "",
-                },
-            )
+        response = self.client.post(
+            reverse("orders:checkout"),
+            {
+                "location_source": "map",
+                "selected_agent_id": str(self.agent.pk),
+                "delivery_address": "",
+                "latitude": "9.031000",
+                "longitude": "38.741000",
+                "phone_number": "+251911000020",
+                "notes": "",
+            },
+        )
 
         order = Order.objects.get()
-        self.assertRedirects(response, "https://checkout.chapa.co/pay/test-session", fetch_redirect_response=False)
+        self.assertRedirects(response, reverse("orders:detail", kwargs={"order_number": order.order_number}))
         self.assertIn("Pinned location", order.delivery_address)
-        self.assertEqual(order.status, OrderStatus.PAYMENT_PENDING)
+        self.assertEqual(order.status, OrderStatus.REQUESTED)
         self.assertEqual(order.agent_requests.count(), 1)
 
     def test_payment_page_refresh_redirects_to_chapa_checkout(self):
         _, order = self.create_checkout_order(quantity=2, delivery_address="Kazanchis, Addis Ababa")
+        self.accept_checkout_order(order)
         payment = order.payment
         payment.checkout_url = "https://checkout.chapa.co/pay/refreshed-session"
 
@@ -252,6 +259,7 @@ class OrderFlowTests(TestCase):
 
     def test_payment_return_verifies_using_saved_reference_when_tx_ref_is_missing(self):
         _, order = self.create_checkout_order(quantity=1, delivery_address="Kazanchis, Addis Ababa")
+        self.accept_checkout_order(order)
         payment = order.payment
 
         with patch("orders.views.verify_chapa_payment") as verify_mock:
@@ -262,7 +270,7 @@ class OrderFlowTests(TestCase):
 
     def test_full_delivery_flow_assigns_driver_and_updates_fefo_inventory(self):
         _, order = self.create_checkout_order(quantity=2, delivery_address="Piassa")
-
+        self.accept_checkout_order(order)
         mark_order_paid(order, reference="TX-123", payload={"status": "success"})
         order.refresh_from_db()
 
@@ -302,6 +310,7 @@ class OrderFlowTests(TestCase):
 
     def test_complete_delivery_accepts_full_qr_payload(self):
         _, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
+        self.accept_checkout_order(order)
         mark_order_paid(order, reference="TX-456", payload={"status": "success"})
         assign_driver(order, self.driver)
         accept_delivery_assignment(order, self.driver_user)
@@ -318,6 +327,7 @@ class OrderFlowTests(TestCase):
 
     def test_driver_qr_confirm_endpoint_marks_delivery_complete(self):
         _, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
+        self.accept_checkout_order(order)
         mark_order_paid(order, reference="TX-SCAN", payload={"status": "success"})
         assign_driver(order, self.driver)
         accept_delivery_assignment(order, self.driver_user)
@@ -339,6 +349,7 @@ class OrderFlowTests(TestCase):
 
     def test_complete_delivery_accepts_otp_only(self):
         _, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
+        self.accept_checkout_order(order)
         mark_order_paid(order, reference="TX-OTP", payload={"status": "success"})
         assign_driver(order, self.driver)
         accept_delivery_assignment(order, self.driver_user)
@@ -354,6 +365,7 @@ class OrderFlowTests(TestCase):
 
     def test_complete_delivery_recovers_when_batches_are_missing(self):
         _, order = self.create_checkout_order(quantity=2, delivery_address="Piassa")
+        self.accept_checkout_order(order)
         mark_order_paid(order, reference="TX-BATCH", payload={"status": "success"})
         assign_driver(order, self.driver)
         accept_delivery_assignment(order, self.driver_user)
@@ -392,6 +404,20 @@ class OrderFlowTests(TestCase):
         self.assertEqual(cart_item.product, self.product)
         self.assertEqual(cart_item.quantity, 2)
 
+    def test_customer_can_retry_checkout_after_agent_rejection(self):
+        _, order = self.create_checkout_order(quantity=2, delivery_address="Piassa")
+        reject_agent_request(order.agent_requests.get(), note="Branch could not fulfill the request.")
+        order.refresh_from_db()
+
+        response = self.client.post(reverse("orders:retry_checkout", kwargs={"order_number": order.order_number}))
+
+        self.assertRedirects(response, reverse("orders:checkout"))
+        cart = self.user.cart
+        self.assertEqual(cart.items.count(), 1)
+        cart_item = cart.items.get()
+        self.assertEqual(cart_item.product, self.product)
+        self.assertEqual(cart_item.quantity, 2)
+
     def test_customer_can_submit_driver_feedback_after_delivery(self):
         delivered_order = self.create_delivered_order()
 
@@ -418,6 +444,7 @@ class OrderFlowTests(TestCase):
 
     def test_tracking_status_json_returns_driver_coordinates(self):
         _, order = self.create_checkout_order(quantity=1, delivery_address="Kazanchis")
+        self.accept_checkout_order(order)
         mark_order_paid(order, reference="TX-123", payload={"status": "success"})
         assign_driver(order, self.driver)
         DriverLocation.objects.create(
@@ -438,6 +465,7 @@ class OrderFlowTests(TestCase):
 
     def test_customer_can_refresh_expired_qr_code(self):
         _, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
+        self.accept_checkout_order(order)
         mark_order_paid(order, reference="TX-REFRESH", payload={"status": "success"})
         confirmation = order.confirmation
         old_token = confirmation.qr_token
@@ -454,7 +482,7 @@ class OrderFlowTests(TestCase):
     @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
     def test_payment_confirmation_email_contains_price_location_and_code(self):
         _, order = self.create_checkout_order(quantity=2, delivery_address="Bole Road, Addis Ababa")
-
+        self.accept_checkout_order(order)
         mark_order_paid(order, reference="TX-EMAIL", payload={"status": "success"})
 
         self.assertGreaterEqual(len(mail.outbox), 1)
@@ -464,13 +492,15 @@ class OrderFlowTests(TestCase):
         self.assertIn(order.confirmation.otp_code, receipt_message.body)
         self.assertIn("Total paid", receipt_message.body)
 
-    def test_agent_pending_orders_json_is_empty_for_auto_reserved_checkout(self):
-        self.create_checkout_order(quantity=1, delivery_address="Piassa")
+    def test_agent_pending_orders_json_lists_pending_customer_request(self):
+        _, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
 
         self.client.force_login(self.agent_manager)
         response = self.client.get(reverse("orders:pending_orders_json"))
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"orders": []})
+        payload = response.json()
+        self.assertEqual(len(payload["orders"]), 1)
+        self.assertEqual(payload["orders"][0]["order_number"], order.order_number)
 
     def test_nearby_agents_preview_returns_matching_agent(self):
         add_product_to_cart(self.user, self.product, 1)
@@ -504,6 +534,7 @@ class OrderFlowTests(TestCase):
 
     def test_agent_dashboard_displays_paid_order(self):
         _, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
+        self.accept_checkout_order(order)
         mark_order_paid(order, reference="TX-789", payload={"status": "success"})
 
         self.client.force_login(self.agent_manager)
@@ -513,6 +544,7 @@ class OrderFlowTests(TestCase):
 
     def test_customer_can_cancel_paid_order_with_partial_refund_inside_window(self):
         _, order = self.create_checkout_order(quantity=2, delivery_address="Piassa")
+        self.accept_checkout_order(order)
         mark_order_paid(order, reference="TX-CANCEL", payload={"status": "success"})
 
         response = self.client.post(
@@ -532,6 +564,7 @@ class OrderFlowTests(TestCase):
 
     def test_customer_can_request_refund_and_company_admin_can_approve_it(self):
         _, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
+        self.accept_checkout_order(order)
         mark_order_paid(order, reference="TX-REFUND", payload={"status": "success"})
         assign_driver(order, self.driver)
         accept_delivery_assignment(order, self.driver_user)
@@ -608,6 +641,7 @@ class OrderFlowTests(TestCase):
 
         response, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
 
-        self.assertRedirects(response, "https://checkout.chapa.co/pay/test-session", fetch_redirect_response=False)
+        self.assertRedirects(response, reverse("orders:detail", kwargs={"order_number": order.order_number}))
         self.assertEqual(order.discount_amount, order.subtotal * order.premium_discount_percent / 100)
         self.assertEqual(order.total, order.subtotal - order.discount_amount + order.delivery_fee)
+        self.assertEqual(order.status, OrderStatus.REQUESTED)

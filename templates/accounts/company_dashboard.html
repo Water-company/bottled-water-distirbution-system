@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}Company Admin Dashboard{% endblock %}
+{% block body_class %}dashboard-body company-dashboard-body{% endblock %}
+{% block navigation %}{% endblock %}
 {% block extra_head %}
 <link
     rel="stylesheet"
@@ -9,357 +11,333 @@
     crossorigin=""
 >
 {% endblock %}
-{% block content %}
-<section class="hero-card p-4 p-lg-5 mb-4">
-    <span class="eyebrow">Company Admin</span>
-    <h1 class="display-6 fw-semibold mt-2 mb-2">{{ company.name }}</h1>
-    <p class="text-secondary mb-2">Manage company agents, managers, drivers, restock approvals, order performance, refunds, and loyalty settings across all branches.</p>
-    <div class="d-flex flex-wrap gap-2">
-        <span class="status-pill {% if company.is_verified %}status-pill--online{% else %}status-pill--offline{% endif %}">
-            <span class="status-light {% if company.is_verified %}status-light--online{% else %}status-light--offline{% endif %}"></span>
-            {{ company.get_verification_status_display }}
-        </span>
-        {% if company.premium_feature_enabled %}
-            <span class="map-summary-chip">Premium: {{ company.premium_discount_percent }}% after {{ company.premium_streak_threshold }} consecutive deliveries</span>
-        {% endif %}
-        <a class="btn btn-sm btn-outline-primary" href="{% url 'accounts:company_products' %}">Products</a>
-        <a class="btn btn-sm btn-outline-primary" href="{% url 'accounts:company_agents' %}">Agents</a>
-        <a class="btn btn-sm btn-outline-primary" href="{% url 'accounts:company_inventory' %}">Inventory</a>
-        <a class="btn btn-sm btn-primary" href="{% url 'accounts:company_reports' %}">Reports</a>
-        <a class="btn btn-sm btn-outline-primary" href="{% url 'accounts:company_ai_insights' %}">AI Insights</a>
-    </div>
-</section>
-
-<section class="content-card p-4 mb-4">
-    <div class="d-flex flex-wrap justify-content-between gap-2 mb-3">
-        <div>
-            <h2 class="h4 mb-1">Operations Map</h2>
-            <p class="small text-secondary mb-0">Warehouse: W. Agent branches: A. Drivers update live every 10 seconds on OpenStreetMap.</p>
-        </div>
-        <span class="map-summary-chip" id="company-map-chip">{{ agents|length }} agents | {{ drivers|length }} drivers</span>
-    </div>
-    <div id="company-map" class="map-canvas mb-3"></div>
-    <div class="d-flex flex-wrap gap-2 mb-2">
-        <span class="map-summary-chip">Service circles show each agent radius</span>
-        <span class="map-summary-chip">Offline drivers remain visible at their last known location</span>
-    </div>
-    <div class="map-status-line" id="company-map-status">Refreshing company, agent, and driver locations every 10 seconds.</div>
-</section>
-
-<section class="content-card p-4 mb-4">
-    <div class="row g-4 align-items-end">
-        <div class="col-lg-5">
-            <h2 class="h4 mb-2">Premium Loyalty Settings</h2>
-            <p class="text-secondary mb-0">Choose whether this company offers premium customer discounts, how many consecutive delivered orders unlock the badge, and the discount rate customers receive.</p>
-        </div>
-        <div class="col-lg-7">
-            <form method="post" action="{% url 'accounts:update_company_premium' %}" class="row g-3">
-                {% csrf_token %}
-                <div class="col-md-4">
-                    <label class="form-label">Enable Premium</label>
-                    <div class="form-check mt-2">{{ premium_form.premium_feature_enabled }}</div>
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label">Streak Threshold</label>
-                    {{ premium_form.premium_streak_threshold }}
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label">Discount Percent</label>
-                    {{ premium_form.premium_discount_percent }}
-                </div>
-                <div class="col-12">
-                    <button class="btn btn-primary">Save Premium Settings</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</section>
-
-<section class="row g-4 mb-4">
-    <div class="col-lg-4">
-        <div class="content-card p-4 mb-4">
-            <h2 class="h4 mb-3">Create Agent Manager</h2>
-            <form method="post" action="{% url 'accounts:create_agent_manager' %}">
-                {% csrf_token %}
-                {% for field in agent_manager_form %}<div class="mb-3">{{ field }}</div>{% endfor %}
-                <button class="btn btn-primary w-100">Create Manager</button>
-            </form>
-        </div>
-        <div class="content-card p-4">
-            <h2 class="h4 mb-3">Create Driver User</h2>
-            <form method="post" action="{% url 'accounts:create_driver_user' %}">
-                {% csrf_token %}
-                {% for field in driver_user_form %}<div class="mb-3">{{ field }}</div>{% endfor %}
-                <button class="btn btn-outline-primary w-100">Create Driver User</button>
-            </form>
-        </div>
-    </div>
-    <div class="col-lg-8">
-        <div class="content-card p-4 mb-4">
-            <h2 class="h4 mb-3">Create Agent Branch</h2>
-            <form method="post" action="{% url 'accounts:create_agent' %}" class="row g-3">
-                {% csrf_token %}
-                {% for field in agent_form %}
-                    <div class="col-md-6">{{ field }}</div>
-                {% endfor %}
-                <div class="col-12"><button class="btn btn-primary">Create Agent</button></div>
-            </form>
-        </div>
-        <div class="content-card p-4">
-            <h2 class="h4 mb-3">Create Driver Profile</h2>
-            <form method="post" action="{% url 'accounts:create_driver' %}" class="row g-3">
-                {% csrf_token %}
-                {% for field in driver_form %}
-                    <div class="col-md-6">{{ field }}</div>
-                {% endfor %}
-                <div class="col-12"><button class="btn btn-outline-primary">Assign Driver to Agent</button></div>
-            </form>
-        </div>
-    </div>
-    <div class="col-12">
-        <div class="content-card p-4">
-            <h2 class="h4 mb-3">Agents</h2>
-            <div class="table-responsive">
-                <table class="table align-middle">
-                    <thead><tr><th>Name</th><th>Manager</th><th>Radius</th><th>Status</th></tr></thead>
-                    <tbody>
-                        {% for agent in agents %}
-                            <tr>
-                                <td>{{ agent.name }}</td>
-                                <td>{{ agent.admin.full_name|default:"Unassigned" }}</td>
-                                <td>{{ agent.service_radius_km }} km</td>
-                                <td>
-                                    <span class="status-pill {% if agent.is_online %}status-pill--online{% else %}status-pill--offline{% endif %}">
-                                        <span class="status-light {% if agent.is_online %}status-light--online{% else %}status-light--offline{% endif %}"></span>
-                                        {% if agent.is_online %}Online{% else %}Offline{% endif %}
-                                    </span>
-                                </td>
-                            </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+{% block page_body %}
+<div class="dashboard-shell">
+    <aside class="dashboard-sidebar">
+        <div class="dashboard-sidebar__brand d-flex align-items-center gap-3">
+            <div class="dashboard-brand-mark dashboard-brand-mark--rounded">
+                <i class="bi bi-water"></i>
+            </div>
+            <div>
+                <div class="fw-bold text-primary">AquaFlow Admin</div>
+                <span class="dashboard-sidebar__eyebrow">Enterprise Logistics</span>
             </div>
         </div>
-    </div>
-</section>
 
-<section class="content-card p-4 mb-4">
-    <h2 class="h4 mb-3">Refund Requests</h2>
-    {% if refund_requests %}
-        {% for refund_request in refund_requests %}
-            <div class="border rounded p-3 mb-3">
-                <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-2">
-                    <div>
-                        <strong>{{ refund_request.order.order_number }}</strong>
-                        <div class="small text-secondary">
-                            {{ refund_request.get_request_type_display }} | Customer: {{ refund_request.order.customer.full_name }}
-                        </div>
+        <nav class="dashboard-sidebar__nav">
+            <a class="dashboard-nav-link is-active" href="{% url 'accounts:company_dashboard' %}">
+                <i class="bi bi-grid"></i>
+                <span>Dashboard</span>
+            </a>
+            <a class="dashboard-nav-link" href="#company-orders">
+                <i class="bi bi-receipt"></i>
+                <span>Orders</span>
+            </a>
+            <a class="dashboard-nav-link" href="{% url 'accounts:company_inventory' %}">
+                <i class="bi bi-box-seam"></i>
+                <span>Inventory</span>
+            </a>
+            <a class="dashboard-nav-link" href="{% url 'accounts:company_agents' %}">
+                <i class="bi bi-building"></i>
+                <span>Agents</span>
+            </a>
+            <a class="dashboard-nav-link" href="{% url 'accounts:company_reports' %}">
+                <i class="bi bi-bar-chart"></i>
+                <span>Reports</span>
+            </a>
+            <a class="dashboard-nav-link" href="{% url 'accounts:company_ai_insights' %}">
+                <i class="bi bi-stars"></i>
+                <span>AI Insights</span>
+            </a>
+        </nav>
+
+        <div class="dashboard-sidebar__spacer"></div>
+
+        <a class="btn btn-primary w-100" href="#company-orders">
+            <i class="bi bi-plus-lg"></i>
+            <span class="ms-2">New Delivery</span>
+        </a>
+
+        <div class="dashboard-sidebar__footer">
+            <a class="dashboard-nav-link" href="{% url 'accounts:profile' %}">
+                <i class="bi bi-gear"></i>
+                <span>Settings</span>
+            </a>
+            <form method="post" action="{% url 'accounts:logout' %}">
+                {% csrf_token %}
+                <button type="submit" class="dashboard-nav-link w-100 border-0 bg-transparent text-start">
+                    <i class="bi bi-box-arrow-right"></i>
+                    <span>Logout</span>
+                </button>
+            </form>
+        </div>
+    </aside>
+
+    <main class="dashboard-main">
+        {% include "includes/flash_messages.html" %}
+
+        <div class="dashboard-topbar">
+            <div class="dashboard-search-bar" style="max-width: 480px; width: 100%;">
+                <i class="bi bi-search"></i>
+                <input type="text" value="" placeholder="Search orders, agents, assets...">
+            </div>
+            <div class="dashboard-topbar__actions">
+                <a class="dashboard-icon-button" href="{% url 'accounts:notifications' %}" aria-label="Notifications">
+                    <i class="bi bi-bell"></i>
+                </a>
+                <a class="dashboard-icon-button" href="{% url 'accounts:company_reports' %}" aria-label="Help">
+                    <i class="bi bi-question-circle"></i>
+                </a>
+                <div class="dashboard-avatar">
+                    <div class="dashboard-avatar__fallback">{{ request.user.first_name|default:request.user.email|first|upper }}</div>
+                    <div class="dashboard-avatar__meta">
+                        <strong>{{ request.user.full_name|default:request.user.email }}</strong>
+                        <span>Company Admin</span>
                     </div>
-                    <span class="badge text-bg-light">{{ refund_request.get_status_display }}</span>
                 </div>
-                <div class="small mb-2"><strong>Reason:</strong> {{ refund_request.reason|default:"No reason provided." }}</div>
-                <div class="small text-secondary mb-3">
-                    Requested: {{ refund_request.requested_amount }}
-                    {% if refund_request.approved_amount %}| Approved: {{ refund_request.approved_amount }}{% endif %}
-                    | Method: {{ refund_request.get_payout_method_display }}
+            </div>
+        </div>
+
+        <section class="dashboard-header">
+            <div>
+                <h1>Operational Overview</h1>
+                <p>Daily distribution performance and logistics status for {{ company.location|default:"your active region" }}.</p>
+            </div>
+            <div class="dashboard-header__actions">
+                <div class="dashboard-pill dashboard-pill--neutral">
+                    <i class="bi bi-calendar3"></i>
+                    <span>Last 7 days</span>
                 </div>
-                {% if refund_request.evidences.all %}
-                    <div class="row g-2 mb-3">
-                        {% for evidence in refund_request.evidences.all %}
-                            <div class="col-4">
-                                <a href="{{ evidence.image.url }}" target="_blank">
-                                    <img src="{{ evidence.image.url }}" alt="Refund evidence" class="img-fluid rounded border">
-                                </a>
+                <a class="btn btn-primary" href="{% url 'accounts:company_reports' %}">
+                    <i class="bi bi-download"></i>
+                    <span class="ms-2">Export Data</span>
+                </a>
+            </div>
+        </section>
+
+        <div class="dashboard-portal-grid mb-4">
+            <section class="dashboard-stacked-card">
+                <div class="dashboard-card-panel">
+                    <div class="dashboard-card-panel__body">
+                        <div class="dashboard-card-action-row mb-3">
+                            <div>
+                                <div class="fw-semibold">Revenue Velocity</div>
+                                <div class="small text-secondary text-uppercase">Live Trend Analysis</div>
                             </div>
-                        {% endfor %}
-                    </div>
-                {% endif %}
-                {% if refund_request.status == "pending" %}
-                    <div class="row g-2">
-                        <div class="col-lg-6">
-                            <form method="post" action="{% url 'accounts:approve_refund' refund_request.pk %}" class="row g-2">
-                                {% csrf_token %}
-                                <div class="col-md-4"><input type="number" step="0.01" name="approved_amount" class="form-control" value="{{ refund_request.requested_amount }}"></div>
-                                <div class="col-md-8"><input type="text" name="resolution_note" class="form-control" placeholder="Approval note"></div>
-                                <div class="col-12"><button class="btn btn-primary btn-sm">Approve Refund</button></div>
-                            </form>
+                            <div class="text-end">
+                                <div class="h4 text-primary fw-bold mb-1">{{ company_metrics.revenue_display }}</div>
+                                <span class="dashboard-pill dashboard-pill--success">
+                                    <i class="bi bi-arrow-up"></i>
+                                    <span>Operational revenue</span>
+                                </span>
+                            </div>
                         </div>
-                        <div class="col-lg-6">
-                            <form method="post" action="{% url 'accounts:reject_refund' refund_request.pk %}" class="row g-2">
-                                {% csrf_token %}
-                                <div class="col-12"><input type="text" name="resolution_note" class="form-control" placeholder="Reason for rejection"></div>
-                                <div class="col-12"><button class="btn btn-outline-danger btn-sm">Reject Refund</button></div>
-                            </form>
+                        <div class="dashboard-bar-chart">
+                            {% for bar in weekly_revenue_bars %}
+                                <div class="dashboard-bar-chart__item">
+                                    <div class="dashboard-bar-chart__value">{{ bar.value_display }}</div>
+                                    <div class="dashboard-bar-chart__bar {% if bar.is_today %}is-highlight{% endif %}" style="height: {{ bar.height }}%;"></div>
+                                    <div class="dashboard-bar-chart__label">{{ bar.label }}</div>
+                                </div>
+                            {% endfor %}
                         </div>
                     </div>
-                {% elif refund_request.status == "approved" or refund_request.status == "failed" %}
-                    <div class="row g-2">
-                        <div class="col-lg-6">
-                            <form method="post" action="{% url 'accounts:process_refund' refund_request.pk %}">
-                                {% csrf_token %}
-                                <button class="btn btn-success btn-sm">{% if refund_request.status == "failed" %}Retry Processing{% else %}Mark as Processed{% endif %}</button>
-                            </form>
+                </div>
+
+                <div class="dashboard-grid-2">
+                    <div class="dashboard-dark-chart-card">
+                        <div class="dashboard-card-panel__body">
+                            <div class="dashboard-pill dashboard-pill--navy mb-3">
+                                <i class="bi bi-stars"></i>
+                                <span>AI Forecast Hub</span>
+                            </div>
+                            <div class="small text-white-50 text-uppercase">Predicted Demand (7 Days)</div>
+                            <div class="display-5 fw-bold mt-2 mb-2">Coming soon</div>
+                            <p class="text-white-50 mb-4">Forecast-driven demand, shortage dates, and cash-flow risk alerts will land here in the next phase.</p>
+                            {% for row in company_batches|slice:":2" %}
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <span>{{ row.object.batch_number }}</span>
+                                        {% if row.overdue_count %}
+                                            <span class="dashboard-pill dashboard-pill--danger">Overdue debt</span>
+                                        {% else %}
+                                            <span class="dashboard-pill dashboard-pill--success">Healthy</span>
+                                        {% endif %}
+                                    </div>
+                                    <div class="dashboard-progress {% if row.overdue_count %}dashboard-progress--danger{% else %}dashboard-progress--success{% endif %}">
+                                        <span style="width: {{ row.cash_recovery_rate|floatformat:0 }}%;"></span>
+                                    </div>
+                                    <div class="small text-white-50 mt-2">Cash recovery: {{ row.cash_recovery_rate }}%</div>
+                                </div>
+                            {% empty %}
+                                <div class="small text-white-50">Create production batches to start feeding forecast-ready operational data.</div>
+                            {% endfor %}
                         </div>
-                        <div class="col-lg-6">
-                            <form method="post" action="{% url 'accounts:fail_refund' refund_request.pk %}" class="row g-2">
-                                {% csrf_token %}
-                                <div class="col-12"><input type="text" name="failure_reason" class="form-control" placeholder="Reason processing failed" required></div>
-                                <div class="col-12"><button class="btn btn-outline-danger btn-sm">Mark Processing Failed</button></div>
-                            </form>
+                    </div>
+
+                    <div class="dashboard-card-panel">
+                        <div class="dashboard-card-panel__body">
+                            <div class="dashboard-section-title">
+                                <span>High-Performing Agents</span>
+                                <a href="{% url 'accounts:company_agents' %}">Full Leaderboard</a>
+                            </div>
+                            {% if top_agent_rows %}
+                                <div class="table-responsive">
+                                    <table class="table dashboard-data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Agent Company / Driver</th>
+                                                <th>Sales</th>
+                                                <th>On-Time</th>
+                                                <th>Rating</th>
+                                                <th>Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for row in top_agent_rows %}
+                                                <tr>
+                                                    <td>
+                                                        <div class="dashboard-company-row">
+                                                            <span class="dashboard-company-mark">{{ row.name|first|upper }}</span>
+                                                            <div>
+                                                                <span class="dashboard-row-title">{{ row.name }}</span>
+                                                                <span class="dashboard-row-subtitle">{{ row.drivers_count }} drivers active</span>
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    <td>{{ row.revenue_display }}</td>
+                                                    <td>{% if row.delivered_orders %}{{ row.delivered_orders }} delivered{% else %}-{% endif %}</td>
+                                                    <td>{% if row.average_rating %}{{ row.average_rating|floatformat:1 }} star{% else %}-{% endif %}</td>
+                                                    <td>
+                                                        {% if forloop.first %}
+                                                            <span class="dashboard-pill dashboard-pill--navy">Elite</span>
+                                                        {% else %}
+                                                            <span class="dashboard-pill dashboard-pill--neutral">Active</span>
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            {% else %}
+                                <p class="text-secondary mb-0">No agent performance data yet.</p>
+                            {% endif %}
                         </div>
+                    </div>
+                </div>
+            </section>
+
+            <aside>
+                <div class="dashboard-card-panel">
+                    <div class="dashboard-card-panel__body">
+                        <div class="dashboard-section-title">
+                            <span class="dashboard-live-indicator">Live Delivery Fleet</span>
+                            <small>{{ company.location|default:"Distribution map" }}</small>
+                        </div>
+                        <div id="company-map" class="dashboard-mini-map mb-3"></div>
+                        <div class="dashboard-card-action-row">
+                            <div class="dashboard-avatar-stack">
+                                <span class="is-success">{{ live_fleet_summary.drivers_online }}</span>
+                                <span class="is-primary">{{ live_fleet_summary.drivers_total }}</span>
+                                <span class="is-warning">{{ live_fleet_summary.deliveries_active }}</span>
+                            </div>
+                            <a href="{% url 'accounts:company_inventory' %}" class="text-decoration-none text-primary fw-semibold">View All Units</a>
+                        </div>
+                        <div class="small text-secondary mt-3" id="company-map-status">Refreshing company, agent, and driver locations every 10 seconds.</div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+
+        <div class="dashboard-grid-2 mb-4">
+            <section class="dashboard-card-panel">
+                <div class="dashboard-card-panel__body">
+                    <div class="dashboard-section-title">
+                        <span>Pending Batch Stock Requests</span>
+                        <a href="{% url 'accounts:company_inventory' %}">Inventory Queue</a>
+                    </div>
+                    {% if pending_batch_sales %}
+                        <div class="dashboard-list">
+                            {% for request_item in pending_batch_sales %}
+                                <div class="dashboard-list-item">
+                                    <div>
+                                        <span class="dashboard-row-title">{{ request_item.agent.name }}</span>
+                                        <span class="dashboard-row-subtitle">{{ request_item.batch.product.name }} | Batch {{ request_item.batch.batch_number }} | Requested {{ request_item.quantity_requested }}</span>
+                                    </div>
+                                    <a class="btn btn-primary btn-sm" href="{% url 'accounts:company_inventory' %}">Review Queue</a>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-secondary mb-0">No pending batch stock requests at the moment.</p>
+                    {% endif %}
+                </div>
+            </section>
+
+            <section class="dashboard-card-panel">
+                <div class="dashboard-card-panel__body">
+                    <div class="dashboard-section-title">
+                        <span>Pending Agent Payments</span>
+                        <a href="{% url 'accounts:company_inventory' %}">Open Ledger</a>
+                    </div>
+                    {% if pending_batch_payments %}
+                        <div class="dashboard-list">
+                            {% for payment in pending_batch_payments %}
+                                <div class="dashboard-list-item">
+                                    <div>
+                                        <span class="dashboard-row-title">{{ payment.sale.agent.name }}</span>
+                                        <span class="dashboard-row-subtitle">{{ payment.sale.batch.batch_number }} | {{ payment.amount }}</span>
+                                    </div>
+                                    <a class="btn btn-primary btn-sm" href="{% url 'accounts:company_inventory' %}">Open Ledger</a>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-secondary mb-0">No payment confirmations are waiting for review.</p>
+                    {% endif %}
+                </div>
+            </section>
+        </div>
+
+        <section class="dashboard-card-panel dashboard-section-anchor" id="company-orders">
+            <div class="dashboard-card-panel__body">
+                <div class="dashboard-section-title">
+                    <span>Recent Orders</span>
+                    <span class="dashboard-pill dashboard-pill--neutral">{{ company_metrics.orders }} total</span>
+                </div>
+                {% if orders %}
+                    <div class="table-responsive">
+                        <table class="table dashboard-data-table">
+                            <thead>
+                                <tr>
+                                    <th>Order</th>
+                                    <th>Customer</th>
+                                    <th>Agent</th>
+                                    <th>Status</th>
+                                    <th>Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for order in orders %}
+                                    <tr>
+                                        <td>{{ order.order_number }}</td>
+                                        <td>{{ order.customer.full_name }}</td>
+                                        <td>{{ order.selected_agent.name|default:"Pending" }}</td>
+                                        <td>{{ order.get_status_display }}</td>
+                                        <td>{{ order.total }}</td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
                     </div>
                 {% else %}
-                    <div class="small text-secondary">
-                        Reviewed by {{ refund_request.reviewed_by.full_name|default:"System" }}
-                        {% if refund_request.resolution_note %}| Note: {{ refund_request.resolution_note }}{% endif %}
-                        {% if refund_request.failure_reason %}| Failure: {{ refund_request.failure_reason }}{% endif %}
-                        {% if refund_request.processed_at %}| Processed: {{ refund_request.processed_at|date:"M d, Y H:i" }}{% endif %}
-                    </div>
+                    <p class="text-secondary mb-0">No company orders have been recorded yet.</p>
                 {% endif %}
             </div>
-        {% endfor %}
-    {% else %}
-        <p class="text-secondary mb-0">No refund requests for this company yet.</p>
-    {% endif %}
-</section>
-
-<section class="content-card p-4 mb-4">
-    <h2 class="h4 mb-3">Pending Batch Stock Requests</h2>
-    {% if pending_batch_sales %}
-        {% for request_item in pending_batch_sales %}
-            <div class="border rounded p-3 mb-3">
-                <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
-                    <div>
-                        <strong>{{ request_item.agent.name }}</strong>
-                        <div class="small text-secondary">{{ request_item.batch.product.name }} | Batch {{ request_item.batch.batch_number }} | Requested: {{ request_item.quantity_requested }}</div>
-                    </div>
-                    <span class="badge text-bg-light">{{ request_item.get_status_display }}</span>
-                </div>
-                {% if request_item.status == "pending" %}
-                    <form method="post" action="{% url 'accounts:company_batch_sale_approve' request_item.pk %}" class="row g-2">
-                        {% csrf_token %}
-                        <input type="hidden" name="next" value="{% url 'accounts:company_dashboard' %}">
-                        <div class="col-md-2"><input type="number" name="quantity_approved" class="form-control" value="{{ request_item.quantity_requested }}"></div>
-                        <div class="col-md-3"><input type="number" step="0.01" name="unit_price" class="form-control" value="{{ request_item.batch.unit_price }}" placeholder="Unit price"></div>
-                        <div class="col-md-3"><input type="number" step="0.01" name="initial_payment_amount" class="form-control" value="{{ request_item.requested_upfront_amount }}" placeholder="Initial payment"></div>
-                        <div class="col-md-2"><input type="date" name="credit_due_date" class="form-control"></div>
-                        <div class="col-md-12"><textarea name="decision_note" class="form-control" rows="2" placeholder="Approval note"></textarea></div>
-                        <div class="col-md-12"><button class="btn btn-primary">Approve Stock Request</button></div>
-                    </form>
-                    <form method="post" action="{% url 'accounts:company_batch_sale_reject' request_item.pk %}" class="row g-2 mt-2">
-                        {% csrf_token %}
-                        <input type="hidden" name="next" value="{% url 'accounts:company_dashboard' %}">
-                        <div class="col-md-9"><input type="text" name="decision_note" class="form-control" placeholder="Rejection reason" required></div>
-                        <div class="col-md-3"><button class="btn btn-outline-danger w-100">Reject</button></div>
-                    </form>
-                {% endif %}
-            </div>
-        {% endfor %}
-    {% else %}
-        <p class="text-secondary mb-0">No pending agent stock requests right now.</p>
-    {% endif %}
-</section>
-
-<section class="content-card p-4 mb-4">
-    <h2 class="h4 mb-3">Recent Orders</h2>
-    <div class="table-responsive">
-        <table class="table align-middle">
-            <thead><tr><th>Order</th><th>Customer</th><th>Agent</th><th>Status</th><th>Total</th></tr></thead>
-            <tbody>
-                {% for order in orders %}
-                    <tr>
-                        <td>{{ order.order_number }}</td>
-                        <td>{{ order.customer.full_name }}</td>
-                        <td>{{ order.selected_agent.name|default:"Pending" }}</td>
-                        <td>{{ order.get_status_display }}</td>
-                        <td>{{ order.total }}</td>
-                    </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-</section>
-
-<section class="row g-4">
-    <div class="col-lg-6">
-        <div class="content-card p-4 h-100">
-            <h2 class="h4 mb-3">Pending Agent Payment Confirmations</h2>
-            {% if pending_batch_payments %}
-                {% for payment in pending_batch_payments %}
-                    <div class="border rounded p-3 mb-3">
-                        <div class="fw-semibold">{{ payment.sale.agent.name }} submitted {{ payment.amount }}</div>
-                        <div class="small text-secondary mb-2">{{ payment.sale.batch.batch_number }} | {{ payment.sale.batch.product.name }}</div>
-                        <div class="d-flex flex-wrap gap-2">
-                            <form method="post" action="{% url 'accounts:company_batch_payment_confirm' payment.pk %}">
-                                {% csrf_token %}
-                                <input type="hidden" name="next" value="{% url 'accounts:company_dashboard' %}">
-                                <button class="btn btn-primary btn-sm">Confirm</button>
-                            </form>
-                            <form method="post" action="{% url 'accounts:company_batch_payment_reject' payment.pk %}" class="d-flex gap-2">
-                                {% csrf_token %}
-                                <input type="hidden" name="next" value="{% url 'accounts:company_dashboard' %}">
-                                <input type="text" name="rejection_reason" class="form-control form-control-sm" placeholder="Reason" required>
-                                <button class="btn btn-outline-danger btn-sm">Reject</button>
-                            </form>
-                        </div>
-                    </div>
-                {% endfor %}
-            {% else %}
-                <p class="text-secondary mb-0">No pending payment confirmations right now.</p>
-            {% endif %}
-        </div>
-    </div>
-    <div class="col-lg-6">
-        <div class="content-card p-4 h-100">
-            <h2 class="h4 mb-3">Drivers</h2>
-            {% if drivers %}
-                <div class="table-responsive mb-4">
-                    <table class="table align-middle">
-                        <thead><tr><th>Name</th><th>Agent</th><th>Vehicle</th><th>Status</th></tr></thead>
-                        <tbody>
-                            {% for driver in drivers %}
-                                <tr>
-                                    <td>{{ driver.user.full_name }}</td>
-                                    <td>{{ driver.agent.name }}</td>
-                                    <td>{{ driver.vehicle_identifier|default:"Not set" }}</td>
-                                    <td>
-                                        <span class="status-pill {% if driver.is_online %}status-pill--online{% else %}status-pill--offline{% endif %}">
-                                            <span class="status-light {% if driver.is_online %}status-light--online{% else %}status-light--offline{% endif %}"></span>
-                                            {% if driver.is_online %}Online{% else %}Offline{% endif %}
-                                        </span>
-                                    </td>
-                                </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            {% else %}
-                <p class="text-secondary">No drivers have been assigned yet.</p>
-            {% endif %}
-            <h2 class="h4 mb-3">Inventory Batches</h2>
-            {% if inventory_batches %}
-                <div class="table-responsive">
-                    <table class="table align-middle">
-                        <thead><tr><th>Agent</th><th>Product</th><th>Batch</th><th>Remaining</th><th>Expires</th></tr></thead>
-                        <tbody>
-                            {% for batch in inventory_batches %}
-                                <tr>
-                                    <td>{{ batch.agent.name }}</td>
-                                    <td>{{ batch.product.name }}</td>
-                                    <td>{{ batch.batch_number }}</td>
-                                    <td>{{ batch.quantity_remaining }}</td>
-                                    <td>{{ batch.expires_at }}</td>
-                                </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            {% else %}
-                <p class="text-secondary mb-0">No inventory batches received yet.</p>
-            {% endif %}
-        </div>
-    </div>
-</section>
+        </section>
+    </main>
+</div>
 
 {{ company_map_payload|json_script:"company-map-payload" }}
 {% endblock %}
@@ -376,7 +354,6 @@
         const locationsUrl = "{{ company_locations_url }}";
         const initialPayload = JSON.parse(document.getElementById("company-map-payload").textContent);
         const mapStatus = document.getElementById("company-map-status");
-        const mapChip = document.getElementById("company-map-chip");
 
         function hasCoords(item) {
             return item && Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude));
@@ -389,23 +366,17 @@
             if (payload.agents.length && hasCoords(payload.agents[0])) {
                 return [Number(payload.agents[0].latitude), Number(payload.agents[0].longitude)];
             }
-            if (payload.drivers.length) {
-                const driverWithCoords = payload.drivers.find((driver) => hasCoords(driver));
-                if (driverWithCoords) {
-                    return [Number(driverWithCoords.latitude), Number(driverWithCoords.longitude)];
-                }
-            }
             return maps.defaultCenter;
         }
 
         const map = maps.createMap("company-map", {
             center: getInitialCenter(initialPayload),
-            zoom: 12,
+            zoom: 11,
+            zoomControl: false,
         });
         const warehouseLayer = L.layerGroup().addTo(map);
         const agentLayer = L.layerGroup().addTo(map);
         const driverLayer = L.layerGroup().addTo(map);
-        const radiusLayer = L.layerGroup().addTo(map);
         let hasFitInitialBounds = false;
 
         function renderPayload(payload) {
@@ -413,86 +384,56 @@
             warehouseLayer.clearLayers();
             agentLayer.clearLayers();
             driverLayer.clearLayers();
-            radiusLayer.clearLayers();
 
             if (hasCoords(payload.company)) {
                 const point = [Number(payload.company.latitude), Number(payload.company.longitude)];
                 points.push(point);
-                L.marker(point, {
-                    icon: maps.icons.warehouse,
-                }).addTo(warehouseLayer).bindPopup(`
-                    <strong>${maps.escapeHtml(payload.company.name)}</strong><br>
-                    ${maps.escapeHtml(payload.company.address || "Main warehouse")}
-                `);
+                L.marker(point, { icon: maps.icons.warehouse }).addTo(warehouseLayer);
             }
 
-            payload.agents.forEach((agent) => {
+            (payload.agents || []).forEach((agent) => {
                 if (!hasCoords(agent)) {
                     return;
                 }
                 const point = [Number(agent.latitude), Number(agent.longitude)];
                 points.push(point);
-                L.marker(point, {
-                    icon: maps.icons.agent,
-                }).addTo(agentLayer).bindPopup(`
-                    <strong>${maps.escapeHtml(agent.name)}</strong><br>
-                    ${maps.escapeHtml(agent.locationName || "")}<br>
-                    ${maps.escapeHtml(agent.address || "")}
-                `);
-                L.circle(point, {
-                    radius: Number(agent.serviceRadiusKm) * 1000,
-                    color: "#4c7d27",
-                    weight: 1,
-                    fillColor: "#4c7d27",
-                    fillOpacity: 0.05,
-                }).addTo(radiusLayer);
+                L.marker(point, { icon: maps.icons.agent }).addTo(agentLayer);
             });
 
-            payload.drivers.forEach((driver) => {
+            (payload.drivers || []).forEach((driver) => {
                 if (!hasCoords(driver)) {
                     return;
                 }
                 const point = [Number(driver.latitude), Number(driver.longitude)];
                 points.push(point);
-                L.marker(point, {
-                    icon: maps.icons.driver,
-                }).addTo(driverLayer).bindPopup(`
-                    <strong>${maps.escapeHtml(driver.name)}</strong><br>
-                    Agent: ${maps.escapeHtml(driver.agentName)}<br>
-                    ${maps.escapeHtml(driver.vehicleIdentifier || "Vehicle pending")}<br>
-                    ${driver.online ? "Online" : "Offline"}
-                `);
+                L.marker(point, { icon: maps.icons.driver }).addTo(driverLayer);
             });
 
-            mapChip.textContent = `${payload.agents.length} agents | ${payload.drivers.length} drivers`;
-            mapStatus.textContent = payload.drivers.some((driver) => driver.online)
-                ? "Live drivers are online. The map is polling for fresh coordinates every 10 seconds."
-                : "No drivers are online right now. Last known coordinates are still shown when available.";
-
             if (!hasFitInitialBounds) {
-                maps.fitMap(map, points, maps.defaultCenter, 12);
+                maps.fitMap(map, points, maps.defaultCenter, 11);
                 hasFitInitialBounds = true;
             }
         }
 
-        async function refreshLocations() {
+        async function refreshMap() {
             try {
                 const response = await fetch(locationsUrl, {
                     headers: { "X-Requested-With": "XMLHttpRequest" },
                 });
                 if (!response.ok) {
-                    throw new Error("Unable to refresh locations");
+                    throw new Error("Unable to refresh company map");
                 }
                 const payload = await response.json();
                 renderPayload(payload);
+                mapStatus.textContent = "Live delivery fleet markers are refreshing across company warehouses, agents, and drivers.";
             } catch (error) {
-                mapStatus.textContent = "Unable to refresh the operations map right now. The last known markers remain visible.";
+                mapStatus.textContent = "Unable to refresh the live delivery fleet right now.";
             }
         }
 
         renderPayload(initialPayload);
         window.setTimeout(() => map.invalidateSize(), 0);
-        window.setInterval(refreshLocations, 10000);
+        window.setInterval(refreshMap, 10000);
     })();
 </script>
 {% endblock %}

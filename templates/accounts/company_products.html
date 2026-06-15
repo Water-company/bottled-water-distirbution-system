@@ -4,19 +4,29 @@
 <section class="hero-card p-4 p-lg-5 mb-4">
     <span class="eyebrow">Company Admin</span>
     <h1 class="display-6 fw-semibold mt-2 mb-2">Product Catalogue</h1>
-    <p class="text-secondary mb-0">Add, update, or deactivate water products for {{ company.name }}. Stock and sales metrics update from agent inventory and delivered orders.</p>
+    <p class="text-secondary mb-3">Add, update, or deactivate water products for {{ company.name }}. Stock and sales metrics update from agent inventory and delivered orders.</p>
+    <div class="d-flex flex-wrap gap-2">
+        <form method="post" action="{% url 'accounts:company_product_seed_starter' %}">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{% url 'accounts:company_products' %}">
+            <button class="btn btn-primary">Create Starter Products and Batches</button>
+        </form>
+        <a href="{% url 'accounts:company_inventory' %}" class="btn btn-outline-primary">Open Inventory</a>
+    </div>
 </section>
 
 <section class="row g-4">
     <div class="col-xl-4">
         <div class="content-card p-4">
             <h2 class="h4 mb-3">Add Product</h2>
+            <p class="small text-secondary">This adds the product to your company catalog. If you want agents to request it immediately, create or generate a production batch after saving.</p>
             <form method="post" action="{% url 'accounts:company_product_create' %}" enctype="multipart/form-data">
                 {% csrf_token %}
                 {% for field in product_form %}
                     <div class="mb-3">
                         <label class="form-label">{{ field.label }}</label>
                         {{ field }}
+                        {% if field.help_text %}<div class="small text-secondary mt-1">{{ field.help_text }}</div>{% endif %}
                         {% if field.errors %}<div class="text-danger small mt-1">{{ field.errors|join:", " }}</div>{% endif %}
                     </div>
                 {% endfor %}
@@ -29,7 +39,7 @@
             <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
                 <div>
                     <h2 class="h4 mb-1">Catalogue Items</h2>
-                    <p class="text-secondary small mb-0">{{ products|length }} products tracked across the company.</p>
+                    <p class="text-secondary small mb-0">{{ products|length }} products tracked across the company · {{ available_batch_count }} active batches ready for agent requests.</p>
                 </div>
             </div>
             <div class="table-responsive">
@@ -75,9 +85,7 @@
                                 </td>
                             </tr>
                         {% empty %}
-                            <tr>
-                                <td colspan="7" class="text-center text-secondary py-4">No products yet. Add your first catalogue item from the form on the left.</td>
-                            </tr>
+                            <tr><td colspan="7" class="text-center text-secondary py-4">No products yet. Add your first catalogue item from the form on the left or use the starter button above to preload common bottled-water products and batches.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>

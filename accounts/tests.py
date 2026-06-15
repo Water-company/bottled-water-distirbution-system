@@ -93,6 +93,9 @@ class AccountFlowTests(TestCase):
         )
         user = User.objects.get(email="resend@example.com")
         first_otp = RegistrationOTP.objects.filter(user=user).latest("created_at")
+        RegistrationOTP.objects.filter(pk=first_otp.pk).update(
+            created_at=timezone.now() - timezone.timedelta(seconds=61)
+        )
 
         response = self.client.post(
             reverse("accounts:resend_registration_otp"),
@@ -745,6 +748,8 @@ class CompanyAdminPortalTests(TestCase):
             is_verified=True,
             admin=self.company_admin,
         )
+        self.company_admin.managed_company = self.company
+        self.company_admin.save(update_fields=["managed_company", "updated_at"])
         self.agent = Agent.objects.create(
             company=self.company,
             name="Crystal Drop Bole",
@@ -871,6 +876,43 @@ class CompanyAdminPortalTests(TestCase):
         self.assertContains(response, self.product.name)
         self.assertContains(response, self.agent.name)
         self.assertContains(response, "25")
+
+    def test_company_dashboard_uses_company_admin_managed_company_assignment(self):
+        primary_contact = User.objects.create_user(
+            email="ops-lead@example.com",
+            password="StrongPass123!",
+            first_name="Ops",
+            last_name="Lead",
+            phone_number="+251911000099",
+            role=UserRole.COMPANY_ADMIN,
+            is_active=True,
+            managed_company=self.company,
+        )
+        self.company.admin = primary_contact
+        self.company.save(update_fields=["admin", "updated_at"])
+
+        response = self.client.get(reverse("accounts:company_dashboard"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Operational Overview")
+        self.assertContains(response, "Crystal Drop")
+
+    def test_company_admin_can_seed_starter_catalog_and_batches(self):
+        empty_company = Company.objects.create(
+            name="Fresh Spring Co",
+            description="New bottler with no starter data yet",
+            location="Bishoftu",
+            is_verified=True,
+            admin=self.company_admin,
+        )
+        self.company_admin.managed_company = empty_company
+        self.company_admin.save(update_fields=["managed_company", "updated_at"])
+
+        response = self.client.post(reverse("accounts:company_product_seed_starter"))
+
+        self.assertRedirects(response, reverse("accounts:company_products"))
+        self.assertTrue(Product.objects.filter(company=empty_company, name="0.5L Daily Sport").exists())
+        self.assertTrue(CompanyBatch.objects.filter(company=empty_company, product__name="0.5L Daily Sport").exists())
 
     def test_company_admin_can_create_production_batch(self):
         response = self.client.post(
@@ -1254,7 +1296,11 @@ class SystemAdminPortalTests(TestCase):
                 "contact_phone": "+251911000080",
                 "efda_license_number": "EFDA-2026-001",
                 "registration_document": SimpleUploadedFile("license.pdf", b"fake-pdf", content_type="application/pdf"),
-                "admin": self.company_admin.pk,
+                "admin_first_name": "Marta",
+                "admin_last_name": "Tesfaye",
+                "admin_email": "marta@aquacapital.example.com",
+                "admin_phone_number": "+251911000081",
+                "admin_password": "StrongPass123!",
                 "next": reverse("accounts:system_companies"),
             },
         )
@@ -1263,6 +1309,10 @@ class SystemAdminPortalTests(TestCase):
         company = Company.objects.get(name="Aqua Capital")
         self.assertEqual(company.verification_status, "pending_efda")
         self.assertTrue(bool(company.registration_document))
+        self.assertIsNotNone(company.admin)
+        self.assertEqual(company.admin.email, "marta@aquacapital.example.com")
+        self.assertFalse(company.admin.is_active)
+        self.assertEqual(company.admin.managed_company, company)
         self.assertTrue(AuditLog.objects.filter(action="company.created", entity_label="Aqua Capital").exists())
 
     def test_system_admin_can_edit_user_role_and_active_state(self):

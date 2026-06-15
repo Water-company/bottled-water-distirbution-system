@@ -6,6 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from accounts.models import CustomerAddress, User, UserRole
+from accounts.validators import normalize_ethiopian_phone_number
 from catalog.models import (
     Agent,
     AgentBatchSale,
@@ -25,6 +26,14 @@ from catalog.models import (
 from core.models import DriverLocation
 from core.models import Announcement, AnnouncementTargetRole
 from orders.models import DeliveryIssueType
+
+
+def normalize_required_phone(value):
+    return normalize_ethiopian_phone_number(value, required=True)
+
+
+def normalize_optional_phone(value):
+    return normalize_ethiopian_phone_number(value, required=False)
 
 
 class RegistrationForm(forms.ModelForm):
@@ -47,7 +56,7 @@ class RegistrationForm(forms.ModelForm):
         return email
 
     def clean_phone_number(self):
-        phone_number = self.cleaned_data["phone_number"]
+        phone_number = normalize_required_phone(self.cleaned_data["phone_number"])
         if User.objects.filter(phone_number=phone_number).exists():
             raise ValidationError("An account with this phone number already exists.")
         return phone_number
@@ -150,6 +159,13 @@ class CustomerProfileForm(forms.ModelForm):
             else:
                 field.widget.attrs["class"] = "form-control"
 
+    def clean_phone_number(self):
+        phone_number = normalize_required_phone(self.cleaned_data["phone_number"])
+        queryset = User.objects.filter(phone_number=phone_number).exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise ValidationError("An account with this phone number already exists.")
+        return phone_number
+
 
 class InternalUserCreationForm(forms.ModelForm):
     password = forms.CharField(widget=forms.PasswordInput)
@@ -177,6 +193,17 @@ class InternalUserCreationForm(forms.ModelForm):
         if User.objects.filter(email__iexact=email).exists():
             raise ValidationError("An account with this email already exists.")
         return email
+
+    def clean_phone_number(self):
+        phone_number = normalize_required_phone(self.cleaned_data["phone_number"])
+        if User.objects.filter(phone_number=phone_number).exists():
+            raise ValidationError("An account with this phone number already exists.")
+        return phone_number
+
+    def clean_password(self):
+        password = self.cleaned_data["password"]
+        password_validation.validate_password(password)
+        return password
 
     def save(self, commit=True):
         user = super().save(commit=False)
@@ -214,6 +241,79 @@ class CompanyForm(forms.ModelForm):
         self.fields["admin"].queryset = User.objects.filter(role=UserRole.COMPANY_ADMIN)
         for name, field in self.fields.items():
             field.widget.attrs["class"] = "form-control"
+
+    def clean_contact_phone(self):
+        return normalize_optional_phone(self.cleaned_data.get("contact_phone"))
+
+
+class SystemCompanyRegistrationForm(forms.ModelForm):
+    admin_first_name = forms.CharField(max_length=150)
+    admin_last_name = forms.CharField(max_length=150)
+    admin_email = forms.EmailField()
+    admin_phone_number = forms.CharField(max_length=20)
+    admin_password = forms.CharField(widget=forms.PasswordInput)
+
+    class Meta:
+        model = Company
+        fields = (
+            "name",
+            "description",
+            "location",
+            "address",
+            "latitude",
+            "longitude",
+            "contact_email",
+            "contact_phone",
+            "efda_license_number",
+            "registration_document",
+            "logo",
+        )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field in self.fields.values():
+            field.widget.attrs["class"] = "form-control"
+
+    def clean_admin_email(self):
+        email = self.cleaned_data["admin_email"].lower()
+        if User.objects.filter(email__iexact=email).exists():
+            raise ValidationError("A user with this company admin email already exists.")
+        return email
+
+    def clean_contact_phone(self):
+        return normalize_optional_phone(self.cleaned_data.get("contact_phone"))
+
+    def clean_admin_phone_number(self):
+        phone_number = normalize_required_phone(self.cleaned_data["admin_phone_number"])
+        if User.objects.filter(phone_number=phone_number).exists():
+            raise ValidationError("A user with this company admin phone number already exists.")
+        return phone_number
+
+    def clean_admin_password(self):
+        password = self.cleaned_data["admin_password"]
+        password_validation.validate_password(password)
+        return password
+
+    @transaction.atomic
+    def save(self, commit=True):
+        company = super().save(commit=False)
+        admin_user = User.objects.create_user(
+            email=self.cleaned_data["admin_email"],
+            password=self.cleaned_data["admin_password"],
+            first_name=self.cleaned_data["admin_first_name"],
+            last_name=self.cleaned_data["admin_last_name"],
+            phone_number=self.cleaned_data["admin_phone_number"],
+            role=UserRole.COMPANY_ADMIN,
+            is_active=False,
+        )
+        admin_user.email_verified_at = None
+        admin_user.save(update_fields=["email_verified_at", "updated_at"])
+        company.admin = admin_user
+        if commit:
+            company.save()
+            admin_user.managed_company = company
+            admin_user.save(update_fields=["managed_company", "updated_at"])
+        return company
 
 
 class CompanyPremiumSettingsForm(forms.ModelForm):
@@ -275,6 +375,9 @@ class AgentForm(forms.ModelForm):
     def clean_credit_period_days(self):
         return self.cleaned_data.get("credit_period_days") or 14
 
+    def clean_phone_number(self):
+        return normalize_optional_phone(self.cleaned_data.get("phone_number"))
+
 
 class DriverForm(forms.ModelForm):
     user = forms.ModelChoiceField(queryset=User.objects.filter(role=UserRole.DRIVER, driver_profile__isnull=True), required=True)
@@ -297,6 +400,9 @@ class DriverForm(forms.ModelForm):
                 field.widget.attrs["class"] = "form-check-input"
             else:
                 field.widget.attrs["class"] = "form-control"
+
+    def clean_phone_number(self):
+        return normalize_optional_phone(self.cleaned_data.get("phone_number"))
 
 
 class RestockRequestForm(forms.ModelForm):
@@ -342,6 +448,20 @@ class RestockApprovalForm(forms.Form):
         for field in self.fields.values():
             field.widget.attrs["class"] = "form-control"
 
+    def clean(self):
+        cleaned_data = super().clean()
+        due_date = cleaned_data.get("due_date")
+        expires_at = cleaned_data.get("expires_at")
+        received_at = cleaned_data.get("received_at")
+        today = timezone.localdate()
+        if due_date and due_date < today:
+            raise ValidationError("Due date cannot be in the past.")
+        if received_at and received_at > today:
+            raise ValidationError("Received date cannot be in the future.")
+        if expires_at and received_at and expires_at < received_at:
+            raise ValidationError("Expiry date must be on or after the received date.")
+        return cleaned_data
+
 
 class CompanyBatchForm(forms.ModelForm):
     class Meta:
@@ -353,10 +473,21 @@ class CompanyBatchForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         if company is not None:
             self.fields["product"].queryset = Product.objects.filter(company=company, is_active=True)
+        self.fields["product"].help_text = "Only active company products can be produced into a batch."
+        self.fields["batch_number"].help_text = "Use a unique identifier like BATCH-2026-001."
+        self.fields["production_date"].help_text = "Production date cannot be in the future."
+        self.fields["total_cases_produced"].help_text = "Enter the number of cases produced in this run."
+        self.fields["unit_price"].help_text = "This becomes the default price per case when agents request from this batch."
         self.fields["production_date"].widget = forms.DateInput(attrs={"type": "date", "class": "form-control"})
         for name, field in self.fields.items():
             if name != "production_date":
                 field.widget.attrs["class"] = "form-control"
+
+    def clean_production_date(self):
+        production_date = self.cleaned_data["production_date"]
+        if production_date > timezone.localdate():
+            raise ValidationError("Production date cannot be in the future.")
+        return production_date
 
 
 class AgentBatchSaleRequestForm(forms.ModelForm):
@@ -368,20 +499,42 @@ class AgentBatchSaleRequestForm(forms.ModelForm):
         agent = kwargs.pop("agent", None)
         super().__init__(*args, **kwargs)
         self.agent = agent
+        self.fields["batch"].label = "Choose product batch"
+        self.fields["quantity_requested"].label = "Cases needed"
+        self.fields["payment_type"].label = "Payment type"
+        self.fields["requested_upfront_amount"].label = "Amount paying now (ETB)"
+        self.fields["requested_note"].label = "Note to company admin"
+        self.fields["batch"].help_text = "Pick the exact company batch you want to request. Each option shows the product, remaining cases, and unit price."
+        self.fields["quantity_requested"].help_text = "Enter the number of cases you need for this branch."
+        self.fields["payment_type"].help_text = "Choose whether this stock is fully paid, partially paid, or taken on credit."
+        self.fields["requested_upfront_amount"].help_text = "For full payment this can be left blank and the full amount will be assumed automatically."
+        self.fields["requested_note"].help_text = "Optional context like urgency, route needs, or warehouse notes."
         if agent is not None:
             self.fields["batch"].queryset = CompanyBatch.objects.filter(
                 company=agent.company,
                 status=CompanyBatchStatus.AVAILABLE,
                 unsold_cases_remaining__gt=0,
             ).select_related("product")
+        self.fields["batch"].empty_label = "Select an available company batch"
         self.fields["requested_upfront_amount"].required = False
         self.fields["requested_note"].required = False
         for name, field in self.fields.items():
             field.widget.attrs["class"] = "form-select" if name in {"batch", "payment_type"} else "form-control"
+        self.fields["quantity_requested"].widget.attrs.update({"min": "1", "step": "1", "placeholder": "e.g. 40"})
+        self.fields["requested_upfront_amount"].widget.attrs.update({"min": "0", "step": "0.01", "placeholder": "0.00"})
+        self.fields["requested_note"].widget.attrs["rows"] = 3
         self.fields["payment_type"].initial = AgentBatchSalePaymentType.FULL
+        self.fields["batch"].label_from_instance = self._label_batch_option
 
     def clean_requested_upfront_amount(self):
         return self.cleaned_data.get("requested_upfront_amount") or 0
+
+    @staticmethod
+    def _label_batch_option(batch):
+        return (
+            f"{batch.product.name} ({batch.product.size_label or 'Size not set'}) | "
+            f"{batch.batch_number} | {batch.unsold_cases_remaining} cases left | ETB {batch.unit_price}/case"
+        )
 
 
 class AgentBatchSaleApprovalForm(forms.Form):
@@ -398,6 +551,13 @@ class AgentBatchSaleApprovalForm(forms.Form):
 
     def clean_initial_payment_amount(self):
         return self.cleaned_data.get("initial_payment_amount") or 0
+
+    def clean(self):
+        cleaned_data = super().clean()
+        credit_due_date = cleaned_data.get("credit_due_date")
+        if credit_due_date and credit_due_date < timezone.localdate():
+            raise ValidationError("Credit due date cannot be in the past.")
+        return cleaned_data
 
 
 class AgentBatchSalePaymentForm(forms.ModelForm):
@@ -432,6 +592,16 @@ class DriverLocationForm(forms.ModelForm):
                 field.widget.attrs["class"] = "form-check-input"
             else:
                 field.widget.attrs["class"] = "form-control"
+
+    def clean(self):
+        cleaned_data = super().clean()
+        latitude = cleaned_data.get("latitude")
+        longitude = cleaned_data.get("longitude")
+        if latitude is not None and not (-90 <= float(latitude) <= 90):
+            raise ValidationError("Driver latitude must be between -90 and 90.")
+        if longitude is not None and not (-180 <= float(longitude) <= 180):
+            raise ValidationError("Driver longitude must be between -180 and 180.")
+        return cleaned_data
 
 
 class DriverIssueReportForm(forms.Form):
@@ -473,6 +643,16 @@ class CustomerAddressForm(forms.ModelForm):
             raise ValidationError("You already have a saved address with this label.")
         return label
 
+    def clean(self):
+        cleaned_data = super().clean()
+        latitude = cleaned_data.get("latitude")
+        longitude = cleaned_data.get("longitude")
+        if latitude is not None and not (-90 <= float(latitude) <= 90):
+            raise ValidationError("Address latitude must be between -90 and 90.")
+        if longitude is not None and not (-180 <= float(longitude) <= 180):
+            raise ValidationError("Address longitude must be between -180 and 180.")
+        return cleaned_data
+
 
 class AgentDriverCreateForm(forms.Form):
     first_name = forms.CharField(max_length=150)
@@ -495,10 +675,15 @@ class AgentDriverCreateForm(forms.Form):
         return email
 
     def clean_phone_number(self):
-        phone_number = self.cleaned_data["phone_number"]
+        phone_number = normalize_required_phone(self.cleaned_data["phone_number"])
         if User.objects.filter(phone_number=phone_number).exists():
             raise ValidationError("A user with this phone number already exists.")
         return phone_number
+
+    def clean_password(self):
+        password = self.cleaned_data["password"]
+        password_validation.validate_password(password)
+        return password
 
     @transaction.atomic
     def save(self, agent):
@@ -549,7 +734,7 @@ class AgentDriverUpdateForm(forms.ModelForm):
         return email
 
     def clean_phone_number(self):
-        phone_number = self.cleaned_data["phone_number"]
+        phone_number = normalize_required_phone(self.cleaned_data["phone_number"])
         queryset = User.objects.filter(phone_number=phone_number).exclude(pk=self.instance.user_id)
         if queryset.exists():
             raise ValidationError("A user with this phone number already exists.")
@@ -640,6 +825,9 @@ class CompanyProductForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         self.company = kwargs.pop("company", None)
         super().__init__(*args, **kwargs)
+        self.fields["size_label"].help_text = "Examples: 0.5L, 5L, 20L"
+        self.fields["price"].help_text = "Selling price per case or unit used across orders and internal stock setup."
+        self.fields["available_quantity"].help_text = "Starting public catalog quantity. Agent branch stock is tracked separately."
         for name, field in self.fields.items():
             field.widget.attrs["class"] = "form-check-input" if name == "is_active" else "form-control"
 
@@ -692,15 +880,25 @@ class CompanyAgentUpdateForm(forms.ModelForm):
     def clean_credit_period_days(self):
         return self.cleaned_data.get("credit_period_days") or self.instance.credit_period_days or 14
 
+    def clean_phone_number(self):
+        return normalize_optional_phone(self.cleaned_data.get("phone_number"))
+
 
 class SystemUserUpdateForm(forms.ModelForm):
+    managed_company = forms.ModelChoiceField(
+        queryset=Company.objects.order_by("name"),
+        required=False,
+    )
+
     class Meta:
         model = User
-        fields = ("first_name", "last_name", "email", "phone_number", "role", "is_active")
+        fields = ("first_name", "last_name", "email", "phone_number", "role", "managed_company", "is_active")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["role"].choices = [(role.value, role.label) for role in UserRole]
+        self.fields["managed_company"].label = "Managed company"
+        self.fields["managed_company"].help_text = "Only company admin users should be attached to a company."
         for name, field in self.fields.items():
             field.widget.attrs["class"] = "form-check-input" if name == "is_active" else "form-control"
 
@@ -712,11 +910,21 @@ class SystemUserUpdateForm(forms.ModelForm):
         return email
 
     def clean_phone_number(self):
-        phone_number = self.cleaned_data["phone_number"]
+        phone_number = normalize_required_phone(self.cleaned_data["phone_number"])
         queryset = User.objects.filter(phone_number=phone_number).exclude(pk=self.instance.pk)
         if queryset.exists():
             raise ValidationError("A user with this phone number already exists.")
         return phone_number
+
+    def clean(self):
+        cleaned_data = super().clean()
+        role = cleaned_data.get("role")
+        managed_company = cleaned_data.get("managed_company")
+        if role == UserRole.COMPANY_ADMIN and managed_company is None:
+            self.add_error("managed_company", "Company admins must be assigned to exactly one company.")
+        if role != UserRole.COMPANY_ADMIN:
+            cleaned_data["managed_company"] = None
+        return cleaned_data
 
     def save(self, commit=True):
         user = super().save(commit=False)
@@ -726,6 +934,7 @@ class SystemUserUpdateForm(forms.ModelForm):
         else:
             user.is_staff = False
             user.is_superuser = False
+        user.managed_company = self.cleaned_data.get("managed_company")
         if commit:
             user.save()
         return user

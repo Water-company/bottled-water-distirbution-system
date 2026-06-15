@@ -15,8 +15,8 @@
         <div class="content-card p-4">
             <span class="eyebrow">Delivery Request</span>
             <h1 class="h3 mt-2 mb-3">Choose your delivery location</h1>
-            <p class="text-secondary">Pick your location, review the nearby agent branches from <strong>{{ cart_company.name }}</strong>, choose the one you want, and then continue straight to Chapa.</p>
-            <form method="post" novalidate id="checkout-form">
+            <p class="text-secondary">Pick your location, review the nearby agent branches from <strong>{{ cart_company.name }}</strong>, choose the one you want, and send the order for confirmation before payment starts.</p>
+            <form method="post" id="checkout-form">
                 {% csrf_token %}
                 {% if saved_addresses %}
                     <div class="mb-4">
@@ -87,14 +87,14 @@
                     {% for error in field.errors %}<div class="text-danger small mt-2">{{ error }}</div>{% endfor %}
                 {% endfor %}
                 {% for error in form.non_field_errors %}<div class="text-danger small mt-3">{{ error }}</div>{% endfor %}
-                <button class="btn btn-primary mt-4" type="submit" id="pay-now-button" disabled>Pay Now</button>
+                <button class="btn btn-primary mt-4" type="submit" id="pay-now-button" disabled>Choose an Eligible Agent First</button>
             </form>
         </div>
     </div>
     <div class="col-lg-5">
         <div class="content-card p-4 mb-4">
             <h2 class="h4 mb-3">Order Summary</h2>
-            <div class="small text-secondary mb-3">Choose an eligible nearby branch with enough stock, then we will reserve that branch and open Chapa checkout immediately.</div>
+            <div class="small text-secondary mb-3">Choose an eligible nearby branch with enough stock. The branch confirms first, then Chapa opens only after acceptance.</div>
             {% if pricing_summary.premium_offer.feature_enabled %}
                 <div class="small text-secondary mb-3">
                     {% if pricing_summary.premium_offer.eligible %}
@@ -126,6 +126,9 @@
         <div class="content-card p-4 mb-4">
             <h2 class="h4 mb-2">Nearby Eligible Agents</h2>
             <div class="small text-secondary mb-3">Customer marker: C. Agent marker: A. Service circles show each branch radius. Nearby branches stay visible even when they cannot fulfill the order.</div>
+            <div class="mb-3">
+                <input type="search" id="nearby-agent-search" class="form-control" placeholder="Filter nearby agents by branch name or area">
+            </div>
             <div id="nearby-agents-status" class="small text-secondary mb-3">
                 Select a location to preview the nearby agents that can fulfill this order.
             </div>
@@ -136,7 +139,8 @@
             <ol class="small text-secondary ps-3 mb-0">
                 <li>You choose your location in Addis Ababa.</li>
                 <li>You review and choose one nearby eligible agent.</li>
-                <li>You are taken straight to Chapa checkout.</li>
+                <li>The selected branch confirms that it can fulfill the order.</li>
+                <li>Only after acceptance are you redirected to Chapa checkout.</li>
                 <li>After payment, you receive a QR code and OTP for delivery confirmation.</li>
             </ol>
         </div>
@@ -166,6 +170,7 @@
         const mapSearchResults = document.getElementById("map-search-results");
         const nearbyAgentsStatus = document.getElementById("nearby-agents-status");
         const nearbyAgentsList = document.getElementById("nearby-agents-list");
+        const nearbyAgentSearchInput = document.getElementById("nearby-agent-search");
         const selectionStatus = document.getElementById("selection-status");
         const coordinatesChip = document.getElementById("selected-coordinates");
         const decodedAddressChip = document.getElementById("decoded-address-chip");
@@ -183,6 +188,8 @@
         let customerMarker = null;
         let activeReverseLookup = 0;
         let selectedAgentId = selectedAgentIdField.value || "";
+        let latestNearbyAgents = [];
+        let latestNearbyMessage = "";
 
         function formatCoordinate(value) {
             return Number(value).toFixed(6);
@@ -216,7 +223,7 @@
         function syncPayButton() {
             payNowButton.disabled = !selectedAgentId;
             if (selectedAgentId) {
-                payNowButton.textContent = "Pay Now";
+                payNowButton.textContent = "Send Order Request";
             } else {
                 payNowButton.textContent = "Choose an Eligible Agent First";
             }
@@ -230,7 +237,7 @@
                 card.classList.toggle("bg-light", card.dataset.agentId === selectedAgentId);
             });
             syncPayButton();
-            setSelectionStatus("Agent selected. You can continue to payment now.");
+            setSelectionStatus("Agent selected. Send the request and wait for branch confirmation before payment opens.");
         }
 
         function clearSelectedAgent() {
@@ -264,23 +271,48 @@
             customerMarker.bindPopup("Customer delivery point");
         }
 
+        function filterVisibleAgents(agents) {
+            const query = (nearbyAgentSearchInput.value || "").trim().toLowerCase();
+            if (!query) {
+                return agents;
+            }
+            return agents.filter((agent) => {
+                const haystack = [
+                    agent.name,
+                    agent.location_name,
+                    agent.address,
+                ]
+                    .filter(Boolean)
+                    .join(" ")
+                    .toLowerCase();
+                return haystack.includes(query);
+            });
+        }
+
         function renderNearbyAgents(agents, message) {
+            latestNearbyAgents = agents;
+            latestNearbyMessage = message || "";
             agentLayer.clearLayers();
             serviceRadiusLayer.clearLayers();
             nearbyAgentsList.innerHTML = "";
             const previouslySelectedAgentId = selectedAgentId;
+            const visibleAgents = filterVisibleAgents(agents);
+            const selectedStillVisible = visibleAgents.some((agent) => String(agent.id) === previouslySelectedAgentId && agent.is_eligible);
             clearSelectedAgent();
-
-            if (message) {
-                nearbyAgentsStatus.textContent = message;
+            if (!selectedStillVisible) {
+                selectedAgentIdField.value = "";
             }
 
-            agents.forEach((agent) => {
+            if (latestNearbyMessage) {
+                nearbyAgentsStatus.textContent = latestNearbyMessage;
+            }
+
+            visibleAgents.forEach((agent) => {
                 const card = document.createElement("div");
                 card.className = "border rounded p-3";
                 card.dataset.agentId = String(agent.id);
                 const eligibilityLabel = agent.is_eligible
-                    ? "Eligible for payment"
+                    ? "Ready to review your order"
                     : agent.unavailable_reason || "Unavailable";
                 const actionMarkup = agent.is_eligible
                     ? `<button type="button" class="btn btn-sm btn-primary mt-3 agent-select-button">Choose This Agent</button>`
@@ -323,7 +355,13 @@
                 }).addTo(serviceRadiusLayer);
             });
 
-            if (!agents.length) {
+            if (!visibleAgents.length && agents.length) {
+                nearbyAgentsStatus.textContent = "No nearby agents match this filter. Clear the search to see all eligible branches again.";
+            } else if (visibleAgents.length && nearbyAgentSearchInput.value.trim()) {
+                nearbyAgentsStatus.textContent = `${visibleAgents.length} filtered agent${visibleAgents.length !== 1 ? "s" : ""} shown. ${latestNearbyMessage}`;
+            }
+
+            if (!visibleAgents.length) {
                 syncPayButton();
             }
         }
@@ -448,6 +486,10 @@
             }
         }, 350);
 
+        function applyNearbyAgentSearch() {
+            renderNearbyAgents(latestNearbyAgents, latestNearbyMessage);
+        }
+
         map.on("click", (event) => {
             selectLocation(event.latlng.lat, event.latlng.lng, { source: "map" });
         });
@@ -484,10 +526,34 @@
         });
 
         mapSearchInput.addEventListener("input", debouncedSearch);
+        mapSearchInput.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                clearSearchResults();
+                return;
+            }
+            if (event.key === "Enter") {
+                const firstResult = mapSearchResults.querySelector("button.list-group-item-action:not(:disabled)");
+                if (firstResult) {
+                    event.preventDefault();
+                    firstResult.click();
+                }
+            }
+        });
+        nearbyAgentSearchInput.addEventListener("input", applyNearbyAgentSearch);
         document.addEventListener("click", (event) => {
             if (!mapSearchResults.contains(event.target) && event.target !== mapSearchInput) {
                 clearSearchResults();
             }
+        });
+        document.getElementById("checkout-form").addEventListener("submit", (event) => {
+            if (!selectedAgentIdField.value) {
+                event.preventDefault();
+                setSelectionStatus("Please choose an eligible nearby agent before continuing.", true);
+                return;
+            }
+            payNowButton.disabled = true;
+            payNowButton.textContent = "Sending Request...";
+            setSelectionStatus("Please wait while the selected branch reviews your order request.");
         });
 
         window.setTimeout(() => map.invalidateSize(), 0);

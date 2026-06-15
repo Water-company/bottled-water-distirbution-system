@@ -69,20 +69,51 @@
     </div>
     <div class="col-lg-5">
         <div class="content-card p-4 mb-4">
-            <h2 class="h4 mb-3">Request Company Stock by Batch</h2>
+            <h2 class="h4 mb-2">Request Stock From Company</h2>
             <div class="small text-secondary mb-3">
                 Current balance: {{ credit_summary.outstanding_balance }} | Credit limit: {{ credit_summary.credit_limit }} | Standard credit period: {{ credit_summary.credit_period_days }} days
             </div>
-            <form method="post" action="{% url 'accounts:agent_batch_request_create' %}">
-                {% csrf_token %}
-                {% for field in batch_request_form %}
-                    <div class="mb-3">
-                        <label class="form-label">{{ field.label }}</label>
-                        {{ field }}
+            {% if available_company_batches %}
+                <div class="border rounded-3 p-3 bg-light mb-3">
+                    <div class="fw-semibold mb-2">Available company batches</div>
+                    <div class="small text-secondary mb-0">Choose from batches that already have sellable stock. Each one shows the product, batch code, remaining cases, and company price per case.</div>
+                    <div class="mt-3 d-grid gap-2">
+                        {% for batch in available_company_batches %}
+                            <div class="border rounded-3 bg-white p-3">
+                                <div class="fw-semibold">{{ batch.product.name }}{% if batch.product.size_label %} · {{ batch.product.size_label }}{% endif %}</div>
+                                <div class="small text-secondary">{{ batch.batch_number }} · {{ batch.unsold_cases_remaining }} cases left · ETB {{ batch.unit_price }}/case</div>
+                            </div>
+                        {% endfor %}
                     </div>
-                {% endfor %}
-                <button class="btn btn-primary w-100">Submit Batch Stock Request</button>
-            </form>
+                </div>
+                <form method="post" action="{% url 'accounts:agent_batch_request_create' %}">
+                    {% csrf_token %}
+                    {% for field in batch_request_form %}
+                        <div class="mb-3">
+                            <label class="form-label">{{ field.label }}</label>
+                            {{ field }}
+                            {% if field.help_text %}<div class="small text-secondary mt-1">{{ field.help_text }}</div>{% endif %}
+                            {% if field.errors %}<div class="text-danger small mt-1">{{ field.errors|join:", " }}</div>{% endif %}
+                        </div>
+                    {% endfor %}
+                    <button class="btn btn-primary w-100">Submit Stock Request</button>
+                </form>
+            {% else %}
+                <div class="border rounded-3 p-3 bg-light">
+                    <div class="fw-semibold mb-2">No requestable company stock yet</div>
+                    {% if company_products %}
+                        <p class="small text-secondary mb-2">This company has products in its catalog, but no production batch is available for allocation yet. The company admin needs to create a batch before your branch can request stock.</p>
+                        <div class="small text-secondary">
+                            Catalog currently available:
+                            {% for product in company_products %}
+                                <span class="d-block mt-1">{{ product.name }}{% if product.size_label %} · {{ product.size_label }}{% endif %}</span>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="small text-secondary mb-0">The company has not added any products yet, so there is nothing for this branch to request. Ask the company admin to create products and production batches first.</p>
+                    {% endif %}
+                </div>
+            {% endif %}
         </div>
         <div class="content-card p-4 mb-4">
             <h2 class="h4 mb-3">Manual Inventory Adjustment</h2>
@@ -98,12 +129,22 @@
             </form>
         </div>
         <div class="content-card p-4">
-            <h2 class="h4 mb-3">Legacy Restock Request</h2>
+            <h2 class="h4 mb-2">Fallback Restock Request</h2>
+            <p class="small text-secondary">Use this only if you need a manual note-based restock request instead of the full batch sales workflow above.</p>
             <form method="post" action="{% url 'accounts:create_restock_request' %}">
                 {% csrf_token %}
-                <div class="mb-3">{{ restock_form.product }}</div>
-                <div class="mb-3">{{ restock_form.quantity_requested }}</div>
-                <div class="mb-3">{{ restock_form.note }}</div>
+                <div class="mb-3">
+                    <label class="form-label">{{ restock_form.product.label }}</label>
+                    {{ restock_form.product }}
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">{{ restock_form.quantity_requested.label }}</label>
+                    {{ restock_form.quantity_requested }}
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">{{ restock_form.note.label }}</label>
+                    {{ restock_form.note }}
+                </div>
                 <button class="btn btn-outline-primary w-100">Send Restock Request</button>
             </form>
         </div>

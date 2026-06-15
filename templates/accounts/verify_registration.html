@@ -7,7 +7,7 @@
             <span class="eyebrow">Verify Account</span>
             <h1 class="display-6 fw-semibold mt-2 mb-3">Enter the OTP we emailed to you</h1>
             <p class="text-secondary">Your customer account is created, but it must be verified before login. The OTP expires quickly, so use the latest email.</p>
-            <form method="post" novalidate>
+            <form method="post">
                 {% csrf_token %}
                 <div class="mb-3">
                     <label class="form-label" for="{{ form.email.id_for_label }}">{{ form.email.label }}</label>
@@ -25,9 +25,42 @@
             <form method="post" action="{% url 'accounts:resend_registration_otp' %}" class="mt-3">
                 {% csrf_token %}
                 <input type="hidden" name="email" value="{{ form.email.value|default:'' }}">
-                <button type="submit" class="btn btn-outline-primary w-100">Resend OTP</button>
+                <button
+                    type="submit"
+                    class="btn btn-outline-primary w-100"
+                    id="resend-otp-button"
+                    data-wait-seconds="{{ resend_wait_seconds|default:0 }}"
+                >
+                    Resend OTP
+                </button>
             </form>
         </div>
     </div>
 </div>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+    (function () {
+        const resendButton = document.getElementById("resend-otp-button");
+        if (!resendButton) {
+            return;
+        }
+
+        let remainingSeconds = Number(resendButton.dataset.waitSeconds || 0);
+
+        function renderCountdown() {
+            if (remainingSeconds > 0) {
+                resendButton.disabled = true;
+                resendButton.textContent = `Resend OTP in ${remainingSeconds}s`;
+                remainingSeconds -= 1;
+                window.setTimeout(renderCountdown, 1000);
+                return;
+            }
+            resendButton.disabled = false;
+            resendButton.textContent = "Resend OTP";
+        }
+
+        renderCountdown();
+    })();
+</script>
 {% endblock %}

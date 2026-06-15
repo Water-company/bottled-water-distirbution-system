@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}Driver Dashboard{% endblock %}
+{% block body_class %}dashboard-body driver-dashboard-body{% endblock %}
+{% block navigation %}{% endblock %}
 {% block extra_head %}
 <link
     rel="stylesheet"
@@ -8,233 +10,210 @@
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
     crossorigin=""
 >
-<style>
-    .scanner-shell {
-        position: relative;
-        border-radius: 1rem;
-        overflow: hidden;
-        background: #111827;
-        min-height: 320px;
-    }
-
-    .scanner-reader {
-        min-height: 320px;
-    }
-
-    .scanner-reader video {
-        width: 100% !important;
-        height: 100% !important;
-        object-fit: cover;
-    }
-
-    .scanner-overlay {
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .scanner-frame {
-        width: min(70vw, 240px);
-        height: min(70vw, 240px);
-        border: 2px solid rgba(255, 255, 255, 0.9);
-        border-radius: 1rem;
-        box-shadow: 0 0 0 999px rgba(17, 24, 39, 0.2);
-    }
-
-    .scanner-status {
-        min-height: 48px;
-    }
-</style>
 {% endblock %}
-{% block content %}
-<section class="hero-card p-4 p-lg-5 mb-4">
-    <span class="eyebrow">Driver</span>
-    <h1 class="display-6 fw-semibold mt-2 mb-2">{{ driver.user.full_name }}</h1>
-    <p class="text-secondary mb-2">Manage live delivery status, send GPS updates, decode coordinates into addresses, and complete delivery handoff using QR and OTP verification.</p>
-    <div class="d-flex flex-wrap gap-2">
-        <span class="map-summary-chip">Availability: {{ driver.get_availability_status_display }}</span>
-        <span class="status-pill {% if driver_online %}status-pill--online{% else %}status-pill--offline{% endif %}">
-            <span class="status-light {% if driver_online %}status-light--online{% else %}status-light--offline{% endif %}"></span>
-            {% if driver_online %}Driver online{% else %}Driver offline{% endif %}
-        </span>
-        <a href="{% url 'accounts:driver_history' %}" class="btn btn-sm btn-outline-primary">History</a>
-        <a href="{% url 'accounts:notifications' %}" class="btn btn-sm btn-outline-dark">Notifications</a>
-    </div>
-    <div class="alert alert-warning small mt-3 mb-0 d-none" id="driver-queue-status"></div>
-</section>
+{% block page_body %}
+<div class="dashboard-mobile-shell">
+    {% include "includes/flash_messages.html" %}
 
-<section class="row g-3 mb-4">
-    <div class="col-md-4">
-        <div class="content-card p-4 h-100">
-            <div class="text-secondary small text-uppercase">Today</div>
-            <div class="display-6 fw-semibold mt-2">{{ performance.completed_today }}</div>
-            <div class="small text-secondary">{{ performance.assigned_today }} assigned | {{ performance.pending_today }} pending</div>
+    <header class="dashboard-mobile-header">
+        <div>
+            <h1>{{ driver.user.full_name }}</h1>
+            <p>Driver operations hub</p>
         </div>
-    </div>
-    <div class="col-md-4">
-        <div class="content-card p-4 h-100">
-            <div class="text-secondary small text-uppercase">Earnings Today</div>
-            <div class="display-6 fw-semibold mt-2">{{ performance.earnings_today }}</div>
-            <div class="small text-secondary">Month: {{ performance.earnings_month }}</div>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="content-card p-4 h-100">
-            <div class="text-secondary small text-uppercase">Performance</div>
-            <div class="display-6 fw-semibold mt-2">{% if performance.average_rating %}{{ performance.average_rating|floatformat:1 }}/5{% else %}-{% endif %}</div>
-            <div class="small text-secondary">On-time rate: {{ performance.on_time_rate }}%</div>
-        </div>
-    </div>
-</section>
+        <a class="dashboard-icon-button" href="{% url 'accounts:notifications' %}">
+            <i class="bi bi-bell"></i>
+        </a>
+    </header>
 
-<section class="row g-4 mb-4">
-    <div class="col-lg-4">
-        <div class="content-card p-4 h-100">
-            <h2 class="h4 mb-3">Availability</h2>
-            <form method="post" action="{% url 'accounts:driver_availability' %}" class="mb-4">
+    <div class="alert alert-warning small d-none" id="driver-queue-status"></div>
+
+    <section class="driver-dashboard-card">
+        <div class="driver-dashboard-card__body">
+            <div class="dashboard-section-title">
+                <span>Availability</span>
+                <span class="dashboard-pill {% if driver_online %}dashboard-pill--success{% else %}dashboard-pill--neutral{% endif %}">
+                    {% if driver_online %}Online{% else %}Offline{% endif %}
+                </span>
+            </div>
+            <form method="post" action="{% url 'accounts:driver_availability' %}" class="driver-status-toggle">
                 {% csrf_token %}
-                <div class="d-grid gap-2">
-                    {% for value, label in driver_status_choices %}
-                        <button
-                            type="submit"
-                            name="availability_status"
-                            value="{{ value }}"
-                            class="btn {% if driver.availability_status == value %}btn-primary{% else %}btn-outline-primary{% endif %}"
-                        >
-                            {{ label }}
-                        </button>
-                    {% endfor %}
-                </div>
+                {% for value, label in driver_status_choices %}
+                    <button
+                        type="submit"
+                        name="availability_status"
+                        value="{{ value }}"
+                        class="btn {% if value == 'available' %}is-available{% elif value == 'on_delivery' %}is-delivery{% else %}is-off{% endif %} {% if driver.availability_status != value %}opacity-50{% endif %}"
+                    >
+                        {{ label }}
+                    </button>
+                {% endfor %}
             </form>
+        </div>
+    </section>
+
+    {% if active_delivery %}
+        <section class="driver-dashboard-card">
+            <div class="driver-dashboard-card__body">
+                <div class="dashboard-section-title">
+                    <span>Active Delivery</span>
+                    <span class="dashboard-pill dashboard-pill--warning">{{ active_delivery.get_status_display }}</span>
+                </div>
+                <div class="driver-delivery-card">
+                    <div class="dashboard-row-title mb-1">{{ active_delivery.order_number }}</div>
+                    <div class="dashboard-row-subtitle mb-3">{{ active_delivery.customer.full_name }} | {{ active_delivery.delivery_address }}</div>
+                    <a class="btn btn-primary w-100" href="#assigned-deliveries">Continue</a>
+                </div>
+            </div>
+        </section>
+    {% endif %}
+
+    <section class="driver-dashboard-card">
+        <div class="driver-dashboard-card__body">
+            <div class="dashboard-section-title">
+                <span>Today's Summary</span>
+            </div>
+            <div class="driver-stat-grid">
+                <div class="dashboard-mini-stat">
+                    <span class="dashboard-mini-stat__label">Completed</span>
+                    <span class="dashboard-mini-stat__value">{{ performance.completed_today }}</span>
+                </div>
+                <div class="dashboard-mini-stat">
+                    <span class="dashboard-mini-stat__label">Earnings</span>
+                    <span class="dashboard-mini-stat__value">{{ performance.earnings_today }}</span>
+                </div>
+                <div class="dashboard-mini-stat">
+                    <span class="dashboard-mini-stat__label">Rating</span>
+                    <span class="dashboard-mini-stat__value">{% if performance.average_rating %}{{ performance.average_rating|floatformat:1 }}{% else %}-{% endif %}</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="driver-dashboard-card">
+        <div class="driver-dashboard-card__body">
+            <div class="dashboard-section-title">
+                <span>Live Position</span>
+                <small id="location-status">Automatic GPS updates are ready when you go online.</small>
+            </div>
             <form method="post" action="{% url 'accounts:update_location' %}" id="driver-location-form">
                 {% csrf_token %}
-                <div class="mb-3 d-flex flex-wrap gap-2">
+                <div class="d-grid gap-2 mb-3">
                     <button type="button" class="btn btn-outline-primary" id="driver-use-gps">Use Current GPS</button>
-                    <span class="small text-secondary align-self-center">or click the map to set a fallback position</span>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Latitude</label>
-                    <input type="text" id="driver-latitude" name="latitude" class="form-control" value="{{ location.latitude|default:'9.030000' }}">
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label class="form-label small text-secondary">Latitude</label>
+                        <input type="text" id="driver-latitude" name="latitude" class="form-control" value="{{ location.latitude|default:'9.030000' }}">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small text-secondary">Longitude</label>
+                        <input type="text" id="driver-longitude" name="longitude" class="form-control" value="{{ location.longitude|default:'38.740000' }}">
+                    </div>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Longitude</label>
-                    <input type="text" id="driver-longitude" name="longitude" class="form-control" value="{{ location.longitude|default:'38.740000' }}">
-                </div>
-                <div class="mb-3">
-                    <div class="small text-secondary mb-1">Decoded address</div>
-                    <div class="map-status-line" id="driver-decoded-address">Waiting for coordinates to decode.</div>
-                </div>
+                <div class="small text-secondary mb-2">Decoded address</div>
+                <div class="map-status-line mb-3" id="driver-decoded-address">Waiting for coordinates to decode.</div>
                 <div class="form-check mb-3">
                     <input type="checkbox" id="driver-online" name="is_online" value="true" class="form-check-input" {% if location and location.is_online %}checked{% endif %}>
-                    <label class="form-check-label">Online</label>
+                    <label class="form-check-label" for="driver-online">Share live location</label>
                 </div>
                 <button class="btn btn-primary w-100">Update Location</button>
             </form>
-            <p class="small text-secondary mt-3 mb-0" id="location-status">
-                When online, the dashboard sends a GPS update every 10 seconds and customers see the live driver marker.
-            </p>
         </div>
-    </div>
-    <div class="col-lg-8">
-        {% if active_delivery %}
-            <div class="content-card p-4 mb-4">
-                <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
-                    <div>
-                        <h2 class="h4 mb-1">Active Delivery</h2>
-                        <div class="fw-semibold">{{ active_delivery.order_number }}</div>
-                        <div class="small text-secondary">{{ active_delivery.customer.full_name }} | {{ active_delivery.delivery_address }}</div>
-                    </div>
-                    <span class="badge text-bg-light">{{ active_delivery.get_status_display }}</span>
-                </div>
+    </section>
+
+    <section class="driver-dashboard-card">
+        <div class="driver-dashboard-card__body">
+            <div class="dashboard-section-title">
+                <span>Live Route Map</span>
+                <span class="dashboard-pill dashboard-pill--neutral" id="driver-map-chip">Driver location offline</span>
             </div>
-        {% endif %}
-        <div class="content-card p-4 mb-4">
-            <div class="d-flex flex-wrap justify-content-between gap-2 mb-3">
-                <div>
-                    <h2 class="h4 mb-1">Live Route Map</h2>
-                    <p class="small text-secondary mb-0">Driver marker: D. Customer marker: C. Agent branch / warehouse marker: A.</p>
-                </div>
-                <span class="map-summary-chip" id="driver-map-chip">Driver location offline</span>
-            </div>
-            <div id="driver-map" class="map-canvas mb-3"></div>
-            <div class="d-flex flex-wrap gap-2 mb-2">
-                <span class="map-summary-chip">Click the map to set a manual fallback coordinate</span>
-                <span class="map-summary-chip">Drag D to fine-tune the driver marker</span>
-            </div>
-            <div class="map-status-line" id="driver-map-status">Assigned customer and agent locations are shown whenever delivery data is available.</div>
+            <div id="driver-map" class="dashboard-mini-map mb-3"></div>
+            <div class="small text-secondary" id="driver-map-status">Assigned customer and agent locations are shown whenever delivery data is available.</div>
         </div>
-        <div class="content-card p-4">
-            <h2 class="h4 mb-3">Assigned Deliveries</h2>
+    </section>
+
+    <section class="driver-dashboard-card" id="assigned-deliveries">
+        <div class="driver-dashboard-card__body">
+            <div class="dashboard-section-title">
+                <span>Assigned Deliveries</span>
+                <a href="{% url 'accounts:driver_history' %}">History</a>
+            </div>
             {% if assigned_orders %}
                 {% for order in assigned_orders %}
-                    <div class="border rounded p-3 mb-3">
-                        <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
+                    <div class="driver-delivery-card">
+                        <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
                             <div>
-                                <strong>{{ order.order_number }}</strong>
-                                <div class="small text-secondary">{{ order.customer.full_name }} | {{ order.delivery_address }}</div>
+                                <div class="dashboard-row-title">{{ order.order_number }}</div>
+                                <div class="dashboard-row-subtitle">{{ order.customer.full_name }} | {{ order.delivery_address }}</div>
                             </div>
-                            <span class="badge text-bg-light">{{ order.get_status_display }}</span>
+                            <span class="dashboard-pill {% if order.status == 'delivered' %}dashboard-pill--success{% elif order.status == 'failed' or order.status == 'cancelled' %}dashboard-pill--danger{% else %}dashboard-pill--warning{% endif %}">
+                                {{ order.get_status_display }}
+                            </span>
                         </div>
+
                         <div class="d-flex flex-wrap gap-2 mb-3">
+                            <span class="badge {% if order.status == 'picked_up' or order.status == 'out_for_delivery' or order.status == 'arrived' or order.status == 'delivered' %}text-bg-success{% else %}text-bg-light{% endif %}">1. Picked Up</span>
+                            <span class="badge {% if order.status == 'out_for_delivery' or order.status == 'arrived' or order.status == 'delivered' %}text-bg-success{% else %}text-bg-light{% endif %}">2. On The Way</span>
+                            <span class="badge {% if order.status == 'delivered' %}text-bg-success{% else %}text-bg-light{% endif %}">3. Delivered</span>
+                        </div>
+
+                        <div class="driver-action-stack mb-3">
                             <a
-                                class="btn btn-outline-dark btn-sm"
+                                class="btn btn-outline-primary"
                                 href="https://www.google.com/maps/dir/?api=1&destination={{ order.latitude }},{{ order.longitude }}"
                                 target="_blank"
                                 rel="noopener"
                             >
                                 Navigate
                             </a>
-                            <a class="btn btn-outline-secondary btn-sm" href="tel:{{ order.phone_number }}">Call Customer</a>
-                            {% if order.status == "driver_assigned" %}
-                                <form method="post" action="{% url 'accounts:accept_delivery' order.order_number %}">
-                                    {% csrf_token %}
-                                    <button class="btn btn-outline-primary btn-sm">Accept Delivery</button>
-                                </form>
-                            {% elif order.status == "driver_accepted" %}
+                            <div class="border rounded px-3 py-2 bg-light small fw-semibold text-dark">
+                                <i class="bi bi-telephone me-2"></i>{{ order.phone_number }}
+                            </div>
+
+                            {% if order.status == "driver_assigned" or order.status == "driver_accepted" %}
                                 <form method="post" action="{% url 'accounts:picked_up_delivery' order.order_number %}">
                                     {% csrf_token %}
-                                    <button class="btn btn-primary btn-sm">Picked Up from Warehouse</button>
+                                    <button class="btn btn-primary">Picked Up</button>
                                 </form>
                             {% elif order.status == "picked_up" %}
                                 <form method="post" action="{% url 'accounts:start_delivery' order.order_number %}">
                                     {% csrf_token %}
-                                    <button class="btn btn-primary btn-sm">Start Delivery</button>
-                                </form>
-                            {% elif order.status == "out_for_delivery" %}
-                                <form method="post" action="{% url 'accounts:arrived_delivery' order.order_number %}">
-                                    {% csrf_token %}
-                                    <button class="btn btn-primary btn-sm">I Have Arrived</button>
+                                    <button class="btn btn-primary">On The Way</button>
                                 </form>
                             {% endif %}
                         </div>
-                        {% if order.status == "arrived" %}
-                            <div class="d-flex flex-wrap gap-2 mb-3">
+
+                        {% if order.status == "out_for_delivery" or order.status == "arrived" %}
+                            <div class="driver-action-stack mb-3">
                                 <button
                                     type="button"
-                                    class="btn btn-primary w-100 open-qr-scanner"
+                                    class="btn btn-primary open-qr-scanner"
                                     data-order-number="{{ order.order_number }}"
                                     data-confirm-url="{% url 'accounts:confirm_delivery_qr' order.order_number %}"
+                                    data-arrived-url="{% url 'accounts:arrived_delivery' order.order_number %}"
+                                    data-requires-arrival="{% if order.status == 'out_for_delivery' %}true{% else %}false{% endif %}"
                                 >
-                                    Scan Bar Code
+                                    Delivered - Scan QR
                                 </button>
                             </div>
+                        {% endif %}
+
+                        {% if order.status == "arrived" %}
                             <form method="post" action="{% url 'accounts:complete_delivery' order.order_number %}" class="row g-2">
                                 {% csrf_token %}
-                                <div class="col-md-5"><input type="text" name="qr_token" class="form-control" placeholder="QR JSON payload or signed token"></div>
-                                <div class="col-md-5"><input type="text" name="otp_code" class="form-control" placeholder="OTP fallback (manual verification)"></div>
-                                <div class="col-md-2 d-grid"><button class="btn btn-success">Complete</button></div>
+                                <div class="col-12"><input type="text" name="qr_token" class="form-control" placeholder="QR JSON payload or signed token"></div>
+                                <div class="col-12"><input type="text" name="otp_code" class="form-control" placeholder="OTP fallback (manual verification)"></div>
+                                <div class="col-12 d-grid"><button class="btn btn-success">Complete Delivery</button></div>
                             </form>
                             <div class="small text-secondary mt-2">Use the customer QR payload first. OTP remains available as a manual fallback.</div>
                         {% endif %}
+
                         {% if order.status != "delivered" and order.status != "failed" and order.status != "cancelled" %}
                             <form method="post" action="{% url 'accounts:report_delivery_issue' order.order_number %}" class="row g-2 mt-3">
                                 {% csrf_token %}
-                                <div class="col-md-4">{{ issue_form.issue_type }}</div>
-                                <div class="col-md-6">{{ issue_form.description }}</div>
-                                <div class="col-md-2 d-grid"><button class="btn btn-outline-danger btn-sm">Report Issue</button></div>
+                                <div class="col-12">{{ issue_form.issue_type }}</div>
+                                <div class="col-12">{{ issue_form.description }}</div>
+                                <div class="col-12 d-grid"><button class="btn btn-outline-danger">Report Issue</button></div>
                             </form>
                         {% endif %}
                     </div>
@@ -243,8 +222,27 @@
                 <p class="text-secondary mb-0">No deliveries assigned yet.</p>
             {% endif %}
         </div>
-    </div>
-</section>
+    </section>
+</div>
+
+<nav class="driver-bottom-nav">
+    <a class="is-active" href="{% url 'accounts:driver_dashboard' %}">
+        <i class="bi bi-house-door"></i>
+        <span>Home</span>
+    </a>
+    <a href="#assigned-deliveries">
+        <i class="bi bi-box-seam"></i>
+        <span>Deliveries</span>
+    </a>
+    <a href="{% url 'accounts:driver_history' %}">
+        <i class="bi bi-clock-history"></i>
+        <span>History</span>
+    </a>
+    <a href="{% url 'accounts:profile' %}">
+        <i class="bi bi-person"></i>
+        <span>Profile</span>
+    </a>
+</nav>
 
 <div class="modal fade" id="driverQrScannerModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down modal-lg">
@@ -538,10 +536,32 @@
         let scannerConfirmUrl = "";
         let activeOrderNumber = "";
         let torchEnabled = false;
+        let scannerArrivedUrl = "";
+        let scannerRequiresArrival = false;
 
         function setScannerMessage(message, type) {
             scannerStatus.className = `scanner-status alert alert-${type || "secondary"} small mb-0`;
             scannerStatus.textContent = message;
+        }
+
+        function playSuccessTone() {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContextClass) {
+                return;
+            }
+            const audioContext = new AudioContextClass();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            oscillator.type = "sine";
+            oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+            gainNode.gain.setValueAtTime(0.001, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.12, audioContext.currentTime + 0.02);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.22);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.22);
+            oscillator.onended = () => audioContext.close().catch(() => {});
         }
 
         function getQueuedScans() {
@@ -557,7 +577,7 @@
         }
 
         function renderQueueStatus(message, visible, type) {
-            queueStatus.className = `alert alert-${type || "warning"} small mt-3 mb-0${visible ? "" : " d-none"}`;
+            queueStatus.className = `alert alert-${type || "warning"} small${visible ? "" : " d-none"}`;
             queueStatus.textContent = message || "";
         }
 
@@ -697,6 +717,26 @@
             }
         }
 
+        async function ensureArrivedState() {
+            if (!scannerRequiresArrival || !scannerArrivedUrl) {
+                return true;
+            }
+            setScannerMessage("Marking this stop as arrived...", "info");
+            const response = await fetch(scannerArrivedUrl, {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken": csrfToken,
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            });
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+                throw new Error((payload && payload.message) || "Unable to mark the delivery as arrived.");
+            }
+            scannerRequiresArrival = false;
+            return true;
+        }
+
         async function startScanner() {
             await stopScanner();
             setScannerMessage("Opening camera...", "secondary");
@@ -708,6 +748,7 @@
             }
 
             try {
+                await ensureArrivedState();
                 const cameras = await Html5Qrcode.getCameras();
                 if (!cameras.length) {
                     throw new Error("No camera was found on this device.");
@@ -717,8 +758,8 @@
                 await html5QrCode.start(
                     preferredCamera.id,
                     {
-                        fps: 10,
-                        qrbox: { width: 240, height: 240 },
+                        fps: 12,
+                        qrbox: { width: 260, height: 260 },
                         aspectRatio: 1.0,
                     },
                     async (decodedText) => {
@@ -726,6 +767,8 @@
                             return;
                         }
                         scannerRunning = false;
+                        playSuccessTone();
+                        setScannerMessage("QR captured. Confirming delivery...", "success");
                         await stopScanner();
                         await submitScan(decodedText);
                     },
@@ -736,7 +779,12 @@
                 scannerTorchButton.textContent = "Toggle Torch";
                 setScannerMessage("Align the customer QR code inside the frame.", "secondary");
             } catch (error) {
-                setScannerMessage(error.message || "Unable to start the camera scanner.", "danger");
+                const message = String(error && error.message ? error.message : "Unable to start the camera scanner.");
+                if (/permission|notallowed/i.test(message)) {
+                    setScannerMessage("Camera permission was denied. Allow access or use the OTP fallback below.", "danger");
+                } else {
+                    setScannerMessage(message, "danger");
+                }
                 scannerRetryButton.classList.remove("d-none");
             }
         }
@@ -745,6 +793,8 @@
             button.addEventListener("click", () => {
                 activeOrderNumber = button.dataset.orderNumber;
                 scannerConfirmUrl = button.dataset.confirmUrl;
+                scannerArrivedUrl = button.dataset.arrivedUrl || "";
+                scannerRequiresArrival = button.dataset.requiresArrival === "true";
                 scannerOrderNumber.textContent = activeOrderNumber;
                 scannerModal.show();
                 startScanner();

@@ -2,6 +2,7 @@ from django import forms
 from django.core.exceptions import ValidationError
 
 from accounts.models import CustomerAddress
+from accounts.validators import normalize_ethiopian_phone_number
 from orders.models import LocationSource, RefundPayoutMethod
 
 
@@ -31,6 +32,10 @@ class CheckoutForm(forms.Form):
                 field.widget.attrs["class"] = "form-check-input"
             elif name not in {"selected_agent_id", "latitude", "longitude"}:
                 field.widget.attrs["class"] = "form-control"
+        self.fields["phone_number"].widget.attrs["placeholder"] = "+2519XXXXXXXX"
+
+    def clean_phone_number(self):
+        return normalize_ethiopian_phone_number(self.cleaned_data["phone_number"], required=True)
 
     def clean(self):
         cleaned_data = super().clean()
@@ -57,11 +62,16 @@ class CheckoutForm(forms.Form):
         longitude = cleaned_data.get("longitude")
         if latitude is None or longitude is None:
             raise ValidationError("Please choose a delivery location before submitting your order request.")
+        if not (-90 <= float(latitude) <= 90):
+            raise ValidationError("Please choose a valid map latitude for delivery.")
+        if not (-180 <= float(longitude) <= 180):
+            raise ValidationError("Please choose a valid map longitude for delivery.")
         if not selected_agent_id:
-            raise ValidationError("Please choose one of the nearby eligible agents before continuing to payment.")
+            raise ValidationError("Please choose one of the nearby eligible agents before sending the request.")
         delivery_address = (cleaned_data.get("delivery_address") or "").strip()
         if not delivery_address:
             cleaned_data["delivery_address"] = f"Pinned location ({latitude}, {longitude})"
+        cleaned_data["notes"] = (cleaned_data.get("notes") or "").strip()
         return cleaned_data
 
 

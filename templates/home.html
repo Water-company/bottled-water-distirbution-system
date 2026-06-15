@@ -313,7 +313,7 @@
         <div
           class="bg-surface-container-low p-4 rounded-xl mb-12 border border-secondary-container"
         >
-          <form class="grid grid-cols-1 md:grid-cols-12 gap-4" method="get">
+          <form class="grid grid-cols-1 md:grid-cols-12 gap-4" id="company-search-form" method="get">
             <div class="md:col-span-5 relative group">
               <span
                 class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors"
@@ -324,6 +324,7 @@
                 name="search"
                 placeholder="Search by name..."
                 type="text"
+                value="{{ filter_form.search.value|default_if_none:'' }}"
               />
             </div>
             <div class="md:col-span-5 relative group">
@@ -336,6 +337,7 @@
                 name="location"
                 placeholder="City or area..."
                 type="text"
+                value="{{ filter_form.location.value|default_if_none:'' }}"
               />
             </div>
             <div class="md:col-span-2">
@@ -346,9 +348,12 @@
               </button>
             </div>
           </form>
+          <p class="mt-3 text-sm text-on-surface-variant" id="company-search-feedback">
+            Start typing to filter companies instantly without leaving the page.
+          </p>
         </div>
         <!-- Bento-ish Grid for Companies -->
-
+        <div id="company-results-shell">
         <div
           class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
         >
@@ -411,6 +416,7 @@
         <!-- Pagination (Placeholder) -->
         <div class="mt-12 flex justify-center">
           {% include "includes/pagination.html" %}
+        </div>
         </div>
       </section>
       <!-- About Section -->
@@ -611,6 +617,62 @@
             "translate-y-10",
           );
           observer.observe(section);
+        });
+
+        const companySearchForm = document.getElementById("company-search-form");
+        const companyResultsShell = document.getElementById("company-results-shell");
+        const companySearchFeedback = document.getElementById("company-search-feedback");
+        if (!companySearchForm || !companyResultsShell) {
+          return;
+        }
+
+        let activeSearchRequest = 0;
+        let searchTimeoutId = null;
+
+        const runCompanySearch = async () => {
+          const requestId = ++activeSearchRequest;
+          const params = new URLSearchParams(new FormData(companySearchForm));
+          const queryString = params.toString();
+          const targetUrl = queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname;
+          companySearchFeedback.textContent = "Searching companies...";
+
+          try {
+            const response = await fetch(targetUrl, {
+              headers: { "X-Requested-With": "XMLHttpRequest" },
+            });
+            if (!response.ok) {
+              throw new Error("Search failed");
+            }
+            const html = await response.text();
+            if (requestId !== activeSearchRequest) {
+              return;
+            }
+            const parsed = new DOMParser().parseFromString(html, "text/html");
+            const nextResultsShell = parsed.getElementById("company-results-shell");
+            if (!nextResultsShell) {
+              throw new Error("Missing search results");
+            }
+            companyResultsShell.innerHTML = nextResultsShell.innerHTML;
+            window.history.replaceState({}, "", targetUrl);
+            companySearchFeedback.textContent = "Companies updated instantly.";
+          } catch (error) {
+            if (requestId !== activeSearchRequest) {
+              return;
+            }
+            companySearchFeedback.textContent = "Search is temporarily unavailable. Please try again.";
+          }
+        };
+
+        companySearchForm.addEventListener("submit", (event) => {
+          event.preventDefault();
+          runCompanySearch();
+        });
+
+        companySearchForm.querySelectorAll("input").forEach((input) => {
+          input.addEventListener("input", () => {
+            window.clearTimeout(searchTimeoutId);
+            searchTimeoutId = window.setTimeout(runCompanySearch, 250);
+          });
         });
       });
     </script>

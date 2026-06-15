@@ -6,6 +6,7 @@ from django.db import models, transaction
 from django.urls import reverse
 from django.utils import timezone
 
+from accounts.services import get_company_admin_users
 from catalog.models import (
     AgentBatchSale,
     AgentBatchSalePayment,
@@ -18,6 +19,7 @@ from catalog.models import (
     InventoryBatch,
     InventoryTransaction,
     InventoryTransactionType,
+    Product,
 )
 from core.services import notify_user
 
@@ -53,6 +55,94 @@ def create_inventory_transaction(
         reference=reference,
         note=note,
     )
+
+
+def _notify_company_admins(company, title, message, link):
+    for admin_user in get_company_admin_users(company):
+        notify_user(admin_user, title, message, link=link)
+
+
+def _generate_company_batch_number(company, index):
+    year = timezone.localdate().year
+    base = f"BATCH-{year}-{company.pk:03d}-{index:03d}"
+    batch_number = base
+    suffix = 1
+    while CompanyBatch.objects.filter(company=company, batch_number=batch_number).exists():
+        batch_number = f"{base}-{suffix}"
+        suffix += 1
+    return batch_number
+
+
+@transaction.atomic
+def create_company_starter_catalog(*, company, created_by=None):
+    starter_rows = (
+        {
+            "name": "0.5L Daily Sport",
+            "size_label": "0.5L",
+            "description": "Single-serve bottled water for events, gyms, and quick retail pickup.",
+            "price": Decimal("35.00"),
+            "available_quantity": 1200,
+        },
+        {
+            "name": "5L Family Pack",
+            "size_label": "5L",
+            "description": "Mid-size bottled water for homes, cafes, and family delivery orders.",
+            "price": Decimal("120.00"),
+            "available_quantity": 450,
+        },
+        {
+            "name": "20L Office Pro",
+            "size_label": "20L",
+            "description": "Large refill jars for offices, hotels, and commercial venues.",
+            "price": Decimal("140.00"),
+            "available_quantity": 300,
+        },
+    )
+    created_products = []
+    created_batches = []
+    agents = list(company.agents.all())
+
+    for index, row in enumerate(starter_rows, start=1):
+        product, created = Product.objects.get_or_create(
+            company=company,
+            name=row["name"],
+            defaults=row,
+        )
+        if not created:
+            updated_fields = []
+            for field_name in ("size_label", "description", "price"):
+                if not getattr(product, field_name):
+                    setattr(product, field_name, row[field_name])
+                    updated_fields.append(field_name)
+            if product.available_quantity <= 0:
+                product.available_quantity = row["available_quantity"]
+                updated_fields.append("available_quantity")
+            if updated_fields:
+                product.save(update_fields=updated_fields + ["updated_at"])
+        else:
+            created_products.append(product)
+
+        for agent in agents:
+            AgentStock.objects.get_or_create(
+                agent=agent,
+                product=product,
+                defaults={"available_quantity": 0, "reorder_level": 0},
+            )
+
+        if not product.production_batches.exists():
+            batch = CompanyBatch.objects.create(
+                company=company,
+                product=product,
+                batch_number=_generate_company_batch_number(company, index),
+                production_date=timezone.localdate(),
+                total_cases_produced=product.available_quantity or row["available_quantity"],
+                unit_price=product.price,
+                created_by=created_by,
+                note="Starter batch generated to make the company catalog immediately requestable by agent branches.",
+            )
+            created_batches.append(batch)
+
+    return created_products, created_batches
 
 
 def get_agent_open_batch_balance(agent, exclude_sale=None):
@@ -177,13 +267,12 @@ def submit_agent_batch_sale_request(
         unit_price=batch.unit_price,
         requested_note=requested_note,
     )
-    if batch.company.admin:
-        notify_user(
-            batch.company.admin,
-            "New batch stock request",
-            f"{agent.name} requested {quantity_requested} cases from batch {batch.batch_number}.",
-            link=reverse("accounts:company_inventory"),
-        )
+    _notify_company_admins(
+        batch.company,
+        "New batch stock request",
+        f"{agent.name} requested {quantity_requested} cases from batch {batch.batch_number}.",
+        link=reverse("accounts:company_inventory"),
+    )
     if agent.admin and agent.admin_id != requested_by.id:
         notify_user(
             agent.admin,
@@ -364,13 +453,12 @@ def submit_agent_batch_sale_payment(*, sale, submitted_by, amount, note=""):
         submitted_by=submitted_by,
         submitted_note=note,
     )
-    if sale.batch.company.admin:
-        notify_user(
-            sale.batch.company.admin,
-            "Agent payment submitted",
-            f"{sale.agent.name} submitted a payment of {amount} for batch {sale.batch.batch_number}.",
-            link=reverse("accounts:company_inventory"),
-        )
+    _notify_company_admins(
+        sale.batch.company,
+        "Agent payment submitted",
+        f"{sale.agent.name} submitted a payment of {amount} for batch {sale.batch.batch_number}.",
+        link=reverse("accounts:company_inventory"),
+    )
     return payment
 
 

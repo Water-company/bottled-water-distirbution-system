@@ -11,16 +11,82 @@
     <div class="col-xl-4">
         <div class="content-card p-4">
             <h2 class="h4 mb-3">Register New Company</h2>
-            <div class="small text-secondary mb-3">Step 1: company profile. Step 2: upload document. Step 3: assign a company admin and submit to EFDA.</div>
+            <div class="small text-secondary mb-3">Step 1: company profile. Step 2: upload document. Step 3: create the company admin and submit to EFDA. The admin account activates only after approval.</div>
             <form method="post" action="{% url 'accounts:create_company' %}" enctype="multipart/form-data">
                 {% csrf_token %}
                 <input type="hidden" name="next" value="{% url 'accounts:system_companies' %}">
-                {% for field in company_form %}
-                    <div class="mb-3">
-                        <label class="form-label">{{ field.label }}</label>
-                        {{ field }}
+                <div class="small fw-semibold text-uppercase text-secondary mb-2">Company Details</div>
+                <div class="mb-3">
+                    <label class="form-label">{{ company_form.name.label }}</label>
+                    {{ company_form.name }}
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">{{ company_form.description.label }}</label>
+                    {{ company_form.description }}
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">{{ company_form.location.label }}</label>
+                    {{ company_form.location }}
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">{{ company_form.address.label }}</label>
+                    {{ company_form.address }}
+                </div>
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">{{ company_form.latitude.label }}</label>
+                        {{ company_form.latitude }}
                     </div>
-                {% endfor %}
+                    <div class="col-md-6">
+                        <label class="form-label">{{ company_form.longitude.label }}</label>
+                        {{ company_form.longitude }}
+                    </div>
+                </div>
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">{{ company_form.contact_email.label }}</label>
+                        {{ company_form.contact_email }}
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">{{ company_form.contact_phone.label }}</label>
+                        {{ company_form.contact_phone }}
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">{{ company_form.efda_license_number.label }}</label>
+                    {{ company_form.efda_license_number }}
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">{{ company_form.registration_document.label }}</label>
+                    {{ company_form.registration_document }}
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">{{ company_form.logo.label }}</label>
+                    {{ company_form.logo }}
+                </div>
+                <div class="small fw-semibold text-uppercase text-secondary mb-2 mt-4">Company Admin Details</div>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">{{ company_form.admin_first_name.label }}</label>
+                        {{ company_form.admin_first_name }}
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">{{ company_form.admin_last_name.label }}</label>
+                        {{ company_form.admin_last_name }}
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">{{ company_form.admin_email.label }}</label>
+                        {{ company_form.admin_email }}
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">{{ company_form.admin_phone_number.label }}</label>
+                        {{ company_form.admin_phone_number }}
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">{{ company_form.admin_password.label }}</label>
+                        {{ company_form.admin_password }}
+                    </div>
+                </div>
                 <button class="btn btn-primary w-100">Submit Company to EFDA</button>
             </form>
         </div>

@@ -9,7 +9,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Avg, Count, Q, Sum
-from django.http import HttpResponse, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
@@ -30,6 +30,7 @@ from accounts.forms import (
     CompanyForm,
     CompanyBatchForm,
     CompanyAgentUpdateForm,
+    SystemCompanyRegistrationForm,
     CompanyPremiumSettingsForm,
     CompanyProductForm,
     CustomerAddressForm,
@@ -55,7 +56,13 @@ from accounts.reporting import (
     build_system_report_pdf,
     format_money,
 )
-from accounts.services import create_registration_otp, verify_registration_otp
+from accounts.services import (
+    create_registration_otp,
+    get_company_admin_users,
+    get_registration_resend_wait_seconds,
+    send_company_admin_activation_email,
+    verify_registration_otp,
+)
 from catalog.models import (
     Agent,
     AgentBatchSale,
@@ -80,6 +87,7 @@ from catalog.services import (
     apply_agent_inventory_adjustment,
     approve_agent_batch_sale,
     confirm_agent_batch_sale_payment,
+    create_company_starter_catalog,
     get_agent_open_batch_balance,
     recall_company_batch,
     reject_agent_batch_sale,
@@ -106,6 +114,7 @@ from orders.services import (
     assign_driver,
     complete_delivery_and_deduct_stock,
     confirm_delivery_by_qr,
+    expire_order_request_if_needed,
     mark_order_arrived,
     mark_order_picked_up,
     process_refund_request,
@@ -120,7 +129,27 @@ def _float_or_none(value):
     return float(value) if value not in (None, "") else None
 
 
+def email_backend_uses_inbox_delivery():
+    backend = (getattr(settings, "EMAIL_BACKEND", "") or "").lower()
+    return not any(
+        marker in backend
+        for marker in (
+            "console.emailbackend",
+            "locmem.emailbackend",
+            "filebased.emailbackend",
+            "dummy.emailbackend",
+        )
+    )
+
+
 def build_driver_dashboard_payload(driver, assigned_orders, location):
+    active_statuses = {
+        OrderStatus.DRIVER_ASSIGNED,
+        OrderStatus.DRIVER_ACCEPTED,
+        OrderStatus.PICKED_UP,
+        OrderStatus.OUT_FOR_DELIVERY,
+        OrderStatus.ARRIVED,
+    }
     return {
         "currentDriverLocation": {
             "latitude": _float_or_none(getattr(location, "latitude", None)),
@@ -140,6 +169,7 @@ def build_driver_dashboard_payload(driver, assigned_orders, location):
                 "agentLongitude": float(order.selected_agent.longitude) if order.selected_agent else float(driver.agent.longitude),
             }
             for order in assigned_orders
+            if order.status in active_statuses
         ],
     }
 
@@ -242,8 +272,18 @@ def get_managed_agent_or_404(user):
     return get_object_or_404(Agent, admin=user)
 
 
-def get_managed_company_or_404(user):
-    return get_object_or_404(Company, admin=user)
+def get_managed_company_queryset(user):
+    if getattr(user, "managed_company_id", None):
+        return Company.objects.filter(pk=user.managed_company_id).order_by("-is_verified", "-is_active", "name", "pk")
+    return Company.objects.filter(admin=user).order_by("-is_verified", "-is_active", "name", "pk")
+
+
+def get_managed_company_or_404(user, request=None):
+    queryset = get_managed_company_queryset(user)
+    default_company = queryset.first()
+    if default_company is not None:
+        return default_company
+    raise Http404("No company is assigned to this company admin account.")
 
 
 def ensure_agent_stock_rows(agent):
@@ -686,6 +726,8 @@ def serialize_refund_for_audit(refund_request):
 
 def build_user_company_labels(user):
     labels = set()
+    if user.managed_company_id:
+        labels.add(user.managed_company.name)
     labels.update(user.managed_companies.values_list("name", flat=True))
     labels.update(user.managed_agent_branches.values_list("company__name", flat=True))
     driver_profile = getattr(user, "driver_profile", None)
@@ -710,7 +752,8 @@ def get_system_user_queryset(request):
         queryset = queryset.filter(is_active=False)
     if company_filter:
         queryset = queryset.filter(
-            Q(managed_companies__pk=company_filter)
+            Q(managed_company__pk=company_filter)
+            | Q(managed_companies__pk=company_filter)
             | Q(managed_agent_branches__company__pk=company_filter)
             | Q(driver_profile__agent__company__pk=company_filter)
             | Q(orders__company__pk=company_filter)
@@ -742,6 +785,8 @@ def build_system_report_data(date_from, date_to):
         company_user_ids = set(company.agents.values_list("admin_id", flat=True))
         company_user_ids.discard(None)
         company_user_ids.update(company.agents.values_list("drivers__user_id", flat=True))
+        company_user_ids.discard(None)
+        company_user_ids.update(company.company_admin_users.values_list("id", flat=True))
         company_user_ids.discard(None)
         if company.admin_id:
             company_user_ids.add(company.admin_id)
@@ -869,6 +914,51 @@ def build_agent_fleet_payload(agent):
     }
 
 
+def build_driver_spotlight_rows(drivers, limit=2):
+    ranked = sorted(
+        drivers,
+        key=lambda driver: (
+            -(driver.active_deliveries or 0),
+            -(driver.average_rating or 0),
+            -(driver.completed_deliveries or 0),
+            driver.user.full_name.lower(),
+        ),
+    )
+    return ranked[:limit]
+
+
+def build_weekly_revenue_bars(company):
+    today = timezone.localdate()
+    start_date = today - timezone.timedelta(days=6)
+    delivered_orders = list(
+        company.orders.filter(
+            status=OrderStatus.DELIVERED,
+            delivered_at__date__gte=start_date,
+            delivered_at__date__lte=today,
+        ).only("delivered_at", "total")
+    )
+    revenue_by_day = {start_date + timezone.timedelta(days=index): Decimal("0.00") for index in range(7)}
+    for order in delivered_orders:
+        day = timezone.localtime(order.delivered_at).date() if order.delivered_at else None
+        if day in revenue_by_day:
+            revenue_by_day[day] += _safe_decimal(order.total)
+
+    max_value = max(revenue_by_day.values(), default=Decimal("0.00"))
+    bars = []
+    for day, value in revenue_by_day.items():
+        percent = int((value / max_value) * 100) if max_value > 0 else 18
+        bars.append(
+            {
+                "label": day.strftime("%a").upper(),
+                "value": value,
+                "value_display": format_money(value),
+                "height": max(percent, 18),
+                "is_today": day == today,
+            }
+        )
+    return bars
+
+
 class RegisterView(FormView):
     template_name = "accounts/register.html"
     form_class = RegistrationForm
@@ -876,9 +966,21 @@ class RegisterView(FormView):
 
     def form_valid(self, form):
         user = form.save()
-        create_registration_otp(user)
+        try:
+            otp = create_registration_otp(user)
+        except ValidationError as exc:
+            user.delete()
+            form.add_error(None, exc.messages[0] if exc.messages else "Unable to send the verification email.")
+            return self.form_invalid(form)
         self.request.session["pending_registration_email"] = user.email
-        messages.success(self.request, "Your account was created. Enter the OTP we emailed to finish verification.")
+        if email_backend_uses_inbox_delivery():
+            messages.success(self.request, "Your account was created. Enter the OTP we emailed to finish verification.")
+        else:
+            messages.warning(
+                self.request,
+                "Your account was created. Email delivery is not fully configured in this environment yet, so use the OTP shown here: "
+                f"{otp.code}",
+            )
         return super().form_valid(form)
 
 
@@ -894,6 +996,21 @@ class VerifyRegistrationOTPView(FormView):
         elif self.request.GET.get("email"):
             initial["email"] = self.request.GET["email"].lower()
         return initial
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        pending_email = (
+            self.request.session.get("pending_registration_email")
+            or self.get_initial().get("email")
+            or ""
+        )
+        resend_wait_seconds = 0
+        if pending_email:
+            user = User.objects.filter(email__iexact=pending_email, role=UserRole.CUSTOMER).first()
+            if user:
+                resend_wait_seconds = get_registration_resend_wait_seconds(user)
+        context["resend_wait_seconds"] = resend_wait_seconds
+        return context
 
     def form_valid(self, form):
         user = get_object_or_404(User, email=form.cleaned_data["email"], role=UserRole.CUSTOMER)
@@ -911,9 +1028,16 @@ class ResendRegistrationOTPView(View):
     def post(self, request):
         email = (request.POST.get("email") or request.session.get("pending_registration_email") or "").lower()
         user = get_object_or_404(User, email=email, role=UserRole.CUSTOMER)
-        create_registration_otp(user)
+        try:
+            otp = create_registration_otp(user)
+        except ValidationError as exc:
+            messages.error(request, exc.messages[0] if exc.messages else "Unable to send a fresh OTP right now.")
+            return redirect("accounts:verify_registration")
         request.session["pending_registration_email"] = user.email
-        messages.success(request, "A fresh OTP has been sent to your email.")
+        if email_backend_uses_inbox_delivery():
+            messages.success(request, "A fresh OTP has been sent to your email.")
+        else:
+            messages.warning(request, f"A fresh OTP was generated for this environment: {otp.code}")
         return redirect("accounts:verify_registration")
 
 
@@ -949,7 +1073,20 @@ class CustomerDashboardView(LoginRequiredMixin, CustomerRequiredMixin, TemplateV
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        today = timezone.localdate()
         orders = self.request.user.orders.all()
+        delivered_orders = list(
+            orders.filter(status=OrderStatus.DELIVERED)
+            .prefetch_related("items")
+            .order_by("-updated_at")
+        )
+        volume_ytd_units = 0
+        for order in delivered_orders:
+            delivered_day = timezone.localtime(order.delivered_at).date() if order.delivered_at else None
+            if delivered_day and delivered_day.year == today.year:
+                volume_ytd_units += sum(item.quantity for item in order.items.all())
+
+        loyalty_summary = get_customer_loyalty_summary(self.request.user)
         context["stats"] = {
             "total_orders": orders.count(),
             "active_orders": orders.filter(
@@ -971,7 +1108,7 @@ class CustomerDashboardView(LoginRequiredMixin, CustomerRequiredMixin, TemplateV
         context["recent_orders"] = orders[:5]
         context["notifications"] = self.request.user.notifications.all()[:8]
         context["payment_history"] = [order.payment for order in orders.select_related("payment") if hasattr(order, "payment")]
-        context["loyalty_summary"] = get_customer_loyalty_summary(self.request.user)
+        context["loyalty_summary"] = loyalty_summary
         context["saved_addresses"] = self.request.user.saved_addresses.all()[:3]
         context["unread_notifications_count"] = self.request.user.notifications.filter(is_read=False).count()
         context["pending_feedback_orders"] = orders.filter(status=OrderStatus.DELIVERED, feedback__isnull=True)[:5]
@@ -988,6 +1125,10 @@ class CustomerDashboardView(LoginRequiredMixin, CustomerRequiredMixin, TemplateV
             ]
         ).order_by("-updated_at").first()
         context["quick_reorders"] = orders.filter(status=OrderStatus.DELIVERED).prefetch_related("items")[:3]
+        context["volume_ytd_units"] = volume_ytd_units
+        context["customer_tier_label"] = (
+            "Premium Partner" if any(item.get("eligible") for item in loyalty_summary) else "Standard Partner"
+        )
         return context
 
 
@@ -1102,10 +1243,14 @@ class AgentManagerDashboardView(AgentManagerRequiredMixin, TemplateView):
         context = super().get_context_data(**kwargs)
         agent = self.get_agent()
         ensure_agent_stock_rows(agent)
+        pending_requests = list(agent.order_requests.select_related("order__customer").filter(status="pending"))
+        for pending_request in pending_requests:
+            expire_order_request_if_needed(pending_request.order)
         pending_requests = agent.order_requests.select_related("order__customer").filter(status="pending")
         context["agent"] = agent
         context["agent_online"] = agent.is_online
         context["pending_requests"] = pending_requests
+        context["pending_orders_json_url"] = reverse("accounts:pending_orders_json")
         context["accepted_orders"] = agent.accepted_orders.filter(
             status__in=[
                 OrderStatus.PAID,
@@ -1135,12 +1280,26 @@ class AgentManagerDashboardView(AgentManagerRequiredMixin, TemplateView):
             status=RefundRequestStatus.PENDING,
         ).count()
         context["open_batch_balance"] = get_agent_open_batch_balance(agent)
+        today = timezone.localdate()
+        context["dashboard_metrics"] = {
+            "deliveries_today": agent.accepted_orders.filter(status=OrderStatus.DELIVERED, delivered_at__date=today).count(),
+            "active_drivers": context["drivers"].filter(is_active=True, user__is_active=True).count(),
+            "stock_alerts": context["low_stock_items"].count(),
+        }
+        context["warehouse_preview"] = list(agent.stocks.select_related("product").order_by("available_quantity", "product__name")[:3])
+        context["fleet_payload"] = build_agent_fleet_payload(agent)
+        context["fleet_summary"] = context["fleet_payload"]["summary"]
+        context["fleet_json_url"] = reverse("accounts:agent_fleet_json")
+        context["top_drivers"] = build_driver_spotlight_rows(list(context["drivers"]))
         return context
 
 
 class PendingOrdersJsonView(AgentManagerRequiredMixin, View):
     def get(self, request):
         agent = get_object_or_404(Agent, admin=request.user)
+        pending_requests = list(agent.order_requests.select_related("order__customer").filter(status="pending"))
+        for request_item in pending_requests:
+            expire_order_request_if_needed(request_item.order)
         pending_requests = agent.order_requests.select_related("order__customer").filter(status="pending")
         payload = [
             {
@@ -1150,6 +1309,8 @@ class PendingOrdersJsonView(AgentManagerRequiredMixin, View):
                 "total": float(request_item.order.total),
                 "deadline": request_item.order.agent_response_deadline.isoformat() if request_item.order.agent_response_deadline else "",
                 "address": request_item.order.delivery_address,
+                "accept_url": reverse("accounts:accept_request", kwargs={"pk": request_item.pk}),
+                "reject_url": reverse("accounts:reject_request", kwargs={"pk": request_item.pk}),
             }
             for request_item in pending_requests
         ]
@@ -1215,9 +1376,9 @@ class CreateRestockRequestView(AgentManagerRequiredMixin, View):
             restock_request.agent = agent
             restock_request.requested_by = request.user
             restock_request.save()
-            if agent.company.admin:
+            for admin_user in get_company_admin_users(agent.company):
                 notify_user(
-                    agent.company.admin,
+                    admin_user,
                     "Restock request submitted",
                     f"{agent.name} requested more stock for {restock_request.product.name}.",
                     link=reverse("accounts:company_dashboard"),
@@ -1456,14 +1617,17 @@ class AgentInventoryView(AgentManagerRequiredMixin, TemplateView):
         agent = get_managed_agent_or_404(self.request.user)
         ensure_agent_stock_rows(agent)
         stocks = agent.stocks.select_related("product").order_by("product__name")
+        batch_request_form = AgentBatchSaleRequestForm(agent=agent)
         context["agent"] = agent
         context["stocks"] = stocks
         context["adjustment_form"] = AgentInventoryAdjustmentForm(
             products=Product.objects.filter(company=agent.company, is_active=True)
         )
-        context["batch_request_form"] = AgentBatchSaleRequestForm(agent=agent)
+        context["batch_request_form"] = batch_request_form
         context["batch_payment_form"] = AgentBatchSalePaymentForm()
         context["restock_form"] = RestockRequestForm(products=Product.objects.filter(company=agent.company))
+        context["company_products"] = Product.objects.filter(company=agent.company, is_active=True).order_by("name")
+        context["available_company_batches"] = list(batch_request_form.fields["batch"].queryset)
         context["inventory_batches"] = agent.inventory_batches.select_related("product")[:12]
         context["restock_requests"] = agent.restock_requests.select_related("product", "requested_by", "approved_by")[:12]
         context["batch_sales"] = agent.batch_sales.select_related("batch__product", "approved_by").prefetch_related("payments")[:25]
@@ -1811,10 +1975,18 @@ class DriverPickedUpView(DriverRequiredMixin, View):
 class DriverArrivedView(DriverRequiredMixin, View):
     def post(self, request, order_number):
         order = get_object_or_404(Order, order_number=order_number)
+        is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
         try:
             mark_order_arrived(order, request.user)
+            if is_ajax:
+                return JsonResponse({"ok": True, "status": order.status, "label": order.get_status_display()})
             messages.success(request, f"Marked {order.order_number} as arrived.")
         except ValidationError as exc:
+            if is_ajax:
+                return JsonResponse(
+                    {"ok": False, "message": exc.messages[0] if exc.messages else "Unable to mark the order as arrived."},
+                    status=400,
+                )
             messages.error(request, exc.messages[0] if exc.messages else "Unable to mark the order as arrived.")
         return redirect("accounts:driver_dashboard")
 
@@ -1900,6 +2072,7 @@ class CompanyAdminDashboardView(CompanyAdminRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         company = self.get_company()
+        context["managed_companies"] = list(get_managed_company_queryset(self.request.user))
         agents = list(company.agents.select_related("admin"))
         drivers = list(
             Driver.objects.filter(agent__company=company).select_related("user", "agent", "user__driver_location")
@@ -1930,6 +2103,33 @@ class CompanyAdminDashboardView(CompanyAdminRequiredMixin, TemplateView):
         context["company_map_payload"] = build_company_map_payload(company, agents, drivers)
         context["company_locations_url"] = reverse("accounts:company_locations_json")
         context["notifications"] = self.request.user.notifications.all()[:8]
+        top_product = build_company_product_rows(company)[:1]
+        agent_rows = build_company_agent_rows(company)
+        delivered_orders = company.orders.filter(status=OrderStatus.DELIVERED)
+        revenue_total = delivered_orders.aggregate(total=Sum("total")).get("total") or Decimal("0.00")
+        context["company_metrics"] = {
+            "orders": company.orders.count(),
+            "revenue": revenue_total,
+            "revenue_display": format_money(revenue_total),
+            "top_product_name": top_product[0]["name"] if top_product else "No product data",
+            "top_agent_name": agent_rows[0]["name"] if agent_rows else "No agent data",
+            "agent_count": len(agents),
+        }
+        context["weekly_revenue_bars"] = build_weekly_revenue_bars(company)
+        context["top_agent_rows"] = agent_rows[:5]
+        context["live_fleet_summary"] = {
+            "drivers_total": len(drivers),
+            "drivers_online": sum(1 for driver in drivers if driver.is_online),
+            "deliveries_active": company.orders.filter(
+                status__in=[
+                    OrderStatus.DRIVER_ASSIGNED,
+                    OrderStatus.DRIVER_ACCEPTED,
+                    OrderStatus.PICKED_UP,
+                    OrderStatus.OUT_FOR_DELIVERY,
+                    OrderStatus.ARRIVED,
+                ]
+            ).count(),
+        }
         return context
 
 
@@ -1952,6 +2152,10 @@ class CompanyProductListView(CompanyAdminRequiredMixin, TemplateView):
         context["company"] = company
         context["products"] = build_company_product_rows(company)
         context["product_form"] = kwargs.get("product_form") or CompanyProductForm(company=company)
+        context["available_batch_count"] = company.production_batches.filter(
+            status=CompanyBatchStatus.AVAILABLE,
+            unsold_cases_remaining__gt=0,
+        ).count()
         return context
 
 
@@ -1968,6 +2172,23 @@ class CompanyProductCreateView(CompanyAdminRequiredMixin, View):
         else:
             messages.error(request, "Unable to add that product. Please review the entered details.")
         return redirect("accounts:company_products")
+
+
+class CompanyProductStarterSeedView(CompanyAdminRequiredMixin, View):
+    def post(self, request):
+        company = get_managed_company_or_404(request.user)
+        created_products, created_batches = create_company_starter_catalog(company=company, created_by=request.user)
+        if created_products or created_batches:
+            messages.success(
+                request,
+                f"Starter catalog ready: {len(created_products)} products and {len(created_batches)} sellable batches were added.",
+            )
+        else:
+            messages.info(
+                request,
+                "Starter products already exist for this company. You can edit them or create more production batches from inventory.",
+            )
+        return redirect(request.POST.get("next") or "accounts:company_products")
 
 
 class CompanyProductUpdateView(CompanyAdminRequiredMixin, UpdateView):
@@ -2096,6 +2317,7 @@ class CompanyInventoryView(CompanyAdminRequiredMixin, TemplateView):
         context["stock_rows"] = stock_rows
         context["inventory_summary"] = summary
         context["batch_form"] = kwargs.get("batch_form") or CompanyBatchForm(company=company)
+        context["products"] = company.products.filter(is_active=True).order_by("name")
         context["company_batches"] = build_company_batch_rows(company)
         context["pending_batch_sales"] = AgentBatchSale.objects.filter(
             agent__company=company,
@@ -2105,6 +2327,11 @@ class CompanyInventoryView(CompanyAdminRequiredMixin, TemplateView):
             sale__agent__company=company,
             status=AgentBatchSalePaymentStatus.PENDING,
         ).select_related("sale__agent", "sale__batch", "submitted_by")
+        context["has_active_products"] = company.products.filter(is_active=True).exists()
+        context["has_available_batches"] = company.production_batches.filter(
+            status=CompanyBatchStatus.AVAILABLE,
+            unsold_cases_remaining__gt=0,
+        ).exists()
         return context
 
 
@@ -2544,12 +2771,13 @@ class SystemDashboardView(SystemAdminRequiredMixin, TemplateView):
         }
         context["recent_orders"] = Order.objects.select_related("company", "customer", "selected_agent")[:15]
         context["companies"] = Company.objects.select_related("admin")
-        context["company_form"] = CompanyForm()
+        context["company_form"] = SystemCompanyRegistrationForm()
         context["company_admin_form"] = InternalUserCreationForm(allowed_roles=(UserRole.COMPANY_ADMIN,))
         context["system_admin_form"] = InternalUserCreationForm(allowed_roles=(UserRole.SYSTEM_ADMIN,))
         context["recent_audit_logs"] = AuditLog.objects.select_related("actor")[:10]
         context["recent_announcements"] = Announcement.objects.select_related("created_by")[:5]
         context["notifications"] = self.request.user.notifications.all()[:8]
+        context["featured_companies"] = context["companies"][:6]
         return context
 
 
@@ -2566,7 +2794,7 @@ class SystemCompanyListView(SystemAdminRequiredMixin, TemplateView):
         if search:
             companies = companies.filter(Q(name__icontains=search) | Q(location__icontains=search))
         context["companies"] = companies
-        context["company_form"] = kwargs.get("company_form") or CompanyForm()
+        context["company_form"] = kwargs.get("company_form") or SystemCompanyRegistrationForm()
         context["status_filter"] = status_filter
         context["search"] = search
         return context
@@ -2823,6 +3051,15 @@ class CreateCompanyAdminView(SystemAdminRequiredMixin, View):
         form = InternalUserCreationForm(request.POST, allowed_roles=(self.role,))
         if form.is_valid():
             user = form.save()
+            company_id = request.POST.get("company_id")
+            if company_id:
+                company = Company.objects.filter(pk=company_id).first()
+                if company is not None:
+                    user.managed_company = company
+                    user.save(update_fields=["managed_company", "updated_at"])
+                    if company.admin_id is None:
+                        company.admin = user
+                        company.save(update_fields=["admin", "updated_at"])
             record_audit_log(
                 request=request,
                 actor=request.user,
@@ -2860,13 +3097,16 @@ class CreateSystemAdminView(SystemAdminRequiredMixin, View):
 
 class CreateCompanyView(SystemAdminRequiredMixin, View):
     def post(self, request):
-        form = CompanyForm(request.POST, request.FILES)
+        form = SystemCompanyRegistrationForm(request.POST, request.FILES)
         if form.is_valid():
             company = form.save(commit=False)
             company.verification_status = CompanyVerificationStatus.PENDING_EFDA
             company.submitted_to_efda_at = timezone.now()
             company.is_verified = False
             company.save()
+            if company.admin and company.admin.managed_company_id != company.pk:
+                company.admin.managed_company = company
+                company.admin.save(update_fields=["managed_company", "updated_at"])
             record_audit_log(
                 request=request,
                 actor=request.user,
@@ -2876,14 +3116,16 @@ class CreateCompanyView(SystemAdminRequiredMixin, View):
                 entity_label=company.name,
                 new_values=serialize_company_for_audit(company),
             )
-            if company.admin:
+            for admin_user in get_company_admin_users(company):
                 notify_user(
-                    company.admin,
+                    admin_user,
                     "Company registration submitted",
-                    f"{company.name} has been submitted for EFDA review.",
-                    link=reverse("accounts:company_dashboard"),
+                    f"{company.name} has been submitted for EFDA review. Your company admin account will activate after approval.",
                 )
-            messages.success(request, f"{company.name} was created and sent to EFDA review.")
+            messages.success(
+                request,
+                f"{company.name} was created with {company.admin.email} as the pending company admin and sent to EFDA review.",
+            )
         else:
             messages.error(request, "Unable to create the company.")
         return redirect(request.POST.get("next") or "accounts:system_dashboard")
@@ -2902,9 +3144,11 @@ class CompanyVerificationDecisionView(SystemAdminRequiredMixin, View):
             company.is_active = False
             company.verification_note = note or "Suspended by system admin."
             company.save()
-            if company.admin:
+            for admin_user in get_company_admin_users(company):
+                admin_user.is_active = False
+                admin_user.save(update_fields=["is_active", "updated_at"])
                 notify_user(
-                    company.admin,
+                    admin_user,
                     "Company suspended",
                     f"{company.name} has been suspended on the platform.",
                     link=reverse("accounts:company_dashboard"),
@@ -2926,9 +3170,11 @@ class CompanyVerificationDecisionView(SystemAdminRequiredMixin, View):
             company.is_active = True
             company.verification_note = note or company.verification_note
             company.save()
-            if company.admin:
+            for admin_user in get_company_admin_users(company):
+                admin_user.is_active = True
+                admin_user.save(update_fields=["is_active", "updated_at"])
                 notify_user(
-                    company.admin,
+                    admin_user,
                     "Company reactivated",
                     f"{company.name} has been reactivated on the platform.",
                     link=reverse("accounts:company_dashboard"),
@@ -2953,9 +3199,9 @@ class CompanyVerificationDecisionView(SystemAdminRequiredMixin, View):
             company.efda_reference = ""
             company.verification_note = note
             company.save()
-            if company.admin:
+            for admin_user in get_company_admin_users(company):
                 notify_user(
-                    company.admin,
+                    admin_user,
                     "Company resubmitted to EFDA",
                     f"{company.name} has been resubmitted for EFDA verification.",
                     link=reverse("accounts:company_dashboard"),
@@ -2981,13 +3227,18 @@ class CompanyVerificationDecisionView(SystemAdminRequiredMixin, View):
             company.is_active = True
             company.is_verified = True
             company.save()
-            if company.admin:
+            for admin_user in get_company_admin_users(company):
+                admin_user.is_active = True
+                if admin_user.email_verified_at is None:
+                    admin_user.email_verified_at = timezone.now()
+                admin_user.save(update_fields=["is_active", "email_verified_at", "updated_at"])
                 notify_user(
-                    company.admin,
+                    admin_user,
                     "Company verified",
                     f"{company.name} passed EFDA verification and is now live on the platform.",
                     link=reverse("accounts:company_dashboard"),
                 )
+            send_company_admin_activation_email(company)
             record_audit_log(
                 request=request,
                 actor=request.user,
@@ -3005,9 +3256,11 @@ class CompanyVerificationDecisionView(SystemAdminRequiredMixin, View):
             company.verification_note = note or "Rejected during EFDA review."
             company.is_verified = False
             company.save()
-            if company.admin:
+            for admin_user in get_company_admin_users(company):
+                admin_user.is_active = False
+                admin_user.save(update_fields=["is_active", "updated_at"])
                 notify_user(
-                    company.admin,
+                    admin_user,
                     "Company verification rejected",
                     f"{company.name} needs updates before EFDA approval.",
                     link=reverse("accounts:company_dashboard"),

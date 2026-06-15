@@ -16,7 +16,18 @@ class HomeLandingView(ListView):
     paginate_by = 6
 
     def get_queryset(self):
-        queryset = Company.objects.filter(is_verified=True, is_active=True).order_by("name")
+        queryset = (
+            Company.objects.filter(
+                is_verified=True,
+                is_active=True,
+                products__is_active=True,
+                products__available_quantity__gt=0,
+                agents__is_active=True,
+                agents__is_accepting_orders=True,
+            )
+            .distinct()
+            .order_by("name")
+        )
         self.filter_form = CompanyFilterForm(self.request.GET or None)
         if self.filter_form.is_valid():
             search = self.filter_form.cleaned_data.get("search")

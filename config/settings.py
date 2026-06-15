@@ -111,17 +111,26 @@ LOGIN_URL = 'accounts:login'
 LOGIN_REDIRECT_URL = 'accounts:dashboard'
 LOGOUT_REDIRECT_URL = 'accounts:login'
 
+EMAIL_HOST = os.getenv("EMAIL_HOST", "")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() in {"1", "true", "yes", "on"}
+EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "false").lower() in {"1", "true", "yes", "on"}
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "20"))
 EMAIL_BACKEND = os.getenv(
-    'EMAIL_BACKEND',
-    'django.core.mail.backends.console.EmailBackend',
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.smtp.EmailBackend" if EMAIL_HOST else "django.core.mail.backends.console.EmailBackend",
 )
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'noreply@water.local')
 
 DEFAULT_DELIVERY_FEE = Decimal('5.00')
 REGISTRATION_OTP_EXPIRY_MINUTES = int(os.getenv("REGISTRATION_OTP_EXPIRY_MINUTES", "10"))
+REGISTRATION_OTP_RESEND_SECONDS = int(os.getenv("REGISTRATION_OTP_RESEND_SECONDS", "60"))
 ORDER_CANCELLATION_WINDOW_MINUTES = int(os.getenv("ORDER_CANCELLATION_WINDOW_MINUTES", "30"))
 ORDER_CANCELLATION_FEE_PERCENT = Decimal(os.getenv("ORDER_CANCELLATION_FEE_PERCENT", "10.00"))
 ORDER_REFUND_REQUEST_WINDOW_DAYS = int(os.getenv("ORDER_REFUND_REQUEST_WINDOW_DAYS", "7"))
+AGENT_REQUEST_RESPONSE_MINUTES = int(os.getenv("AGENT_REQUEST_RESPONSE_MINUTES", "2"))
 CHAPA_PUBLIC_KEY = os.getenv("CHAPA_PUBLIC_KEY", "")
 CHAPA_SECRET_KEY = os.getenv("CHAPA_SECRET_KEY", "")
 CHAPA_BASE_URL = os.getenv("CHAPA_BASE_URL", "https://api.chapa.co/v1")

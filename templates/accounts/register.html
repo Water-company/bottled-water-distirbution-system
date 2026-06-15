@@ -1,34 +1,238 @@
 {% extends "base.html" %}
 {% block title %}Create Account{% endblock %}
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-lg-8">
-        <div class="hero-card p-4 p-lg-5">
-            <div class="row g-4 align-items-center">
-                <div class="col-lg-5">
-                    <span class="eyebrow">Customer Portal</span>
-                    <h1 class="display-6 fw-semibold mt-2">Register and start ordering bottled water online.</h1>
-                    <p class="text-secondary mb-0">Create your account, receive an OTP by email, verify your registration, and manage every order from one clean dashboard.</p>
-                </div>
-                <div class="col-lg-7">
-                    <form method="post" novalidate>
-                        {% csrf_token %}
-                        <div class="row g-3">
-                            {% for field in form %}
-                                <div class="{% if field.name in 'first_name,last_name' %}col-md-6{% else %}col-12{% endif %}">
-                                    <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
-                                    {{ field }}
-                                    {% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
-                                </div>
-                            {% endfor %}
-                        </div>
-                        {% for error in form.non_field_errors %}<div class="text-danger small mt-3">{{ error }}</div>{% endfor %}
-                        <button type="submit" class="btn btn-primary btn-lg mt-4 w-100">Create account and send OTP</button>
-                    </form>
-                    <p class="text-secondary small mt-3 mb-0">Already registered? <a href="{% url 'accounts:login' %}">Sign in here</a>.</p>
-                </div>
-            </div>
-        </div>
+<!-- Stitch Design Styling Applied -->
+<div class="flex flex-col items-center justify-center p-4 md:p-8 min-h-screen bg-slate-100">
+  <!-- BEGIN: SiteHeader -->
+  <header class="w-full max-w-6xl mb-8 flex justify-between items-center px-4">
+    <div class="flex items-center space-x-2">
+      <svg class="w-8 h-8 text-[#003d99]" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+      </svg>
     </div>
+    <div class="flex items-center space-x-4">
+      <a class="text-slate-600 font-medium hover:text-[#003d99]" href="{% url 'accounts:login' %}">Login</a>
+      <a class="bg-[#003d99] text-white px-5 py-2 rounded-lg font-medium hover:bg-blue-800 transition shadow-sm" href="#">Sign Up</a>
+    </div>
+  </header>
+  <!-- END: SiteHeader -->
+
+  <!-- BEGIN: RegistrationCard -->
+  <main class="w-full max-w-5xl main-card flex flex-col md:flex-row bg-white min-h-[650px] rounded-2xl shadow-xl overflow-hidden">
+    <!-- BEGIN: LeftBrandPanel -->
+    <section class="left-panel w-full md:w-[42%] p-10 md:p-12 flex flex-col justify-between text-white" style="background: linear-gradient(135deg, #003d99 0%, #001a4d 100%); position: relative;">
+      <div class="z-10">
+        <!-- Logo and App Name -->
+        <div class="flex items-center space-x-3 mb-16">
+          <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+          </svg>
+          <span class="font-semibold text-lg tracking-wide uppercase">AquaFlow Pro</span>
+        </div>
+        <!-- Tagline -->
+        <h1 class="text-3xl md:text-4xl font-bold leading-tight mb-6">
+          Register Here.
+        </h1>
+        <p class="text-blue-100 text-lg leading-relaxed opacity-90">
+          Create your account, receive an OTP by email, verify your registration, and manage every order from one clean dashboard.
+        </p>
+      </div>
+      <!-- Trust Badge / Footer of Left Panel -->
+      <div class="z-10 bg-white/10 backdrop-blur-sm border border-white/20 p-4 rounded-xl flex items-center space-x-4 mt-8">
+        <div class="bg-green-500/20 p-2 rounded-full">
+          <svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+          </svg>
+        </div>
+        <div>
+          <p class="text-sm font-semibold">Certified System</p>
+          <p class="text-xs text-blue-200">Join us</p>
+        </div>
+      </div>
+    </section>
+    <!-- END: LeftBrandPanel -->
+
+    <!-- BEGIN: FormPanel -->
+    <section class="w-full md:w-[58%] p-8 md:p-14" data-purpose="registration-form">
+      <div class="mb-10">
+        <h2 class="text-3xl font-bold text-slate-800 mb-2">Create Your Account</h2>
+      </div>
+
+      <form method="post" class="space-y-6">
+        {% csrf_token %}
+        
+        <!-- Dynamic Form Fields with Stitch Styling -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {% for field in form %}
+            {% if field.name == 'first_name' %}
+              <div class="space-y-2">
+                <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider" for="{{ field.id_for_label }}">
+                  {{ field.label }}
+                </label>
+                <div class="relative">
+                  <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+                    <i class="far fa-user"></i>
+                  </span>
+                  {{ field }}
+                </div>
+                {% for error in field.errors %}
+                  <div class="text-red-500 text-xs mt-1">{{ error }}</div>
+                {% endfor %}
+              </div>
+            {% elif field.name == 'last_name' %}
+              <div class="space-y-2">
+                <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider" for="{{ field.id_for_label }}">
+                  {{ field.label }}
+                </label>
+                <div class="relative">
+                  <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+                    <i class="far fa-user"></i>
+                  </span>
+                  {{ field }}
+                </div>
+                {% for error in field.errors %}
+                  <div class="text-red-500 text-xs mt-1">{{ error }}</div>
+                {% endfor %}
+              </div>
+            {% elif field.name == 'email' %}
+              </div><div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div class="space-y-2 md:col-span-2">
+                <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider" for="{{ field.id_for_label }}">
+                  {{ field.label }}
+                </label>
+                <div class="relative">
+                  <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+                    <i class="far fa-envelope"></i>
+                  </span>
+                  {{ field }}
+                </div>
+                {% for error in field.errors %}
+                  <div class="text-red-500 text-xs mt-1">{{ error }}</div>
+                {% endfor %}
+              </div>
+            {% elif field.name == 'password1' %}
+              <div class="space-y-2">
+                <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider" for="{{ field.id_for_label }}">
+                  {{ field.label }}
+                </label>
+                <div class="relative">
+                  <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+                    <i class="fas fa-lock"></i>
+                  </span>
+                  {{ field }}
+                </div>
+                {% for error in field.errors %}
+                  <div class="text-red-500 text-xs mt-1">{{ error }}</div>
+                {% endfor %}
+                {% if field.help_text %}
+                  <p class="text-[10px] text-slate-400">{{ field.help_text }}</p>
+                {% endif %}
+              </div>
+            {% elif field.name == 'password2' %}
+              <div class="space-y-2">
+                <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider" for="{{ field.id_for_label }}">
+                  {{ field.label }}
+                </label>
+                <div class="relative">
+                  <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+                    <i class="fas fa-lock"></i>
+                  </span>
+                  {{ field }}
+                </div>
+                {% for error in field.errors %}
+                  <div class="text-red-500 text-xs mt-1">{{ error }}</div>
+                {% endfor %}
+              </div>
+            {% else %}
+              <div class="space-y-2">
+                <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider" for="{{ field.id_for_label }}">
+                  {{ field.label }}
+                </label>
+                <div class="relative">
+                  {{ field }}
+                </div>
+                {% for error in field.errors %}
+                  <div class="text-red-500 text-xs mt-1">{{ error }}</div>
+                {% endfor %}
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+
+        <!-- Non-field errors -->
+        {% for error in form.non_field_errors %}
+          <div class="text-red-500 text-xs text-center">{{ error }}</div>
+        {% endfor %}
+
+        <!-- Submit Button -->
+        <button type="submit" class="w-full flex items-center justify-center space-x-2 bg-[#003d99] text-white py-4 px-4 rounded-lg font-bold text-lg hover:bg-blue-800 transition duration-200 shadow-md transform hover:-translate-y-0.5">
+          <span>Create account and send OTP</span>
+          <i class="fas fa-arrow-right ml-2 text-sm opacity-80"></i>
+        </button>
+
+        <div class="text-center pt-2">
+          <p class="text-slate-500 text-sm">
+            Already have an account? <a class="text-[#003d99] font-bold hover:underline" href="{% url 'accounts:login' %}">Log In</a>
+          </p>
+        </div>
+      </form>
+    </section>
+    <!-- END: FormPanel -->
+  </main>
+  <!-- END: RegistrationCard -->
+
+  <!-- BEGIN: SiteFooter -->
+  <footer class="w-full max-w-6xl mt-auto pt-12 pb-8 flex flex-col md:flex-row justify-between items-center text-slate-400 text-sm border-t border-slate-200 mt-12">
+    <div class="mb-4 md:mb-0">
+      <p class="font-semibold text-slate-600 mb-1">AquaFlow</p>
+      <p>© 2024 AquaFlow Logistics. All rights reserved.</p>
+    </div>
+    <div class="flex space-x-3">
+      <a class="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center text-slate-500 hover:bg-[#003d99] hover:text-white transition" href="#">
+        <i class="fas fa-globe"></i>
+      </a>
+      <a class="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center text-slate-500 hover:bg-[#003d99] hover:text-white transition" href="#">
+        <i class="far fa-question-circle"></i>
+      </a>
+    </div>
+  </footer>
+  <!-- END: SiteFooter -->
 </div>
+
+<!-- Font Awesome for icons -->
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet"/>
+
+<style>
+  /* Input field styling to match Stitch design */
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="tel"],
+  select {
+    width: 100% !important;
+    padding: 0.75rem 2.5rem 0.75rem 2.5rem !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 0.5rem !important;
+    background-color: #f8fafc !important;
+    font-size: 1rem !important;
+    outline: none !important;
+    transition: all 0.2s ease !important;
+  }
+
+  input:focus,
+  select:focus {
+    border-color: #003d99 !important;
+    ring: 2px solid #003d99 !important;
+  }
+
+  /* Checkbox styling */
+  input[type="checkbox"] {
+    width: 1rem !important;
+    height: 1rem !important;
+    border-radius: 0.25rem !important;
+    border: 1px solid #cbd5e1 !important;
+  }
+</style>
+
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 {% endblock %}

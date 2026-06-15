@@ -3,6 +3,7 @@ import secrets
 import string
 import json
 from io import BytesIO
+from decimal import Decimal
 
 import qrcode
 from django.conf import settings
@@ -148,6 +149,7 @@ class Order(TimeStampedModel):
         if not is_new and self.pk:
             previous_status = Order.objects.filter(pk=self.pk).values_list("status", flat=True).first()
 
+        self.full_clean()
         super().save(*args, **kwargs)
 
         if is_new or previous_status != self.status:
@@ -172,7 +174,7 @@ class Order(TimeStampedModel):
 
     @property
     def can_cancel(self):
-        if self.status == OrderStatus.PAYMENT_PENDING:
+        if self.status in {OrderStatus.REQUESTED, OrderStatus.PAYMENT_PENDING}:
             return True
         if self.status in {OrderStatus.PAID, OrderStatus.DRIVER_ASSIGNED, OrderStatus.DRIVER_ACCEPTED}:
             return self.cancellation_window_open
@@ -202,6 +204,18 @@ class Order(TimeStampedModel):
     @property
     def can_leave_feedback(self):
         return self.status == OrderStatus.DELIVERED and not hasattr(self, "feedback")
+
+    def clean(self):
+        if self.latitude is not None and not Decimal("-90") <= Decimal(self.latitude) <= Decimal("90"):
+            raise ValidationError({"latitude": "Latitude must be between -90 and 90."})
+        if self.longitude is not None and not Decimal("-180") <= Decimal(self.longitude) <= Decimal("180"):
+            raise ValidationError({"longitude": "Longitude must be between -180 and 180."})
+        if self.subtotal is not None and self.subtotal < 0:
+            raise ValidationError({"subtotal": "Subtotal cannot be negative."})
+        if self.delivery_fee is not None and self.delivery_fee < 0:
+            raise ValidationError({"delivery_fee": "Delivery fee cannot be negative."})
+        if self.total is not None and self.total < 0:
+            raise ValidationError({"total": "Total cannot be negative."})
 
 
 class OrderItem(TimeStampedModel):

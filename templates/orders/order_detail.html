@@ -17,12 +17,27 @@
             </div>
 
             {% if order.status == "requested" %}
-                <div class="alert alert-info">Your request has been sent to {{ order.agent_requests.count }} nearby agent{{ order.agent_requests.count|pluralize }} from {{ order.company.name }}.</div>
+                <div class="alert alert-info" id="order-request-status-alert">
+                    <div class="fw-semibold mb-1">Please wait while the agent confirms your order.</div>
+                    <div>Your request was sent to {{ order.selected_agent.name }} from {{ order.company.name }}. Payment will open automatically after acceptance.</div>
+                    {% if order.agent_response_deadline %}
+                        <div class="small mt-2 text-secondary">Response window ends at {{ order.agent_response_deadline|date:"M d, Y H:i" }}.</div>
+                    {% endif %}
+                </div>
             {% elif order.status == "rejected" %}
-                <div class="alert alert-danger">This request was rejected. {{ order.rejection_reason|default:"No reason was provided." }}</div>
+                <div class="alert alert-danger d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+                    <div>
+                        <div class="fw-semibold mb-1">This request was rejected.</div>
+                        <div>{{ order.rejection_reason|default:"No reason was provided." }}</div>
+                    </div>
+                    <form method="post" action="{% url 'orders:retry_checkout' order.order_number %}">
+                        {% csrf_token %}
+                        <button class="btn btn-outline-danger">Choose Another Agent</button>
+                    </form>
+                </div>
             {% elif can_pay %}
                 <div class="alert alert-success d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
-                    <span>{{ order.selected_agent.name }} accepted your request. You can now continue to payment.</span>
+                    <span>{{ order.selected_agent.name }} accepted your request. Redirecting to payment now, or continue manually below.</span>
                     <a href="{% url 'orders:payment' order.order_number %}" class="btn btn-primary">Continue to Payment</a>
                 </div>
             {% elif order.status == "cancelled" %}
@@ -241,4 +256,78 @@
         {% endif %}
     </div>
 </div>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+    (function () {
+        const pollUrl = "{{ order_status_poll_url }}";
+        const currentStatus = "{{ order.status }}";
+        const alertBox = document.getElementById("order-request-status-alert");
+        if (currentStatus === "payment_pending") {
+            window.setTimeout(() => {
+                window.location.href = "{% url 'orders:payment' order.order_number %}?auto=1";
+            }, 900);
+            return;
+        }
+        if (!pollUrl || currentStatus !== "requested") {
+            return;
+        }
+
+        let latestDeadline = "{{ order.agent_response_deadline|date:'c' }}";
+
+        function updateWaitingMessage(payload) {
+            if (!alertBox || !payload) {
+                return;
+            }
+            const deadlineText = payload.agentResponseDeadline
+                ? new Date(payload.agentResponseDeadline).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                : "";
+            alertBox.innerHTML = `
+                <div class="fw-semibold mb-1">Please wait while the agent confirms your order.</div>
+                <div>Your request is with ${payload.selectedAgentName || "the selected branch"}. Payment will open automatically after acceptance.</div>
+                ${deadlineText ? `<div class="small mt-2 text-secondary">Response window ends at ${deadlineText}.</div>` : ""}
+            `;
+        }
+
+        async function pollOrderStatus() {
+            try {
+                const response = await fetch(pollUrl, {
+                    headers: { "X-Requested-With": "XMLHttpRequest" },
+                });
+                if (!response.ok) {
+                    return;
+                }
+                const payload = await response.json();
+                latestDeadline = payload.agentResponseDeadline || latestDeadline;
+                if (payload.statusCode === "payment_pending" && payload.paymentUrl) {
+                    window.location.href = `${payload.paymentUrl}?auto=1`;
+                    return;
+                }
+                if (payload.statusCode === "rejected") {
+                    window.location.reload();
+                    return;
+                }
+                updateWaitingMessage(payload);
+            } catch (error) {
+                if (alertBox && latestDeadline) {
+                    const fallbackDeadline = new Date(latestDeadline);
+                    if (!Number.isNaN(fallbackDeadline.getTime())) {
+                        alertBox.querySelector(".small")?.remove();
+                        alertBox.insertAdjacentHTML(
+                            "beforeend",
+                            `<div class="small mt-2 text-secondary">Still waiting for confirmation. Latest response deadline: ${fallbackDeadline.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.</div>`
+                        );
+                    }
+                }
+            }
+        }
+
+        updateWaitingMessage({
+            selectedAgentName: "{{ order.selected_agent.name|default:''|escapejs }}",
+            agentResponseDeadline: latestDeadline,
+        });
+        window.setInterval(pollOrderStatus, 5000);
+        window.setTimeout(pollOrderStatus, 1000);
+    })();
+</script>
 {% endblock %}

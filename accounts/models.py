@@ -3,11 +3,11 @@ from decimal import Decimal
 from django.conf import settings
 from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
-from django.core.validators import RegexValidator
 from django.db import models
 from django.utils import timezone
 
 from core.models import TimeStampedModel
+from accounts.validators import validate_ethiopian_phone_number
 
 
 class UserRole(models.TextChoices):
@@ -54,17 +54,19 @@ class UserManager(BaseUserManager):
 
 
 class User(TimeStampedModel, AbstractBaseUser, PermissionsMixin):
-    phone_validator = RegexValidator(
-        regex=r"^\+?[\d\s-]{9,20}$",
-        message="Enter a valid phone number.",
-    )
-
     first_name = models.CharField(max_length=150)
     last_name = models.CharField(max_length=150)
     email = models.EmailField(unique=True)
-    phone_number = models.CharField(max_length=20, unique=True, validators=[phone_validator])
+    phone_number = models.CharField(max_length=20, unique=True, validators=[validate_ethiopian_phone_number])
     profile_image = models.ImageField(upload_to="profiles/", blank=True, null=True)
     role = models.CharField(max_length=30, choices=UserRole.choices, default=UserRole.CUSTOMER)
+    managed_company = models.ForeignKey(
+        "catalog.Company",
+        on_delete=models.SET_NULL,
+        related_name="company_admin_users",
+        blank=True,
+        null=True,
+    )
     wallet_balance = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
@@ -88,6 +90,8 @@ class User(TimeStampedModel, AbstractBaseUser, PermissionsMixin):
 
     def save(self, *args, **kwargs):
         self.is_customer = self.role == UserRole.CUSTOMER
+        if self.role != UserRole.COMPANY_ADMIN:
+            self.managed_company = None
         if self.role == UserRole.SYSTEM_ADMIN:
             self.is_staff = True
             self.is_superuser = True

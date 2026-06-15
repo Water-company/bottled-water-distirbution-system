@@ -4,23 +4,40 @@
 <section class="hero-card p-4 p-lg-5 mb-4">
     <span class="eyebrow">Company Admin</span>
     <h1 class="display-6 fw-semibold mt-2 mb-2">Aggregated Inventory</h1>
-    <p class="text-secondary mb-0">Create production batches, approve agent stock requests, confirm repayments, and monitor stock visibility across all agent branches.</p>
+    <p class="text-secondary mb-3">Create production batches, approve agent stock requests, confirm repayments, and monitor stock visibility across all agent branches.</p>
+    <div class="d-flex flex-wrap gap-2">
+        <a href="{% url 'accounts:company_products' %}" class="btn btn-outline-primary">Manage Products</a>
+        <form method="post" action="{% url 'accounts:company_product_seed_starter' %}">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{% url 'accounts:company_inventory' %}">
+            <button class="btn btn-primary">Quick-Start Sellable Stock</button>
+        </form>
+    </div>
 </section>
 
 <section class="row g-4 mb-4">
     <div class="col-lg-4">
         <div class="content-card p-4 h-100">
             <h2 class="h4 mb-3">Create Production Batch</h2>
-            <form method="post" action="{% url 'accounts:company_batch_create' %}">
-                {% csrf_token %}
-                {% for field in batch_form %}
-                    <div class="mb-3">
-                        <label class="form-label">{{ field.label }}</label>
-                        {{ field }}
-                    </div>
-                {% endfor %}
-                <button class="btn btn-primary w-100">Create Batch</button>
-            </form>
+            {% if has_active_products %}
+                <form method="post" action="{% url 'accounts:company_batch_create' %}">
+                    {% csrf_token %}
+                    {% for field in batch_form %}
+                        <div class="mb-3">
+                            <label class="form-label">{{ field.label }}</label>
+                            {{ field }}
+                            {% if field.help_text %}<div class="small text-secondary mt-1">{{ field.help_text }}</div>{% endif %}
+                        </div>
+                    {% endfor %}
+                    <button class="btn btn-primary w-100">Create Batch</button>
+                </form>
+            {% else %}
+                <div class="border rounded-3 bg-light p-3">
+                    <div class="fw-semibold mb-2">No active products yet</div>
+                    <p class="small text-secondary mb-3">You need products before you can create production batches for agents to request.</p>
+                    <a href="{% url 'accounts:company_products' %}" class="btn btn-outline-primary w-100">Add Products First</a>
+                </div>
+            {% endif %}
         </div>
     </div>
     <div class="col-lg-8">
@@ -59,7 +76,7 @@
                     </table>
                 </div>
             {% else %}
-                <p class="text-secondary mb-0">No production batches have been created yet.</p>
+                <p class="text-secondary mb-0">No production batches have been created yet. Use the form on the left or the quick-start button above to make stock requestable by agent branches.</p>
             {% endif %}
         </div>
     </div>

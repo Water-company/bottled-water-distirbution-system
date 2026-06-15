@@ -1,245 +1,311 @@
 {% extends "base.html" %}
 {% block title %}Customer Dashboard{% endblock %}
-{% block content %}
-<section class="hero-card p-4 p-lg-5 mb-4">
-    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
-        <div>
-            <span class="eyebrow">Dashboard</span>
-            <h1 class="display-6 fw-semibold mt-2 mb-2">Hello, {{ request.user.first_name }}.</h1>
-            <p class="text-secondary mb-0">Track orders, manage your profile, and place your next bottled water delivery in minutes.</p>
+{% block body_class %}dashboard-body customer-dashboard-body{% endblock %}
+{% block navigation %}{% endblock %}
+{% block page_body %}
+<div class="dashboard-shell">
+    <aside class="dashboard-sidebar">
+        <div class="dashboard-sidebar__brand">
+            <div class="h4 fw-bold mb-0">AquaFlow Pro</div>
+            <span class="dashboard-sidebar__eyebrow">Customer Portal</span>
         </div>
-        <div class="d-flex flex-wrap gap-2">
-            <a class="btn btn-primary" href="{% url 'companies:list' %}">Browse Companies</a>
-            <a class="btn btn-outline-primary" href="{% url 'products:list' %}">Browse Products</a>
-            <a class="btn btn-outline-dark" href="{% url 'orders:list' %}">View Orders</a>
-            <a class="btn btn-outline-dark" href="{% url 'accounts:addresses' %}">Saved Addresses</a>
-            <a class="btn btn-outline-dark" href="{% url 'accounts:profile' %}">Edit Profile</a>
-        </div>
-    </div>
-</section>
 
-<section class="row g-4 mb-4">
-    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Total Orders</span><h2>{{ stats.total_orders }}</h2></div></div>
-    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Active Orders</span><h2>{{ stats.active_orders }}</h2></div></div>
-    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Delivered Orders</span><h2>{{ stats.delivered_orders }}</h2></div></div>
-    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Total Spent</span><h2>{{ stats.total_spent }}</h2></div></div>
-    <div class="col-md-6 col-xl-3"><div class="dashboard-card"><span>Wallet Credit</span><h2>{{ stats.wallet_balance }}</h2></div></div>
-</section>
+        <nav class="dashboard-sidebar__nav">
+            <a class="dashboard-nav-link dashboard-nav-link--pill is-active" href="{% url 'accounts:dashboard' %}">
+                <i class="bi bi-grid"></i>
+                <span>Dashboard</span>
+            </a>
+            <a class="dashboard-nav-link" href="{% url 'orders:list' %}">
+                <i class="bi bi-bag"></i>
+                <span>Orders</span>
+            </a>
+            <a class="dashboard-nav-link" href="{% url 'accounts:addresses' %}">
+                <i class="bi bi-geo-alt"></i>
+                <span>Addresses</span>
+            </a>
+            <a class="dashboard-nav-link" href="{% url 'accounts:notifications' %}">
+                <i class="bi bi-bell"></i>
+                <span>Notifications</span>
+            </a>
+            <a class="dashboard-nav-link" href="{% url 'accounts:profile' %}">
+                <i class="bi bi-person"></i>
+                <span>Profile</span>
+            </a>
+        </nav>
 
-<section class="content-card p-4 mb-4">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h2 class="h4 mb-0">Loyalty Perks</h2>
-        <span class="small text-secondary">Company-specific premium streaks and discounts</span>
-    </div>
-    {% if loyalty_summary %}
-        <div class="table-responsive">
-            <table class="table align-middle">
-                <thead>
-                    <tr>
-                        <th>Company</th>
-                        <th>Current Streak</th>
-                        <th>Premium Status</th>
-                        <th>Discount</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for perk in loyalty_summary %}
-                        <tr>
-                            <td>{{ perk.company.name }}</td>
-                            <td>{{ perk.streak }}</td>
-                            <td>
-                                {% if perk.eligible %}
-                                    <span class="badge text-bg-success">Premium</span>
-                                {% elif perk.feature_enabled %}
-                                    <span class="badge text-bg-light">Build to {{ perk.threshold }}</span>
-                                {% else %}
-                                    <span class="badge text-bg-secondary">Not enabled</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if perk.eligible %}
-                                    {{ perk.discount_percent }}%
-                                {% elif perk.feature_enabled %}
-                                    {{ perk.company.premium_discount_percent }}% when unlocked
-                                {% else %}
-                                    -
-                                {% endif %}
-                            </td>
-                        </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    {% else %}
-        <p class="text-secondary mb-0">Your company-specific streaks and premium badges will appear here after delivered orders start building up.</p>
-    {% endif %}
-</section>
+        <div class="dashboard-sidebar__spacer"></div>
 
-<section class="content-card p-4">
-    {% if active_order %}
-        <div class="border rounded p-3 mb-4">
-            <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
-                <div>
-                    <h2 class="h4 mb-1">Active Order</h2>
-                    <div class="fw-semibold">{{ active_order.order_number }}</div>
-                    <div class="small text-secondary">{{ active_order.get_status_display }} | {{ active_order.delivery_address }}</div>
-                </div>
-                <a href="{% url 'orders:tracking' active_order.order_number %}" class="btn btn-primary">Track Active Order</a>
-            </div>
+        <div class="dashboard-sidebar__support">
+            <div class="fw-semibold text-dark mb-2">Support Available</div>
+            <p class="text-secondary small mb-3">Priority concierge line active for delivery issues, refunds, and urgent venue changes.</p>
+            <a class="btn btn-primary w-100" href="{% url 'accounts:notifications' %}">Quick Help</a>
         </div>
-    {% endif %}
-    {% if quick_reorders %}
-        <div class="mb-4">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h2 class="h4 mb-0">Quick Re-order</h2>
-                <span class="small text-secondary">Your latest delivered orders</span>
-            </div>
-            <div class="row g-3">
-                {% for order in quick_reorders %}
-                    <div class="col-md-4">
-                        <div class="border rounded p-3 h-100">
-                            <div class="fw-semibold mb-1">{{ order.order_number }}</div>
-                            <div class="small text-secondary mb-2">{{ order.company.name }}</div>
-                            <div class="small mb-3">
-                                {% for item in order.items.all|slice:":2" %}
-                                    <div>{{ item.product_name }} x {{ item.quantity }}</div>
-                                {% endfor %}
-                            </div>
-                            <form method="post" action="{% url 'orders:reorder' order.order_number %}">
-                                {% csrf_token %}
-                                <button class="btn btn-outline-success w-100">Re-order</button>
-                            </form>
-                        </div>
-                    </div>
-                {% endfor %}
-            </div>
-        </div>
-    {% endif %}
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h2 class="h4 mb-0">Recent Orders</h2>
-        <a href="{% url 'orders:list' %}" class="btn btn-sm btn-outline-primary">View all</a>
-    </div>
-    {% if recent_orders %}
-        <div class="table-responsive">
-            <table class="table align-middle">
-                <thead>
-                    <tr>
-                        <th>Order ID</th>
-                        <th>Date</th>
-                        <th>Status</th>
-                        <th>Total</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for order in recent_orders %}
-                        <tr>
-                            <td><a href="{% url 'orders:detail' order.order_number %}">{{ order.order_number }}</a></td>
-                            <td>{{ order.created_at|date:"M d, Y" }}</td>
-                            <td><span class="badge badge-soft text-bg-light">{{ order.get_status_display }}</span></td>
-                            <td>{{ order.total }}</td>
-                        </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    {% else %}
-        <p class="text-secondary mb-0">No orders yet. Your future deliveries will appear here.</p>
-    {% endif %}
-</section>
+    </aside>
 
-<section class="row g-4 mt-1">
-    <div class="col-lg-6">
-        <div class="content-card p-4 h-100">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h2 class="h4 mb-0">Saved Addresses</h2>
-                <a href="{% url 'accounts:addresses' %}" class="btn btn-sm btn-outline-primary">Manage</a>
-            </div>
-            {% if saved_addresses %}
-                {% for address in saved_addresses %}
-                    <div class="border rounded p-3 mb-3">
-                        <div class="d-flex justify-content-between align-items-start gap-3">
-                            <div>
-                                <div class="fw-semibold">{{ address.label }}</div>
-                                <div class="small text-secondary">{{ address.address_line }}</div>
-                            </div>
-                            {% if address.is_default %}
-                                <span class="badge text-bg-success">Default</span>
-                            {% endif %}
-                        </div>
-                    </div>
-                {% endfor %}
-            {% else %}
-                <p class="text-secondary mb-0">Save delivery points for faster checkout next time.</p>
-            {% endif %}
-        </div>
-    </div>
-    <div class="col-lg-6">
-        <div class="content-card p-4 h-100">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h2 class="h4 mb-0">Pending Feedback</h2>
-                <span class="small text-secondary">{{ pending_feedback_orders|length }} waiting</span>
-            </div>
-            {% if pending_feedback_orders %}
-                {% for order in pending_feedback_orders %}
-                    <div class="d-flex justify-content-between align-items-center border-bottom py-3">
-                        <div>
-                            <div class="fw-semibold">{{ order.order_number }}</div>
-                            <div class="small text-secondary">{{ order.company.name }} | {{ order.delivered_at|date:"M d, Y" }}</div>
-                        </div>
-                        <a href="{% url 'orders:detail' order.order_number %}" class="btn btn-sm btn-outline-primary">Rate</a>
-                    </div>
-                {% endfor %}
-            {% else %}
-                <p class="text-secondary mb-0">No delivered orders are waiting for feedback.</p>
-            {% endif %}
-        </div>
-    </div>
-</section>
+    <main class="dashboard-main">
+        {% include "includes/flash_messages.html" %}
 
-<section class="row g-4 mt-1">
-    <div class="col-lg-6">
-        <div class="content-card p-4 h-100">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h2 class="h4 mb-0">Notifications</h2>
-                <a href="{% url 'accounts:notifications' %}" class="btn btn-sm btn-outline-primary">
-                    View all{% if unread_notifications_count %} ({{ unread_notifications_count }}){% endif %}
+        <section class="dashboard-header">
+            <div>
+                <h1>Welcome back, {{ request.user.first_name|default:request.user.email }}</h1>
+                <p>Your supply chain is optimized and flowing smoothly across your active bottled water deliveries.</p>
+            </div>
+            <div class="dashboard-header__actions">
+                <a class="btn btn-outline-primary dashboard-hero-cta" href="{% if active_order %}{% url 'orders:tracking' active_order.order_number %}{% else %}{% url 'orders:list' %}{% endif %}">
+                    <i class="bi bi-geo-alt"></i>
+                    <span>{% if active_order %}Track Active Order{% else %}Track Orders{% endif %}</span>
+                </a>
+                <a class="btn btn-primary dashboard-hero-cta" href="{% url 'companies:list' %}">
+                    <i class="bi bi-droplet-half"></i>
+                    <span>New Bulk Order</span>
                 </a>
             </div>
-            {% if notifications %}
-                {% for notification in notifications %}
-                    <div class="border-bottom pb-3 mb-3">
-                        <div class="fw-semibold">{{ notification.title }}</div>
-                        <div class="small text-secondary mb-1">{{ notification.created_at|date:"M d, Y H:i" }}</div>
-                        <div>{{ notification.message }}</div>
+        </section>
+
+        <div class="dashboard-portal-grid">
+            <section class="dashboard-stacked-card">
+                <div class="dashboard-card-panel">
+                    <div class="dashboard-card-panel__body">
+                        {% if stats.total_orders %}
+                            {% if active_order %}
+                                <div class="dashboard-section-title">
+                                    <span>Active Order Tracker</span>
+                                    <span class="dashboard-pill {% if active_order.status == 'delivered' %}dashboard-pill--success{% else %}dashboard-pill--warning{% endif %}">
+                                        {{ active_order.get_status_display }}
+                                    </span>
+                                </div>
+                                <div class="dashboard-list-item mb-3">
+                                    <div>
+                                        <span class="dashboard-row-title">{{ active_order.order_number }}</span>
+                                        <span class="dashboard-row-subtitle">{{ active_order.company.name }} | {{ active_order.delivery_address }}</span>
+                                    </div>
+                                    <a class="btn btn-primary" href="{% url 'orders:tracking' active_order.order_number %}">Open Tracker</a>
+                                </div>
+                                <div class="dashboard-grid-3">
+                                    <div class="dashboard-mini-stat">
+                                        <span class="dashboard-mini-stat__label">Active Orders</span>
+                                        <span class="dashboard-mini-stat__value">{{ stats.active_orders }}</span>
+                                    </div>
+                                    <div class="dashboard-mini-stat">
+                                        <span class="dashboard-mini-stat__label">Delivered</span>
+                                        <span class="dashboard-mini-stat__value">{{ stats.delivered_orders }}</span>
+                                    </div>
+                                    <div class="dashboard-mini-stat">
+                                        <span class="dashboard-mini-stat__label">Total Spent</span>
+                                        <span class="dashboard-mini-stat__value">{{ stats.total_spent }}</span>
+                                    </div>
+                                </div>
+                            {% else %}
+                                <div class="dashboard-empty-state">
+                                    <div class="dashboard-empty-state__art">
+                                        <i class="bi bi-water"></i>
+                                    </div>
+                                    <div>
+                                        <h2 class="h3 text-primary mb-2">Welcome to AquaFlow</h2>
+                                        <p class="text-secondary mb-0">Ready to optimize your hydration? Start your journey with your first bulk order today.</p>
+                                    </div>
+                                    <a class="btn btn-primary" href="{% url 'products:list' %}">Browse Products</a>
+                                </div>
+                            {% endif %}
+                        {% else %}
+                            <div class="dashboard-empty-state">
+                                <div class="dashboard-empty-state__art">
+                                    <i class="bi bi-sun"></i>
+                                </div>
+                                <div>
+                                    <h2 class="h3 text-primary mb-2">Welcome to AquaFlow</h2>
+                                    <p class="text-secondary mb-0">Ready to optimize your hydration? Start your journey with your first bulk order today.</p>
+                                </div>
+                                <a class="btn btn-primary" href="{% url 'products:list' %}">Browse Products</a>
+                            </div>
+                        {% endif %}
                     </div>
-                {% endfor %}
-            {% else %}
-                <p class="text-secondary mb-0">You have no notifications yet.</p>
-            {% endif %}
-        </div>
-    </div>
-    <div class="col-lg-6">
-        <div class="content-card p-4 h-100">
-            <h2 class="h4 mb-3">Payment History</h2>
-            {% if payment_history %}
-                <div class="table-responsive">
-                    <table class="table align-middle">
-                        <thead><tr><th>Reference</th><th>Status</th><th>Amount</th></tr></thead>
-                        <tbody>
-                            {% for payment in payment_history %}
-                                <tr>
-                                    <td>{{ payment.reference }}</td>
-                                    <td>{{ payment.get_status_display }}</td>
-                                    <td>{{ payment.amount }}</td>
-                                </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
                 </div>
-            {% else %}
-                <p class="text-secondary mb-0">Payments will appear here after accepted orders are paid.</p>
-            {% endif %}
+
+                <div class="dashboard-card-panel">
+                    <div class="dashboard-card-panel__body">
+                        <div class="dashboard-section-title">
+                            <span>Frequent Logistics</span>
+                            <a href="{% url 'products:list' %}">Manage Catalog</a>
+                        </div>
+                        {% if quick_reorders %}
+                            <div class="dashboard-list">
+                                {% for order in quick_reorders %}
+                                    <div class="dashboard-list-item">
+                                        <div>
+                                            <span class="dashboard-row-title">{{ order.order_number }}</span>
+                                            <span class="dashboard-row-subtitle">{{ order.company.name }}{% if order.items.all %} | {{ order.items.all|length }} line item{{ order.items.all|length|pluralize }}{% endif %}</span>
+                                        </div>
+                                        <form method="post" action="{% url 'orders:reorder' order.order_number %}">
+                                            {% csrf_token %}
+                                            <button class="btn btn-outline-primary">Re-order</button>
+                                        </form>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <div class="dashboard-empty-state" style="min-height: 220px;">
+                                <div class="dashboard-empty-state__art">
+                                    <i class="bi bi-box-seam"></i>
+                                </div>
+                                <div>
+                                    <div class="fw-semibold text-dark mb-1">No orders yet</div>
+                                    <p class="text-secondary mb-0">Your most ordered products will appear here once you start hydrating.</p>
+                                </div>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="dashboard-card-panel">
+                    <div class="dashboard-card-panel__body">
+                        <div class="dashboard-section-title">
+                            <span>Recent Orders</span>
+                            <a href="{% url 'orders:list' %}">View all</a>
+                        </div>
+                        {% if recent_orders %}
+                            <div class="table-responsive">
+                                <table class="table dashboard-data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Order</th>
+                                            <th>Date</th>
+                                            <th>Status</th>
+                                            <th>Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for order in recent_orders %}
+                                            <tr>
+                                                <td>
+                                                    <a class="dashboard-row-title" href="{% url 'orders:detail' order.order_number %}">{{ order.order_number }}</a>
+                                                    <span class="dashboard-row-subtitle">{{ order.company.name }}</span>
+                                                </td>
+                                                <td>{{ order.created_at|date:"M d, Y" }}</td>
+                                                <td>
+                                                    <span class="dashboard-pill {% if order.status == 'delivered' %}dashboard-pill--success{% elif order.status == 'cancelled' or order.status == 'failed' %}dashboard-pill--danger{% else %}dashboard-pill--warning{% endif %}">
+                                                        {{ order.get_status_display }}
+                                                    </span>
+                                                </td>
+                                                <td>{{ order.total }}</td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        {% else %}
+                            <p class="text-secondary mb-0">Your order history will appear here after your first completed purchase.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </section>
+
+            <aside class="dashboard-stacked-card">
+                <div class="dashboard-mini-stat">
+                    <span class="dashboard-mini-stat__label">Credit Balance</span>
+                    <span class="dashboard-mini-stat__value">{{ stats.wallet_balance }}</span>
+                    <div class="dashboard-pill dashboard-pill--success mt-3">
+                        <i class="bi bi-patch-check"></i>
+                        <span>Powered by Chapa</span>
+                    </div>
+                </div>
+
+                <div class="dashboard-mini-stat">
+                    <span class="dashboard-mini-stat__label">Volume YTD</span>
+                    <span class="dashboard-mini-stat__value">{{ volume_ytd_units }} units</span>
+                    <i class="bi bi-droplet dashboard-mini-stat__icon"></i>
+                </div>
+
+                <div class="dashboard-mini-stat dashboard-mini-stat--dark">
+                    <span class="dashboard-mini-stat__label">Partner Tier</span>
+                    <span class="dashboard-mini-stat__value">{{ customer_tier_label }}</span>
+                    <i class="bi bi-award dashboard-mini-stat__icon"></i>
+                </div>
+
+                <div class="dashboard-card-panel">
+                    <div class="dashboard-card-panel__body">
+                        <div class="dashboard-section-title">
+                            <span>Recent Logistics</span>
+                            {% if unread_notifications_count %}
+                                <span class="dashboard-pill dashboard-pill--navy">{{ unread_notifications_count }} unread</span>
+                            {% endif %}
+                        </div>
+                        {% if recent_orders %}
+                            <div class="dashboard-list">
+                                {% for order in recent_orders|slice:":3" %}
+                                    <div class="dashboard-list-item">
+                                        <div>
+                                            <span class="dashboard-row-title">{{ order.order_number }}</span>
+                                            <span class="dashboard-row-subtitle">{{ order.get_status_display }}</span>
+                                        </div>
+                                        <a class="btn btn-outline-primary btn-sm" href="{% url 'orders:detail' order.order_number %}">Open</a>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <div class="dashboard-empty-state" style="min-height: 220px;">
+                                <div class="dashboard-empty-state__art">
+                                    <i class="bi bi-clock-history"></i>
+                                </div>
+                                <p class="text-secondary mb-0">Your journey starts here. Place your first order to see your logistics history.</p>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </aside>
         </div>
-    </div>
-</section>
+
+        <div class="dashboard-grid-2 mt-4">
+            <div class="dashboard-card-panel">
+                <div class="dashboard-card-panel__body">
+                    <div class="dashboard-section-title">
+                        <span>Saved Addresses</span>
+                        <a href="{% url 'accounts:addresses' %}">Manage</a>
+                    </div>
+                    {% if saved_addresses %}
+                        <div class="dashboard-list">
+                            {% for address in saved_addresses %}
+                                <div class="dashboard-list-item">
+                                    <div>
+                                        <span class="dashboard-row-title">{{ address.label }}</span>
+                                        <span class="dashboard-row-subtitle">{{ address.address_line }}</span>
+                                    </div>
+                                    {% if address.is_default %}
+                                        <span class="dashboard-pill dashboard-pill--success">Default</span>
+                                    {% endif %}
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-secondary mb-0">Save multiple delivery points for faster checkout on your next order.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="dashboard-card-panel">
+                <div class="dashboard-card-panel__body">
+                    <div class="dashboard-section-title">
+                        <span>Pending Feedback</span>
+                        <a href="{% url 'accounts:notifications' %}">Notifications</a>
+                    </div>
+                    {% if pending_feedback_orders %}
+                        <div class="dashboard-list">
+                            {% for order in pending_feedback_orders %}
+                                <div class="dashboard-list-item">
+                                    <div>
+                                        <span class="dashboard-row-title">{{ order.order_number }}</span>
+                                        <span class="dashboard-row-subtitle">{{ order.company.name }} | Delivered {{ order.delivered_at|date:"M d" }}</span>
+                                    </div>
+                                    <a class="btn btn-outline-primary" href="{% url 'orders:detail' order.order_number %}">Rate</a>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-secondary mb-0">No delivered orders are waiting for feedback right now.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
 {% endblock %}

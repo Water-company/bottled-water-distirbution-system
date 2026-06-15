@@ -19,10 +19,12 @@ from orders.models import Order, OrderStatus, RefundRequestType
 from orders.services import (
     cancel_order,
     create_order_request_from_cart,
+    expire_order_request_if_needed,
     get_agent_delivery_options,
     initialize_chapa_payment,
     refresh_delivery_confirmation,
     reorder_order_to_cart,
+    restore_rejected_order_to_cart,
     request_order_refund,
     skip_delivery_feedback,
     submit_delivery_feedback,
@@ -55,12 +57,19 @@ def estimate_eta_minutes(lat1, lon1, lat2, lon2):
 
 
 def build_order_tracking_payload(order):
+    expire_order_request_if_needed(order)
+    order.refresh_from_db()
     driver_user = getattr(order.assigned_driver, "user", None)
     driver_location = getattr(driver_user, "driver_location", None)
     payload = {
         "orderNumber": order.order_number,
         "statusCode": order.status,
         "statusLabel": order.get_status_display(),
+        "selectedAgentName": order.selected_agent.name if order.selected_agent_id else "",
+        "rejectionReason": order.rejection_reason,
+        "canPay": order.can_make_payment,
+        "paymentUrl": reverse("orders:payment", kwargs={"order_number": order.order_number}),
+        "agentResponseDeadline": order.agent_response_deadline.isoformat() if order.agent_response_deadline else "",
         "customer": {
             "name": order.customer.full_name,
             "address": order.delivery_address,
@@ -159,17 +168,11 @@ class CheckoutView(LoginRequiredMixin, CustomerRequiredMixin, FormView):
         except Exception as exc:
             form.add_error(None, exc)
             return self.form_invalid(form)
-
-        try:
-            payment = initialize_chapa_payment(order, self.request)
-        except ValidationError as exc:
-            messages.warning(
-                self.request,
-                exc.messages[0] if exc.messages else "Your order was created, but we could not open Chapa yet.",
-            )
-            return redirect("orders:payment", order_number=order.order_number)
-
-        return redirect(payment.checkout_url)
+        messages.info(
+            self.request,
+            "Please wait a second until the agent confirms your order. Payment will open after the branch accepts it.",
+        )
+        return redirect("orders:detail", order_number=order.order_number)
 
 
 class OrderListView(LoginRequiredMixin, CustomerRequiredMixin, ListView):
@@ -230,9 +233,15 @@ class OrderDetailView(LoginRequiredMixin, CustomerRequiredMixin, DetailView):
         ).prefetch_related("items__product", "status_history", "agent_requests__agent", "refund_requests")
 
     def get_context_data(self, **kwargs):
+        expire_order_request_if_needed(self.object)
+        self.object.refresh_from_db()
         context = super().get_context_data(**kwargs)
         context["tracking_steps"] = self.build_tracking_steps(self.object)
         context["can_pay"] = self.object.can_make_payment
+        context["order_status_poll_url"] = reverse(
+            "orders:tracking_status_json",
+            kwargs={"order_number": self.object.order_number},
+        )
         context["refund_form"] = RefundRequestForm()
         context["existing_service_refund"] = self.object.refund_requests.filter(
             request_type=RefundRequestType.SERVICE_ISSUE
@@ -270,6 +279,14 @@ class OrderPaymentView(LoginRequiredMixin, CustomerRequiredMixin, DetailView):
         if not self.object.can_make_payment:
             messages.info(request, "Payment is only available after an agent accepts your order.")
             return redirect("orders:detail", order_number=self.object.order_number)
+        if request.method.lower() == "get" and request.GET.get("auto") == "1":
+            try:
+                payment = initialize_chapa_payment(self.object, request)
+            except ValidationError as exc:
+                messages.warning(request, exc.messages[0] if exc.messages else "Unable to open Chapa checkout yet.")
+            else:
+                if payment.checkout_url:
+                    return redirect(payment.checkout_url)
         return super().dispatch(request, *args, **kwargs)
 
     def post(self, request, *args, **kwargs):
@@ -377,7 +394,7 @@ class NearbyAgentsPreviewView(LoginRequiredMixin, CustomerRequiredMixin, View):
         if not payload:
             message = "No active agents are available for this company right now."
         elif eligible_count:
-            message = f"{eligible_count} nearby agent{'s' if eligible_count != 1 else ''} can take payment for this order."
+            message = f"{eligible_count} nearby agent{'s' if eligible_count != 1 else ''} can review and confirm this order before payment."
         elif nearby_count:
             message = "Nearby agents were found, but none currently have enough stock for this order."
         else:
@@ -433,6 +450,21 @@ class ReorderOrderView(LoginRequiredMixin, CustomerRequiredMixin, View):
             return redirect("cart:detail")
         except ValidationError as exc:
             messages.error(request, exc.messages[0] if exc.messages else "Unable to reorder that delivery.")
+            return redirect("orders:detail", order_number=order.order_number)
+
+
+class RetryRejectedOrderCheckoutView(LoginRequiredMixin, CustomerRequiredMixin, View):
+    def post(self, request, order_number):
+        order = get_object_or_404(
+            request.user.orders.prefetch_related("items__product"),
+            order_number=order_number,
+        )
+        try:
+            restore_rejected_order_to_cart(request.user, order)
+            messages.info(request, "Your items are back in the cart. Choose another nearby agent to continue.")
+            return redirect("orders:checkout")
+        except ValidationError as exc:
+            messages.error(request, exc.messages[0] if exc.messages else "Unable to reopen checkout for that order.")
             return redirect("orders:detail", order_number=order.order_number)
 
 
