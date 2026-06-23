@@ -889,30 +889,34 @@ def report_delivery_issue(order, driver_user, issue_type, description=""):
         issue_type=issue_type,
         description=description,
     )
-    order.status = OrderStatus.FAILED
-    order.failed_at = timezone.now()
-    order.save()
-    if order.assigned_driver:
-        order.assigned_driver.availability_status = order.assigned_driver.AvailabilityStatus.AVAILABLE
-        order.assigned_driver.save(update_fields=["availability_status", "updated_at"])
+    _set_latest_status_note(
+        order,
+        f"Driver reported {issue.get_issue_type_display().lower()}. Awaiting agent manager review before any delivery failure decision.",
+    )
 
     if order.selected_agent and order.selected_agent.admin:
         notify_user(
             order.selected_agent.admin,
             "Delivery issue reported",
-            f"{driver_user.full_name} reported {issue.get_issue_type_display().lower()} for {order.order_number}.",
+            (
+                f"{driver_user.full_name} reported {issue.get_issue_type_display().lower()} for "
+                f"{order.order_number}. Manager approval is required before the order can be marked failed."
+            ),
             link=reverse("accounts:agent_dashboard"),
         )
     notify_user(
         order.customer,
         "Delivery issue reported",
-        f"There is an issue with {order.order_number}. The agent manager has been notified.",
+        f"There is an issue with {order.order_number}. The agent manager has been notified and is reviewing it.",
         link=reverse("orders:detail", kwargs={"order_number": order.order_number}),
     )
     send_order_status_email(
         order,
         "Delivery issue reported",
-        f"We recorded a delivery issue for your order: {issue.get_issue_type_display()}. Our operations team will follow up.",
+        (
+            f"We recorded a delivery issue for your order: {issue.get_issue_type_display()}. "
+            "The agent manager will review it before any failure decision is made."
+        ),
     )
     return issue
 

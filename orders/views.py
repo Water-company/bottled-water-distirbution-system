@@ -1,11 +1,19 @@
+import base64
+import hashlib
+import hmac
+import json
+import logging
+
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.serializers.json import DjangoJSONEncoder
 from django.core.exceptions import ValidationError
-from django.http import HttpResponseBadRequest, JsonResponse
+from django.http import HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 from django.views import View
 from django.views.generic import DetailView, FormView, ListView
 
@@ -43,6 +51,8 @@ TRACKING_ORDER = [
     OrderStatus.ARRIVED,
     OrderStatus.DELIVERED,
 ]
+
+logger = logging.getLogger(__name__)
 
 
 def _float_or_none(value):
@@ -532,7 +542,50 @@ class RefreshDeliveryQRCodeView(LoginRequiredMixin, CustomerRequiredMixin, View)
         return redirect("orders:detail", order_number=order.order_number)
 
 
+@method_decorator(csrf_exempt, name="dispatch")
 class ChapaPaymentCallbackView(View):
+    @staticmethod
+    def _get_webhook_signature(request):
+        return (
+            request.headers.get("Chapa-Signature")
+            or request.META.get("HTTP_CHAPA_SIGNATURE")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _signature_matches(request):
+        secret = (getattr(settings, "CHAPA_WEBHOOK_SECRET", "") or "").strip()
+        if not secret:
+            raise ValidationError("Chapa webhook secret is not configured.")
+
+        submitted_signature = ChapaPaymentCallbackView._get_webhook_signature(request)
+        if not submitted_signature:
+            raise ValidationError("Missing Chapa webhook signature.")
+
+        normalized_signature = submitted_signature
+        if "=" in normalized_signature:
+            normalized_signature = normalized_signature.split("=", 1)[1].strip()
+
+        digest = hmac.new(secret.encode("utf-8"), request.body, hashlib.sha256).digest()
+        expected_hex = digest.hex()
+        expected_b64 = base64.b64encode(digest).decode("ascii")
+
+        return any(
+            hmac.compare_digest(candidate, normalized_signature)
+            for candidate in (expected_hex, expected_hex.upper(), expected_b64)
+        )
+
+    @staticmethod
+    def _extract_tx_ref(payload):
+        if not isinstance(payload, dict):
+            return ""
+        data = payload.get("data")
+        if isinstance(data, dict):
+            tx_ref = data.get("tx_ref") or data.get("trx_ref")
+            if tx_ref:
+                return tx_ref
+        return payload.get("tx_ref") or payload.get("trx_ref") or ""
+
     def get(self, request):
         tx_ref = (
             request.GET.get("tx_ref")
@@ -541,16 +594,45 @@ class ChapaPaymentCallbackView(View):
             or request.POST.get("trx_ref")
         )
         if not tx_ref:
-            return HttpResponseBadRequest("Missing transaction reference.")
+            return HttpResponseBadRequest("Invalid payment callback request.")
 
         try:
             confirmation = verify_chapa_payment(tx_ref)
-        except Exception as exc:
-            return HttpResponseBadRequest(str(exc))
+        except Exception:
+            logger.exception("Failed to verify Chapa payment callback for %s", tx_ref)
+            return HttpResponseBadRequest("Unable to verify payment callback.")
 
         return redirect("orders:detail", order_number=confirmation.order.order_number)
 
-    post = get
+    def post(self, request):
+        try:
+            if not self._signature_matches(request):
+                return HttpResponseForbidden("Invalid webhook signature.")
+        except ValidationError:
+            logger.warning("Rejected Chapa webhook with missing or invalid signature.")
+            return HttpResponseForbidden("Invalid webhook signature.")
+
+        try:
+            payload = json.loads(request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            return HttpResponseBadRequest("Invalid webhook payload.")
+
+        tx_ref = self._extract_tx_ref(payload)
+        if not tx_ref:
+            return HttpResponseBadRequest("Invalid webhook payload.")
+
+        try:
+            confirmation = verify_chapa_payment(tx_ref)
+        except Exception:
+            logger.exception("Failed to verify signed Chapa webhook for %s", tx_ref)
+            return HttpResponseBadRequest("Unable to verify payment callback.")
+
+        return JsonResponse(
+            {
+                "status": "ok",
+                "order_number": confirmation.order.order_number,
+            }
+        )
 
 
 class ChapaPaymentReturnView(LoginRequiredMixin, CustomerRequiredMixin, View):

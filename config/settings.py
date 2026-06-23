@@ -30,7 +30,7 @@ def env_bool(name, default=False):
 DJANGO_ENV = os.getenv("DJANGO_ENV", "").strip().lower()
 IS_LOCAL_ENV = DJANGO_ENV == "local"
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "").strip()
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", os.getenv("SECRET_KEY", "")).strip()
 if not SECRET_KEY:
     if IS_LOCAL_ENV:
         SECRET_KEY = get_random_secret_key()
@@ -75,6 +75,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -106,8 +107,16 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': os.getenv('DB_NAME', os.getenv('DATABASE_NAME', 'water_project')),
+        'USER': os.getenv('DB_USER', os.getenv('DATABASE_USER', 'root')),
+        'PASSWORD': os.getenv('DB_PASSWORD', os.getenv('DATABASE_PASSWORD', '')),
+        'HOST': os.getenv('DB_HOST', os.getenv('DATABASE_HOST', '127.0.0.1')),
+        'PORT': os.getenv('DB_PORT', os.getenv('DATABASE_PORT', '3306')),
+        'CONN_MAX_AGE': int(os.getenv('DB_CONN_MAX_AGE', os.getenv('DATABASE_CONN_MAX_AGE', '60'))),
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+        },
     }
 }
 
@@ -136,6 +145,14 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -168,6 +185,7 @@ ORDER_REFUND_REQUEST_WINDOW_DAYS = int(os.getenv("ORDER_REFUND_REQUEST_WINDOW_DA
 AGENT_REQUEST_RESPONSE_MINUTES = int(os.getenv("AGENT_REQUEST_RESPONSE_MINUTES", "2"))
 CHAPA_PUBLIC_KEY = os.getenv("CHAPA_PUBLIC_KEY", "")
 CHAPA_SECRET_KEY = os.getenv("CHAPA_SECRET_KEY", "")
+CHAPA_WEBHOOK_SECRET = os.getenv("CHAPA_WEBHOOK_SECRET", CHAPA_SECRET_KEY)
 CHAPA_BASE_URL = os.getenv("CHAPA_BASE_URL", "https://api.chapa.co/v1")
 NOMINATIM_BASE_URL = os.getenv("NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org")
 NOMINATIM_CONTACT_EMAIL = os.getenv("NOMINATIM_CONTACT_EMAIL", "")

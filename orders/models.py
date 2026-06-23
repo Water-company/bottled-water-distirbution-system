@@ -1,4 +1,3 @@
-import random
 import secrets
 import string
 import json
@@ -137,7 +136,8 @@ class Order(TimeStampedModel):
 
     @staticmethod
     def generate_order_number():
-        suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        alphabet = string.ascii_uppercase + string.digits
+        suffix = "".join(secrets.choice(alphabet) for _ in range(8))
         return f"ORD-{suffix}"
 
     def save(self, *args, **kwargs):
@@ -324,7 +324,7 @@ class DeliveryConfirmation(TimeStampedModel):
         if not self.qr_token:
             self.qr_token = self._generate_signed_qr_token()
         if not self.otp_code:
-            self.otp_code = "".join(random.choices(string.digits, k=6))
+            self.otp_code = f"{secrets.randbelow(10 ** 6):06d}"
         if not self.qr_code_image:
             self._generate_qr_code_image()
         super().save(*args, **kwargs)

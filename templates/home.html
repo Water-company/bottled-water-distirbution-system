@@ -187,7 +187,7 @@
         <nav class="hidden md:flex items-center gap-8">
           <a
             class="text-primary font-bold border-b-2 border-primary py-1"
-            href="#"
+            href="{% url 'home' %}"
             >Home</a
           >
           <a
@@ -523,11 +523,12 @@
               push notifications. For immediate inquiries, our support team is
               available 24/7 for our registered clients.
             </p>
-            <button
+            <a
               class="px-8 py-4 bg-white text-primary font-bold rounded-lg hover:bg-surface-container transition-all active:scale-95 shadow-md"
+              href="{% if request.user.is_authenticated %}{% url 'accounts:notifications' %}{% else %}{% url 'accounts:login' %}{% endif %}"
             >
               Visit Support Center
-            </button>
+            </a>
           </div>
         </div>
       </section>
@@ -551,7 +552,7 @@
         </div>
         <hr class="w-full border-outline-variant max-w-md" />
         <p class="font-body-md text-body-md text-secondary-fixed-variant">
-          © 2024 AquaFlow Distribution Systems. The Fluid Workspace. All rights
+          Â© 2024 AquaFlow Distribution Systems. The Fluid Workspace. All rights
           reserved.
         </p>
       </div>
@@ -562,7 +563,7 @@
     >
       <a
         class="flex flex-col items-center justify-center bg-primary-container text-on-primary-container rounded-full px-4 py-1"
-        href="#"
+        href="{% url 'home' %}"
       >
         <span
           class="material-symbols-outlined"

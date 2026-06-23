@@ -12,7 +12,7 @@
     </div>
     <div class="flex items-center space-x-4">
       <a class="text-slate-600 font-medium hover:text-[#003d99]" href="{% url 'accounts:login' %}">Login</a>
-      <a class="bg-[#003d99] text-white px-5 py-2 rounded-lg font-medium hover:bg-blue-800 transition shadow-sm" href="#">Sign Up</a>
+      <a class="bg-[#003d99] text-white px-5 py-2 rounded-lg font-medium hover:bg-blue-800 transition shadow-sm" href="{% url 'accounts:register' %}">Sign Up</a>
     </div>
   </header>
   <!-- END: SiteHeader -->
@@ -185,13 +185,13 @@
   <footer class="w-full max-w-6xl mt-auto pt-12 pb-8 flex flex-col md:flex-row justify-between items-center text-slate-400 text-sm border-t border-slate-200 mt-12">
     <div class="mb-4 md:mb-0">
       <p class="font-semibold text-slate-600 mb-1">AquaFlow</p>
-      <p>© 2024 AquaFlow Logistics. All rights reserved.</p>
+      <p>Â© 2024 AquaFlow Logistics. All rights reserved.</p>
     </div>
     <div class="flex space-x-3">
-      <a class="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center text-slate-500 hover:bg-[#003d99] hover:text-white transition" href="#">
+      <a class="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center text-slate-500 hover:bg-[#003d99] hover:text-white transition" href="{% url 'home' %}">
         <i class="fas fa-globe"></i>
       </a>
-      <a class="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center text-slate-500 hover:bg-[#003d99] hover:text-white transition" href="#">
+      <a class="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center text-slate-500 hover:bg-[#003d99] hover:text-white transition" href="{% url 'accounts:login' %}">
         <i class="far fa-question-circle"></i>
       </a>
     </div>

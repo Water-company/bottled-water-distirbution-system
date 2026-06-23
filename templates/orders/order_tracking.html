@@ -29,7 +29,10 @@
                                 <h2 class="h4 mb-1">Live Delivery Map</h2>
                                 <p class="small text-secondary mb-0">Customer location picking, driver real-time tracking, and agent branch display on OpenStreetMap.</p>
                             </div>
-                            <span class="map-summary-chip" id="tracking-driver-chip">Waiting for driver assignment</span>
+                            <div class="d-flex flex-wrap gap-2 align-items-center">
+                                <span class="map-summary-chip" id="tracking-driver-chip">Waiting for driver assignment</span>
+                                <span class="badge text-bg-success d-none" id="tracking-live-indicator">Live</span>
+                            </div>
                         </div>
                         <div id="tracking-map" class="map-canvas mb-3"></div>
                         <div class="d-flex flex-wrap gap-2 mb-2">
@@ -98,6 +101,7 @@
         const maps = window.AquaFlowMaps;
         const trackingUrl = "{{ tracking_map_data_url }}";
         const trackingState = JSON.parse(document.getElementById("tracking-map-payload").textContent);
+        let latestPayload = trackingState;
         const map = maps.createMap("tracking-map", {
             center: trackingState.customer ? [trackingState.customer.latitude, trackingState.customer.longitude] : maps.defaultCenter,
             zoom: 13,
@@ -114,10 +118,34 @@
         const agentSummary = document.getElementById("tracking-agent-summary");
         const driverSummary = document.getElementById("tracking-driver-summary");
         const driverChip = document.getElementById("tracking-driver-chip");
+        const liveIndicator = document.getElementById("tracking-live-indicator");
         const etaSummary = document.getElementById("tracking-eta-summary");
+        let refreshTimerId = null;
 
         function hasCoords(item) {
             return item && Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude));
+        }
+
+        function isDriverPingLive(lastPingAt) {
+            if (!lastPingAt) {
+                return false;
+            }
+            const lastPingTime = new Date(lastPingAt).getTime();
+            if (Number.isNaN(lastPingTime)) {
+                return false;
+            }
+            return (Date.now() - lastPingTime) <= 30000;
+        }
+
+        function getRefreshInterval(payload) {
+            return ["out_for_delivery", "arrived"].includes(payload.statusCode) ? 5000 : 10000;
+        }
+
+        function scheduleRefresh(payload) {
+            if (refreshTimerId) {
+                window.clearTimeout(refreshTimerId);
+            }
+            refreshTimerId = window.setTimeout(refreshTracking, getRefreshInterval(payload));
         }
 
         function upsertMarker(existingMarker, point, icon, popupHtml) {
@@ -138,6 +166,7 @@
         }
 
         function renderTracking(payload) {
+            latestPayload = payload;
             const points = [];
             statusLabel.textContent = payload.statusLabel;
             customerSummary.textContent = payload.customer.address;
@@ -170,6 +199,7 @@
 
             if (hasCoords(payload.driver)) {
                 const driverPoint = [Number(payload.driver.latitude), Number(payload.driver.longitude)];
+                const driverIsLive = isDriverPingLive(payload.driver.lastPingAt);
                 driverMarker = upsertMarker(
                     driverMarker,
                     driverPoint,
@@ -178,11 +208,13 @@
                 );
                 driverSummary.textContent = `${payload.driver.name}${payload.driver.vehicleIdentifier ? ` | ${payload.driver.vehicleIdentifier}` : ""}`;
                 driverChip.textContent = payload.driver.online ? "Driver online" : "Driver offline";
+                liveIndicator.classList.toggle("d-none", !driverIsLive);
                 points.push(driverPoint);
             } else {
                 driverMarker = upsertMarker(driverMarker, null, maps.icons.driver, "");
                 driverSummary.textContent = "Waiting for driver assignment";
                 driverChip.textContent = "Waiting for driver assignment";
+                liveIndicator.classList.add("d-none");
             }
 
             routeLayer.clearLayers();
@@ -194,9 +226,13 @@
                     ],
                     { color: "#17a6b6", weight: 4, opacity: 0.75 }
                 ).addTo(routeLayer);
-                mapStatus.textContent = payload.driver.online
-                    ? `Driver last ping: ${payload.driver.lastPingAt || "Just now"}`
-                    : "Driver has been assigned, but is currently offline.";
+                if (payload.driver.online) {
+                    mapStatus.textContent = isDriverPingLive(payload.driver.lastPingAt)
+                        ? "Driver location is live and refreshing every 5 seconds."
+                        : `Driver last ping: ${payload.driver.lastPingAt || "Just now"}`;
+                } else {
+                    mapStatus.textContent = "Driver has been assigned, but is currently offline.";
+                }
             } else if (hasCoords(payload.agent) && hasCoords(payload.customer)) {
                 L.polyline(
                     [
@@ -222,6 +258,8 @@
             } else if (points.length && !map.getBounds().pad(-0.15).contains(points[points.length - 1])) {
                 maps.fitMap(map, points, maps.defaultCenter, 13);
             }
+
+            scheduleRefresh(payload);
         }
 
         async function refreshTracking() {
@@ -236,12 +274,12 @@
                 renderTracking(payload);
             } catch (error) {
                 mapStatus.textContent = "Unable to refresh tracking right now. The last known positions remain on the map.";
+                scheduleRefresh(latestPayload);
             }
         }
 
         renderTracking(trackingState);
         window.setTimeout(() => map.invalidateSize(), 0);
-        window.setInterval(refreshTracking, 10000);
     })();
 </script>
 {% endblock %}

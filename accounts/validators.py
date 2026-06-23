@@ -2,6 +2,11 @@ import re
 
 from django.core.exceptions import ValidationError
 
+try:
+    import magic
+except ImportError:  # pragma: no cover - dependency is declared in requirements.txt
+    magic = None
+
 
 ETHIOPIAN_PHONE_PATTERN = re.compile(r"^(?:\+251|251|0)?9\d{8}$")
 
@@ -51,10 +56,35 @@ def validate_document_content_type(allowed_types):
     allowed_types = tuple(allowed_types)
     allowed_display = ", ".join(allowed_types)
 
+    def detect_content_type(upload):
+        if hasattr(upload, "seek"):
+            upload.seek(0)
+        sample = upload.read(4096)
+        if hasattr(upload, "seek"):
+            upload.seek(0)
+
+        if magic is not None:
+            try:
+                detected = (magic.from_buffer(sample, mime=True) or "").lower()
+                if detected:
+                    return detected
+            except Exception:
+                pass
+
+        if sample.startswith(b"%PDF-"):
+            return "application/pdf"
+        if sample.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if sample.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        return ""
+
     def validator(upload):
         if not upload:
             return
-        content_type = (getattr(upload, "content_type", "") or "").lower()
+        content_type = detect_content_type(upload)
+        if not content_type:
+            raise ValidationError("We could not inspect the uploaded file type.")
         if content_type not in allowed_types:
             raise ValidationError(
                 f"Unsupported file type. Allowed types: {allowed_display}."

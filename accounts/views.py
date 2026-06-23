@@ -16,6 +16,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.views import View
 from django.views.generic import DetailView, FormView, TemplateView, UpdateView
+from django_ratelimit.core import is_ratelimited
 
 from accounts.forms import (
     AgentBatchSaleApprovalForm,
@@ -1061,6 +1062,21 @@ class VerifyRegistrationOTPView(FormView):
     template_name = "accounts/verify_registration.html"
     form_class = RegistrationOTPForm
     success_url = reverse_lazy("accounts:login")
+
+    def post(self, request, *args, **kwargs):
+        ip_limited = is_ratelimited(
+            request,
+            group="verify_registration_otp_ip",
+            key="ip",
+            rate="10/m",
+            method="POST",
+            increment=True,
+        )
+        if ip_limited:
+            form = self.get_form()
+            form.add_error(None, "Too many OTP verification attempts. Please wait a minute and try again.")
+            return self.form_invalid(form)
+        return super().post(request, *args, **kwargs)
 
     def get_initial(self):
         initial = super().get_initial()

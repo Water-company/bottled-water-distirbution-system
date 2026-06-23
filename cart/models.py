@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import DecimalField, ExpressionWrapper, F, Sum
 
 from core.models import TimeStampedModel
 
@@ -23,11 +24,15 @@ class Cart(TimeStampedModel):
 
     @property
     def items_count(self):
-        return sum(item.quantity for item in self.items.select_related("product"))
+        return self.items.aggregate(total=Sum("quantity")).get("total") or 0
 
     @property
     def subtotal(self):
-        return sum((item.line_total for item in self.items.select_related("product")), Decimal("0.00"))
+        line_total = ExpressionWrapper(
+            F("quantity") * F("unit_price"),
+            output_field=DecimalField(max_digits=12, decimal_places=2),
+        )
+        return self.items.aggregate(total=Sum(line_total)).get("total") or Decimal("0.00")
 
     @property
     def delivery_fee(self):

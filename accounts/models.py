@@ -4,6 +4,7 @@ from django.conf import settings
 from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.db import models
+from django.db.models import F
 from django.utils import timezone
 
 from core.models import TimeStampedModel
@@ -146,8 +147,12 @@ class User(TimeStampedModel, AbstractBaseUser, PermissionsMixin):
             self.save(update_fields=["failed_login_attempts", "locked_until", "last_failed_login_at", "updated_at"])
 
     def credit_wallet(self, amount):
-        self.wallet_balance = Decimal(self.wallet_balance) + Decimal(amount)
-        self.save(update_fields=["wallet_balance", "updated_at"])
+        amount = Decimal(str(amount))
+        self.__class__.objects.filter(pk=self.pk).update(
+            wallet_balance=F("wallet_balance") + amount,
+            updated_at=timezone.now(),
+        )
+        self.refresh_from_db(fields=["wallet_balance", "updated_at"])
 
 
 class RegistrationOTP(TimeStampedModel):
