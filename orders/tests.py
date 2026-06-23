@@ -1,6 +1,7 @@
 import json
 from unittest.mock import patch
 
+from django.core.exceptions import ValidationError
 from django.core import mail
 from django.utils import timezone
 from django.test import TestCase, override_settings
@@ -15,6 +16,7 @@ from orders.models import (
     DeliveryConfirmation,
     DeliveryFeedback,
     Order,
+    OrderAgentRequest,
     OrderStatus,
     PaymentStatus,
     RefundPayoutMethod,
@@ -417,6 +419,62 @@ class OrderFlowTests(TestCase):
         cart_item = cart.items.get()
         self.assertEqual(cart_item.product, self.product)
         self.assertEqual(cart_item.quantity, 2)
+
+    def test_only_one_accept_attempt_can_succeed_for_same_pending_order(self):
+        second_agent_manager = User.objects.create_user(
+            email="agent-manager-two@example.com",
+            password="StrongPass123!",
+            first_name="Second",
+            last_name="Manager",
+            phone_number="+251911000024",
+            role=UserRole.AGENT_MANAGER,
+        )
+        second_agent = Agent.objects.create(
+            company=self.company,
+            name="Fresh River Bole Agent",
+            location_name="Bole",
+            latitude="9.020000",
+            longitude="38.760000",
+            service_radius_km="20.00",
+            is_active=True,
+            is_accepting_orders=True,
+            admin=second_agent_manager,
+        )
+        AgentStock.objects.create(
+            agent=second_agent,
+            product=self.product,
+            available_quantity=6,
+            reorder_level=2,
+        )
+
+        _, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
+        first_request = order.agent_requests.get()
+        second_request = OrderAgentRequest.objects.create(
+            order=order,
+            agent=second_agent,
+            status=AgentRequestStatus.PENDING,
+            distance_km="2.50",
+            note="Second agent racing the same pending order.",
+        )
+
+        accept_agent_request(first_request, note="Accepted first", accepted_by=self.agent_manager)
+
+        # TestCase wraps each test in a transaction and the default SQLite test database does not
+        # provide a realistic separate-connection concurrency harness for row locks, so this
+        # regression simulates the race sequentially: the second accept must lose once the first
+        # transition commits its status change under the locked order row.
+        with self.assertRaisesMessage(ValidationError, "This order is no longer waiting for agent review."):
+            accept_agent_request(second_request, note="Accepted second", accepted_by=second_agent_manager)
+
+        order.refresh_from_db()
+        first_request.refresh_from_db()
+        second_request.refresh_from_db()
+
+        self.assertEqual(order.status, OrderStatus.PAYMENT_PENDING)
+        self.assertEqual(order.selected_agent, self.agent)
+        self.assertEqual(first_request.status, AgentRequestStatus.ACCEPTED)
+        self.assertEqual(second_request.status, AgentRequestStatus.REJECTED)
+        self.assertTrue(hasattr(order, "payment"))
 
     def test_customer_can_submit_driver_feedback_after_delivery(self):
         delivered_order = self.create_delivered_order()

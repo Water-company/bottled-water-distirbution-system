@@ -69,7 +69,7 @@
                 <thead>
                     <tr>
                         <th>Agent</th>
-                        <th>Requested / Approved</th>
+                        <th>Requested / Approved / Received</th>
                         <th>Payment Type</th>
                         <th>Collected</th>
                         <th>Outstanding</th>
@@ -82,7 +82,7 @@
                     {% for row in sale_rows %}
                         <tr>
                             <td>{{ row.sale.agent.name }}</td>
-                            <td>{{ row.sale.quantity_requested }} / {{ row.sale.quantity_approved }}</td>
+                            <td>{{ row.sale.quantity_requested }} / {{ row.sale.quantity_approved }} / {{ row.sale.quantity_received|default:0 }}</td>
                             <td>{{ row.sale.get_payment_type_display }}</td>
                             <td>{{ row.sale.amount_collected }}</td>
                             <td>{{ row.sale.outstanding_balance }}</td>

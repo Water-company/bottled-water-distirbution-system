@@ -19,6 +19,9 @@ class Notification(TimeStampedModel):
 
     class Meta:
         ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["recipient", "is_read"], name="core_notif_rec_read_idx"),
+        ]
 
     def __str__(self):
         return f"{self.recipient.email} - {self.title}"
@@ -103,6 +106,9 @@ class AuditLog(TimeStampedModel):
 
     class Meta:
         ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["created_at"], name="core_audit_created_idx"),
+        ]
 
     def __str__(self):
         return f"{self.action} - {self.entity_type} {self.entity_label or self.entity_id}"

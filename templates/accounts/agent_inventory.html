@@ -154,14 +154,14 @@
 <section class="row g-4">
     <div class="col-lg-6">
         <div class="content-card p-4 h-100 mb-4">
-            <h2 class="h4 mb-3">Batch Stock Requests and Approved Sales</h2>
+            <h2 class="h4 mb-3">Batch Stock Requests, Receipts, and Sales</h2>
             {% if batch_sales %}
                 <div class="table-responsive">
                     <table class="table align-middle">
                         <thead>
                             <tr>
                                 <th>Batch</th>
-                                <th>Requested / Approved</th>
+                                <th>Requested / Approved / Received</th>
                                 <th>Payment Type</th>
                                 <th>Status</th>
                                 <th>Outstanding</th>
@@ -174,23 +174,45 @@
                                         <div class="fw-semibold">{{ sale.batch.batch_number }}</div>
                                         <div class="small text-secondary">{{ sale.batch.product.name }}</div>
                                     </td>
-                                    <td>{{ sale.quantity_requested }} / {{ sale.quantity_approved|default:0 }}</td>
+                                    <td>{{ sale.quantity_requested }} / {{ sale.quantity_approved|default:0 }} / {{ sale.quantity_received|default:0 }}</td>
                                     <td>{{ sale.get_payment_type_display }}</td>
                                     <td>
                                         {{ sale.get_status_display }}
+                                        {% if sale.received_at %}
+                                            <div class="small text-secondary">Received {{ sale.received_at|date:"Y-m-d H:i" }}</div>
+                                        {% endif %}
+                                        {% if sale.cancellation_reason %}
+                                            <div class="small text-danger">{{ sale.cancellation_reason }}</div>
+                                        {% endif %}
                                         {% if sale.is_overdue %}
                                             <div class="small text-danger">Overdue</div>
                                         {% endif %}
                                     </td>
                                     <td>
-                                        {% if sale.status == "approved" %}
+                                        {% if sale.status == "approved" or sale.status == "received" %}
                                             {{ sale.outstanding_balance }}
                                         {% else %}
                                             -
                                         {% endif %}
                                     </td>
                                 </tr>
-                                {% if sale.status == "approved" and sale.outstanding_balance > 0 %}
+                                {% if sale.status == "approved" %}
+                                    <tr>
+                                        <td colspan="5">
+                                            <form method="post" action="{% url 'accounts:agent_batch_sale_confirm_receipt' sale.pk %}" class="row g-2">
+                                                {% csrf_token %}
+                                                <div class="col-md-9">
+                                                    <textarea name="receipt_note" class="form-control" rows="2" placeholder="Optional receipt note"></textarea>
+                                                    <div class="small text-secondary mt-1">Confirm full receipt only. Partial receipt is not supported in this workflow.</div>
+                                                </div>
+                                                <div class="col-md-3">
+                                                    <button class="btn btn-primary w-100">Confirm Receipt</button>
+                                                </div>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                {% endif %}
+                                {% if sale.outstanding_balance > 0 and sale.status != "pending" and sale.status != "rejected" and sale.status != "cancelled" %}
                                     <tr>
                                         <td colspan="5">
                                             <form method="post" action="{% url 'accounts:agent_batch_payment_create' sale.pk %}" class="row g-2">

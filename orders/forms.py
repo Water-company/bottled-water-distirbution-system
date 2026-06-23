@@ -2,12 +2,15 @@ from django import forms
 from django.core.exceptions import ValidationError
 
 from accounts.models import CustomerAddress
-from accounts.validators import normalize_ethiopian_phone_number
+from accounts.validators import normalize_ethiopian_phone_number, validate_file_size
 from orders.models import LocationSource, RefundPayoutMethod
 
 
 class MultipleFileInput(forms.ClearableFileInput):
     allow_multiple_selected = True
+
+
+IMAGE_MAX_SIZE_VALIDATOR = validate_file_size(5)
 
 
 class CheckoutForm(forms.Form):
@@ -97,6 +100,7 @@ class RefundRequestForm(forms.Form):
             content_type = getattr(item, "content_type", "") or ""
             if not content_type.startswith("image/"):
                 raise ValidationError("Refund evidence must be image files.")
+            IMAGE_MAX_SIZE_VALIDATOR(item)
         return files
 
 
@@ -110,3 +114,9 @@ class DeliveryFeedbackForm(forms.Form):
         self.fields["rating"].widget.attrs["class"] = "form-control"
         self.fields["comment"].widget.attrs["class"] = "form-control"
         self.fields["photo"].widget.attrs["class"] = "form-control"
+
+    def clean_photo(self):
+        photo = self.cleaned_data.get("photo")
+        if photo:
+            IMAGE_MAX_SIZE_VALIDATOR(photo)
+        return photo

@@ -1,11 +1,14 @@
+import logging
 import uuid
 from decimal import Decimal
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.urls import reverse
 from django.utils import timezone
 
+from accounts.models import UserRole
 from accounts.services import get_company_admin_users
 from catalog.models import (
     AgentBatchSale,
@@ -23,6 +26,10 @@ from catalog.models import (
 )
 from core.services import notify_user
 
+logger = logging.getLogger(__name__)
+
+OPEN_BATCH_BALANCE_STATUSES = (AgentBatchSaleStatus.APPROVED, AgentBatchSaleStatus.RECEIVED)
+
 
 def _safe_money(value):
     if value in (None, ""):
@@ -30,6 +37,20 @@ def _safe_money(value):
     if isinstance(value, Decimal):
         return value
     return Decimal(str(value))
+
+
+def _resolve_credit_due_date(received_at, credit_terms_days):
+    if not credit_terms_days:
+        return None
+    received_date = timezone.localtime(received_at).date()
+    return received_date + timezone.timedelta(days=credit_terms_days)
+
+
+def _get_reserved_batch_cases(batch, exclude_sale=None):
+    reserved_sales = AgentBatchSale.objects.filter(batch=batch, status=AgentBatchSaleStatus.APPROVED)
+    if exclude_sale is not None and exclude_sale.pk:
+        reserved_sales = reserved_sales.exclude(pk=exclude_sale.pk)
+    return reserved_sales.aggregate(total=models.Sum("quantity_approved")).get("total") or 0
 
 
 def create_inventory_transaction(
@@ -146,7 +167,7 @@ def create_company_starter_catalog(*, company, created_by=None):
 
 
 def get_agent_open_batch_balance(agent, exclude_sale=None):
-    sales = agent.batch_sales.filter(status=AgentBatchSaleStatus.APPROVED).prefetch_related("payments")
+    sales = agent.batch_sales.filter(status__in=OPEN_BATCH_BALANCE_STATUSES).prefetch_related("payments")
     if exclude_sale is not None and exclude_sale.pk:
         sales = sales.exclude(pk=exclude_sale.pk)
     return sum(sale.outstanding_balance for sale in sales)
@@ -291,10 +312,14 @@ def approve_agent_batch_sale(
     quantity_approved,
     unit_price,
     initial_payment_amount=Decimal("0.00"),
-    credit_due_date=None,
+    credit_terms_days=None,
     decision_note="",
 ):
-    sale = AgentBatchSale.objects.select_related("agent", "batch", "batch__company", "requested_by").get(pk=sale.pk)
+    sale = (
+        AgentBatchSale.objects.select_for_update()
+        .select_related("agent", "batch", "batch__company", "requested_by")
+        .get(pk=sale.pk)
+    )
     batch = CompanyBatch.objects.select_for_update().get(pk=sale.batch_id)
     if sale.status != AgentBatchSaleStatus.PENDING:
         raise ValidationError("This stock request has already been reviewed.")
@@ -302,28 +327,31 @@ def approve_agent_batch_sale(
         raise ValidationError("You cannot approve stock from a recalled batch.")
     if quantity_approved < 1:
         raise ValidationError("Approve at least one case.")
-    if quantity_approved > batch.unsold_cases_remaining:
-        raise ValidationError(f"Only {batch.unsold_cases_remaining} cases remain in batch {batch.batch_number}.")
+    reserved_cases = _get_reserved_batch_cases(batch, exclude_sale=sale)
+    available_to_approve = max(batch.unsold_cases_remaining - reserved_cases, 0)
+    if quantity_approved > available_to_approve:
+        raise ValidationError(f"Only {available_to_approve} cases remain available in batch {batch.batch_number}.")
 
     unit_price = _safe_money(unit_price)
     initial_payment_amount = _safe_money(initial_payment_amount)
     total_amount = unit_price * quantity_approved
     payment_type = sale.payment_type
+    credit_terms_days = int(credit_terms_days) if credit_terms_days not in (None, "") else None
 
     if payment_type == AgentBatchSalePaymentType.FULL:
         if initial_payment_amount != total_amount:
             raise ValidationError("Full payment requests must be settled in full at approval.")
-        credit_due_date = None
+        credit_terms_days = None
     elif payment_type == AgentBatchSalePaymentType.PARTIAL:
         if initial_payment_amount <= 0 or initial_payment_amount >= total_amount:
             raise ValidationError("Partial payment must be more than zero and less than the full invoice.")
-        if not credit_due_date:
-            raise ValidationError("Partial payment approvals require a due date for the remaining balance.")
+        if not credit_terms_days:
+            raise ValidationError("Partial payment approvals require repayment days after receipt confirmation.")
     else:
         if initial_payment_amount != 0:
             raise ValidationError("Credit approvals cannot record an upfront payment.")
-        if not credit_due_date:
-            raise ValidationError("Credit approvals require a due date.")
+        if not credit_terms_days:
+            raise ValidationError("Credit approvals require repayment days after receipt confirmation.")
 
     projected_outstanding = get_agent_open_batch_balance(sale.agent, exclude_sale=sale) + (total_amount - initial_payment_amount)
     if sale.agent.credit_limit and projected_outstanding > sale.agent.credit_limit:
@@ -331,50 +359,44 @@ def approve_agent_batch_sale(
             f"Approving this request would exceed the agent credit limit of {sale.agent.credit_limit}."
         )
 
-    batch.unsold_cases_remaining -= quantity_approved
-    batch.save(update_fields=["unsold_cases_remaining", "updated_at"])
-    _sync_company_batch_status(batch)
-
     sale.quantity_approved = quantity_approved
+    sale.quantity_received = 0
     sale.unit_price = unit_price
-    sale.credit_due_date = credit_due_date
+    sale.credit_terms_days = credit_terms_days
+    sale.credit_due_date = None
     sale.status = AgentBatchSaleStatus.APPROVED
     sale.decision_note = decision_note
     sale.approved_by = approved_by
     sale.approved_at = timezone.now()
+    sale.received_at = None
+    sale.received_by = None
+    sale.receipt_note = ""
+    sale.cancelled_at = None
+    sale.cancelled_by = None
+    sale.cancellation_reason = ""
+    sale.overdue_notified_at = None
     sale.rejected_at = None
     sale.save(
         update_fields=[
             "quantity_approved",
+            "quantity_received",
             "unit_price",
+            "credit_terms_days",
             "credit_due_date",
             "status",
             "decision_note",
             "approved_by",
             "approved_at",
+            "received_at",
+            "received_by",
+            "receipt_note",
+            "cancelled_at",
+            "cancelled_by",
+            "cancellation_reason",
+            "overdue_notified_at",
             "rejected_at",
             "updated_at",
         ]
-    )
-
-    stock, _ = AgentStock.objects.select_for_update().get_or_create(
-        agent=sale.agent,
-        product=batch.product,
-        defaults={"available_quantity": 0, "reorder_level": 0},
-    )
-    stock.available_quantity += quantity_approved
-    stock.save(update_fields=["available_quantity", "updated_at"])
-    inventory_batch = _get_or_create_agent_inventory_batch(sale.agent, batch, quantity_approved, unit_price)
-    create_inventory_transaction(
-        agent=sale.agent,
-        product=batch.product,
-        transaction_type=InventoryTransactionType.RESTOCK,
-        quantity_change=quantity_approved,
-        stock_after=stock.available_quantity,
-        performed_by=approved_by,
-        batch=inventory_batch,
-        reference=f"BATCH-SALE-{sale.pk}",
-        note=f"Received from company batch {batch.batch_number}.",
     )
 
     if initial_payment_amount > 0:
@@ -392,17 +414,249 @@ def approve_agent_batch_sale(
         notify_user(
             sale.agent.admin,
             "Stock request approved",
-            f"{quantity_approved} cases from {batch.batch_number} were approved for {sale.agent.name}.",
+            f"{quantity_approved} cases from {batch.batch_number} were approved for {sale.agent.name} and are awaiting receipt confirmation.",
             link=reverse("accounts:agent_inventory"),
         )
     if sale.requested_by and sale.requested_by_id != sale.agent.admin_id:
         notify_user(
             sale.requested_by,
             "Stock request approved",
-            f"Your request for batch {batch.batch_number} was approved.",
+            f"Your request for batch {batch.batch_number} was approved and is awaiting receipt confirmation.",
             link=reverse("accounts:agent_inventory"),
         )
     return sale
+
+
+@transaction.atomic
+def confirm_agent_batch_sale_receipt(*, sale, received_by, receipt_note=""):
+    sale = (
+        AgentBatchSale.objects.select_for_update()
+        .select_related("agent", "batch", "batch__company", "requested_by")
+        .get(pk=sale.pk)
+    )
+    batch = CompanyBatch.objects.select_for_update().get(pk=sale.batch_id)
+    if sale.status != AgentBatchSaleStatus.APPROVED:
+        raise ValidationError("Only approved stock sales can be confirmed as received.")
+    if received_by is not None:
+        if received_by.role != UserRole.AGENT_MANAGER or sale.agent.admin_id != received_by.id:
+            raise ValidationError("Only the receiving agent manager can confirm this stock receipt.")
+    if batch.status == CompanyBatchStatus.RECALLED:
+        raise ValidationError("You cannot confirm receipt from a recalled batch.")
+    if sale.payment_type != AgentBatchSalePaymentType.FULL and not sale.credit_terms_days:
+        raise ValidationError("This approved sale is missing the repayment terms needed to confirm receipt.")
+
+    quantity_received = sale.quantity_approved
+    if quantity_received < 1:
+        raise ValidationError("This approved sale does not have a valid quantity to receive.")
+    reserved_cases = _get_reserved_batch_cases(batch, exclude_sale=sale)
+    available_to_receive = max(batch.unsold_cases_remaining - reserved_cases, 0)
+    if quantity_received > available_to_receive:
+        raise ValidationError(f"Only {available_to_receive} cases remain available in batch {batch.batch_number}.")
+
+    batch.unsold_cases_remaining -= quantity_received
+    batch.save(update_fields=["unsold_cases_remaining", "updated_at"])
+    _sync_company_batch_status(batch)
+
+    stock, _ = AgentStock.objects.select_for_update().get_or_create(
+        agent=sale.agent,
+        product=batch.product,
+        defaults={"available_quantity": 0, "reorder_level": 0},
+    )
+    stock.available_quantity += quantity_received
+    stock.save(update_fields=["available_quantity", "updated_at"])
+    inventory_batch = _get_or_create_agent_inventory_batch(sale.agent, batch, quantity_received, sale.unit_price)
+
+    received_at = timezone.now()
+    sale.quantity_received = quantity_received
+    sale.status = AgentBatchSaleStatus.RECEIVED
+    sale.received_at = received_at
+    sale.received_by = received_by
+    sale.receipt_note = (receipt_note or "").strip()
+    sale.credit_due_date = _resolve_credit_due_date(received_at, sale.credit_terms_days)
+    sale.overdue_notified_at = None
+    sale.save(
+        update_fields=[
+            "quantity_received",
+            "status",
+            "received_at",
+            "received_by",
+            "receipt_note",
+            "credit_due_date",
+            "overdue_notified_at",
+            "updated_at",
+        ]
+    )
+
+    create_inventory_transaction(
+        agent=sale.agent,
+        product=batch.product,
+        transaction_type=InventoryTransactionType.RESTOCK,
+        quantity_change=quantity_received,
+        stock_after=stock.available_quantity,
+        performed_by=received_by,
+        batch=inventory_batch,
+        reference=f"BATCH-SALE-{sale.pk}",
+        note=f"Received from company batch {batch.batch_number}.",
+    )
+
+    _notify_company_admins(
+        batch.company,
+        "Stock receipt confirmed",
+        f"{sale.agent.name} confirmed receipt of {quantity_received} cases from batch {batch.batch_number}.",
+        link=reverse("accounts:company_inventory"),
+    )
+    if sale.agent.admin:
+        notify_user(
+            sale.agent.admin,
+            "Stock receipt confirmed",
+            f"{quantity_received} cases from {batch.batch_number} were added to branch inventory.",
+            link=reverse("accounts:agent_inventory"),
+        )
+    if sale.requested_by and sale.requested_by_id != sale.agent.admin_id:
+        notify_user(
+            sale.requested_by,
+            "Stock receipt confirmed",
+            f"Batch {batch.batch_number} was confirmed as received for {sale.agent.name}.",
+            link=reverse("accounts:agent_inventory"),
+        )
+    return sale
+
+
+@transaction.atomic
+def cancel_agent_batch_sale(*, sale, cancelled_by, reason):
+    sale = (
+        AgentBatchSale.objects.select_for_update()
+        .select_related("agent", "batch", "batch__company", "requested_by")
+        .get(pk=sale.pk)
+    )
+    batch = CompanyBatch.objects.select_for_update().get(pk=sale.batch_id)
+    reason = (reason or "").strip()
+    if not reason:
+        raise ValidationError("A cancellation reason is required.")
+    if cancelled_by.role != UserRole.COMPANY_ADMIN or cancelled_by.managed_company_id != sale.batch.company_id:
+        raise ValidationError("Only a company admin for this company can cancel the sale.")
+    if sale.status not in {AgentBatchSaleStatus.APPROVED, AgentBatchSaleStatus.RECEIVED}:
+        raise ValidationError("Only approved or received stock sales can be cancelled.")
+
+    if sale.status == AgentBatchSaleStatus.RECEIVED:
+        stock = AgentStock.objects.select_for_update().get(agent=sale.agent, product=batch.product)
+        inventory_batch = InventoryBatch.objects.select_for_update().get(agent=sale.agent, batch_number=batch.batch_number)
+        if stock.available_quantity < sale.quantity_received or inventory_batch.quantity_remaining < sale.quantity_received:
+            raise ValidationError(
+                "This received sale cannot be cancelled because the stock has already been distributed or adjusted."
+            )
+
+        stock.available_quantity -= sale.quantity_received
+        stock.save(update_fields=["available_quantity", "updated_at"])
+        inventory_batch.quantity_remaining -= sale.quantity_received
+        inventory_batch.save(update_fields=["quantity_remaining", "updated_at"])
+        batch.unsold_cases_remaining += sale.quantity_received
+        batch.save(update_fields=["unsold_cases_remaining", "updated_at"])
+        _sync_company_batch_status(batch)
+        create_inventory_transaction(
+            agent=sale.agent,
+            product=batch.product,
+            transaction_type=InventoryTransactionType.RETURN,
+            quantity_change=-sale.quantity_received,
+            stock_after=stock.available_quantity,
+            performed_by=cancelled_by,
+            batch=inventory_batch,
+            reference=f"BATCH-SALE-{sale.pk}",
+            note=f"Cancelled batch sale returned to company batch {batch.batch_number}.",
+        )
+
+    sale.status = AgentBatchSaleStatus.CANCELLED
+    sale.cancelled_at = timezone.now()
+    sale.cancelled_by = cancelled_by
+    sale.cancellation_reason = reason
+    sale.overdue_notified_at = None
+    sale.save(
+        update_fields=[
+            "status",
+            "cancelled_at",
+            "cancelled_by",
+            "cancellation_reason",
+            "overdue_notified_at",
+            "updated_at",
+        ]
+    )
+
+    if sale.agent.admin:
+        notify_user(
+            sale.agent.admin,
+            "Stock sale cancelled",
+            f"Batch sale {batch.batch_number} for {sale.agent.name} was cancelled: {reason}",
+            link=reverse("accounts:agent_inventory"),
+        )
+    if sale.requested_by and sale.requested_by_id != sale.agent.admin_id:
+        notify_user(
+            sale.requested_by,
+            "Stock sale cancelled",
+            f"Your stock request for batch {batch.batch_number} was cancelled: {reason}",
+            link=reverse("accounts:agent_inventory"),
+        )
+    _notify_company_admins(
+        batch.company,
+        "Stock sale cancelled",
+        f"{sale.agent.name}'s batch sale for {batch.batch_number} was cancelled.",
+        link=reverse("accounts:company_inventory"),
+    )
+    return sale
+
+
+def auto_confirm_stale_agent_batch_sales():
+    cutoff = timezone.now() - timezone.timedelta(days=settings.AGENT_BATCH_RECEIPT_AUTO_CONFIRM_DAYS)
+    stale_sales = AgentBatchSale.objects.filter(
+        status=AgentBatchSaleStatus.APPROVED,
+        approved_at__lt=cutoff,
+    ).order_by("approved_at")
+    summary = {"confirmed": 0, "failed": 0}
+    for sale in stale_sales:
+        try:
+            confirm_agent_batch_sale_receipt(
+                sale=sale,
+                received_by=None,
+                receipt_note=(
+                    "Auto-confirmed after "
+                    f"{settings.AGENT_BATCH_RECEIPT_AUTO_CONFIRM_DAYS} days with no manual confirmation."
+                ),
+            )
+            summary["confirmed"] += 1
+        except Exception:
+            summary["failed"] += 1
+            logger.exception("Failed to auto-confirm stale agent batch sale %s", sale.pk)
+    return summary
+
+
+def notify_overdue_agent_batch_sales():
+    today = timezone.localdate()
+    overdue_sales = (
+        AgentBatchSale.objects.filter(
+            status=AgentBatchSaleStatus.RECEIVED,
+            credit_due_date__lt=today,
+            overdue_notified_at__isnull=True,
+        )
+        .select_related("agent", "batch", "batch__company")
+        .prefetch_related("payments")
+        .order_by("credit_due_date", "pk")
+    )
+    notified_count = 0
+    for sale in overdue_sales:
+        if sale.outstanding_balance <= 0:
+            continue
+        _notify_company_admins(
+            sale.batch.company,
+            "Agent batch sale overdue",
+            (
+                f"{sale.agent.name} still owes {sale.outstanding_balance} "
+                f"for batch {sale.batch.batch_number}, due {sale.credit_due_date}."
+            ),
+            link=reverse("accounts:company_inventory"),
+        )
+        sale.overdue_notified_at = timezone.now()
+        sale.save(update_fields=["overdue_notified_at", "updated_at"])
+        notified_count += 1
+    return {"notified": notified_count}
 
 
 @transaction.atomic
@@ -439,8 +693,8 @@ def reject_agent_batch_sale(*, sale, reviewed_by, decision_note):
 @transaction.atomic
 def submit_agent_batch_sale_payment(*, sale, submitted_by, amount, note=""):
     sale = AgentBatchSale.objects.select_related("agent", "batch", "batch__company").get(pk=sale.pk)
-    if sale.status != AgentBatchSaleStatus.APPROVED:
-        raise ValidationError("Payments can only be logged against approved stock sales.")
+    if sale.status not in OPEN_BATCH_BALANCE_STATUSES:
+        raise ValidationError("Payments can only be logged against approved or received stock sales.")
     amount = _safe_money(amount)
     if amount <= 0:
         raise ValidationError("Payment amount must be greater than zero.")
@@ -542,7 +796,9 @@ def recall_company_batch(*, batch, recalled_by, reason):
         ]
     )
 
-    affected_sales = batch.agent_sales.filter(status=AgentBatchSaleStatus.APPROVED).select_related("agent__admin")
+    affected_sales = batch.agent_sales.filter(
+        status__in=[AgentBatchSaleStatus.APPROVED, AgentBatchSaleStatus.RECEIVED]
+    ).select_related("agent__admin")
     for sale in affected_sales:
         remaining_with_agent = (
             InventoryBatch.objects.filter(
@@ -556,7 +812,12 @@ def recall_company_batch(*, batch, recalled_by, reason):
             notify_user(
                 sale.agent.admin,
                 "Batch recall issued",
-                f"Batch {batch.batch_number} was recalled. Your branch received {sale.quantity_approved} cases and still holds {remaining_with_agent}.",
+                (
+                    f"Batch {batch.batch_number} was recalled. Your branch "
+                    f"{'received' if sale.status == AgentBatchSaleStatus.RECEIVED else 'had approved'} "
+                    f"{sale.quantity_received if sale.status == AgentBatchSaleStatus.RECEIVED else sale.quantity_approved} "
+                    f"cases and still holds {remaining_with_agent}."
+                ),
                 link=reverse("accounts:agent_inventory"),
             )
     return batch

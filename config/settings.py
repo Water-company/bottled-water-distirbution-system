@@ -2,6 +2,9 @@ import os
 from decimal import Decimal
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+from django.core.management.utils import get_random_secret_key
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -20,9 +23,41 @@ def load_local_env():
 
 load_local_env()
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-dev-key")
-DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() == "true"
+def env_bool(name, default=False):
+    return os.getenv(name, str(default)).lower() in {"1", "true", "yes", "on"}
+
+
+DJANGO_ENV = os.getenv("DJANGO_ENV", "").strip().lower()
+IS_LOCAL_ENV = DJANGO_ENV == "local"
+
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "").strip()
+if not SECRET_KEY:
+    if IS_LOCAL_ENV:
+        SECRET_KEY = get_random_secret_key()
+    else:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY is not set. Define DJANGO_SECRET_KEY or set DJANGO_ENV=local for local development only."
+        )
+
+DEBUG = env_bool("DJANGO_DEBUG", False)
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+
+SESSION_COOKIE_SECURE = env_bool("DJANGO_SESSION_COOKIE_SECURE", not IS_LOCAL_ENV)
+CSRF_COOKIE_SECURE = env_bool("DJANGO_CSRF_COOKIE_SECURE", not IS_LOCAL_ENV)
+SECURE_SSL_REDIRECT = env_bool("DJANGO_SECURE_SSL_REDIRECT", not IS_LOCAL_ENV)
+SECURE_HSTS_SECONDS = int(os.getenv("DJANGO_SECURE_HSTS_SECONDS", "0" if IS_LOCAL_ENV else "31536000"))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool(
+    "DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS",
+    not IS_LOCAL_ENV,
+)
+if env_bool("DJANGO_SECURE_PROXY_SSL_HEADER_ENABLED", not IS_LOCAL_ENV):
+    SECURE_PROXY_SSL_HEADER = (
+        os.getenv("DJANGO_SECURE_PROXY_SSL_HEADER_NAME", "HTTP_X_FORWARDED_PROTO"),
+        os.getenv("DJANGO_SECURE_PROXY_SSL_HEADER_VALUE", "https"),
+    )
+else:
+    SECURE_PROXY_SSL_HEADER = None
+X_FRAME_OPTIONS = os.getenv("DJANGO_X_FRAME_OPTIONS", "DENY")
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -115,8 +150,8 @@ EMAIL_HOST = os.getenv("EMAIL_HOST", "")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
-EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() in {"1", "true", "yes", "on"}
-EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "false").lower() in {"1", "true", "yes", "on"}
+EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", True)
+EMAIL_USE_SSL = env_bool("EMAIL_USE_SSL", False)
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "20"))
 EMAIL_BACKEND = os.getenv(
     "EMAIL_BACKEND",
@@ -143,6 +178,7 @@ QR_TOKEN_EXPIRY_HOURS = int(os.getenv("QR_TOKEN_EXPIRY_HOURS", "24"))
 DRIVER_DELIVERY_EARNING_AMOUNT = Decimal(os.getenv("DRIVER_DELIVERY_EARNING_AMOUNT", "50.00"))
 DRIVER_ON_TIME_TARGET_MINUTES = int(os.getenv("DRIVER_ON_TIME_TARGET_MINUTES", "60"))
 ETA_AVERAGE_SPEED_KMH = Decimal(os.getenv("ETA_AVERAGE_SPEED_KMH", "25"))
+AGENT_BATCH_RECEIPT_AUTO_CONFIRM_DAYS = int(os.getenv("AGENT_BATCH_RECEIPT_AUTO_CONFIRM_DAYS", "5"))
 ACCOUNT_LOCKOUT_THRESHOLD = int(os.getenv("ACCOUNT_LOCKOUT_THRESHOLD", "5"))
 ACCOUNT_LOCKOUT_MINUTES = int(os.getenv("ACCOUNT_LOCKOUT_MINUTES", "15"))
 SESSION_INACTIVITY_MINUTES = int(os.getenv("SESSION_INACTIVITY_MINUTES", "30"))

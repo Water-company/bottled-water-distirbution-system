@@ -188,6 +188,7 @@ def _set_latest_status_note(order, note):
 
 @transaction.atomic
 def expire_order_request_if_needed(order):
+    order = Order.objects.select_for_update().get(pk=order.pk)
     if order.status != OrderStatus.REQUESTED or not order.agent_response_deadline:
         return False
 
@@ -419,7 +420,7 @@ def create_order_request_from_cart(user, cleaned_data):
 
 @transaction.atomic
 def accept_agent_request(agent_request, note="", accepted_by=None):
-    order = agent_request.order
+    order = Order.objects.select_for_update().get(pk=agent_request.order_id)
     if order.status != OrderStatus.REQUESTED:
         raise ValidationError("This order is no longer waiting for agent review.")
 
@@ -469,7 +470,7 @@ def accept_agent_request(agent_request, note="", accepted_by=None):
 
 @transaction.atomic
 def reject_agent_request(agent_request, note=""):
-    order = agent_request.order
+    order = Order.objects.select_for_update().get(pk=agent_request.order_id)
     if order.status != OrderStatus.REQUESTED:
         raise ValidationError("This order is no longer waiting for agent review.")
 

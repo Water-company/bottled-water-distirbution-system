@@ -31,3 +31,33 @@ def normalize_ethiopian_phone_number(value, *, required=True):
 
 def validate_ethiopian_phone_number(value):
     normalize_ethiopian_phone_number(value)
+
+
+def validate_file_size(max_mb):
+    max_bytes = int(max_mb * 1024 * 1024)
+    max_mb_display = int(max_mb) if float(max_mb).is_integer() else max_mb
+
+    def validator(upload):
+        if not upload:
+            return
+        size = getattr(upload, "size", None)
+        if size is not None and size > max_bytes:
+            raise ValidationError(f"File size must not exceed {max_mb_display} MB.")
+
+    return validator
+
+
+def validate_document_content_type(allowed_types):
+    allowed_types = tuple(allowed_types)
+    allowed_display = ", ".join(allowed_types)
+
+    def validator(upload):
+        if not upload:
+            return
+        content_type = (getattr(upload, "content_type", "") or "").lower()
+        if content_type not in allowed_types:
+            raise ValidationError(
+                f"Unsupported file type. Allowed types: {allowed_display}."
+            )
+
+    return validator

@@ -3,6 +3,7 @@ from django.urls import path
 
 from accounts.views import (
     AgentBatchSalePaymentCreateView,
+    AgentBatchSaleReceiptConfirmView,
     AgentBatchSaleRequestCreateView,
     AgentManagerDashboardView,
     AgentDriverCreateView,
@@ -66,6 +67,7 @@ from accounts.views import (
     CompanyBatchCreateView,
     CompanyBatchDetailView,
     CompanyBatchRecallView,
+    CompanyBatchSaleCancelView,
     CompanyBatchSaleDecisionView,
     CompanyBatchSalePaymentDecisionView,
     CompanyInventoryView,
@@ -124,6 +126,11 @@ urlpatterns = [
     path("agent/inventory/", AgentInventoryView.as_view(), name="agent_inventory"),
     path("agent/inventory/batch-requests/create/", AgentBatchSaleRequestCreateView.as_view(), name="agent_batch_request_create"),
     path("agent/inventory/batch-sales/<int:pk>/payments/create/", AgentBatchSalePaymentCreateView.as_view(), name="agent_batch_payment_create"),
+    path(
+        "agent/inventory/batch-sales/<int:pk>/confirm-receipt/",
+        AgentBatchSaleReceiptConfirmView.as_view(),
+        name="agent_batch_sale_confirm_receipt",
+    ),
     path("agent/inventory/adjust/", AgentInventoryAdjustmentCreateView.as_view(), name="agent_inventory_adjust"),
     path("agent/inventory/<int:pk>/threshold/", AgentInventoryThresholdUpdateView.as_view(), name="agent_inventory_threshold"),
     path("agent/refunds/", AgentRefundListView.as_view(), name="agent_refunds"),
@@ -158,6 +165,11 @@ urlpatterns = [
         "company/inventory/stock-requests/<int:pk>/reject/",
         CompanyBatchSaleDecisionView.as_view(action="reject"),
         name="company_batch_sale_reject",
+    ),
+    path(
+        "company/inventory/stock-sales/<int:pk>/cancel/",
+        CompanyBatchSaleCancelView.as_view(),
+        name="company_batch_sale_cancel",
     ),
     path(
         "company/inventory/payments/<int:pk>/confirm/",

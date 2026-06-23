@@ -128,6 +128,9 @@ class Order(TimeStampedModel):
 
     class Meta:
         ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["status"], name="orders_order_status_idx"),
+        ]
 
     def __str__(self):
         return self.order_number

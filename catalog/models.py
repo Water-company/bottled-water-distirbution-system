@@ -1,4 +1,5 @@
 import math
+from decimal import Decimal
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -178,7 +179,9 @@ class Agent(TimeStampedModel):
     def outstanding_balance(self):
         return sum(
             sale.outstanding_balance
-            for sale in self.batch_sales.filter(status=AgentBatchSaleStatus.APPROVED).select_related("batch")
+            for sale in self.batch_sales.filter(
+                status__in=[AgentBatchSaleStatus.APPROVED, AgentBatchSaleStatus.RECEIVED]
+            ).select_related("batch")
         )
 
 
@@ -379,6 +382,8 @@ class AgentBatchSalePaymentType(models.TextChoices):
 class AgentBatchSaleStatus(models.TextChoices):
     PENDING = "pending", "Pending"
     APPROVED = "approved", "Approved"
+    RECEIVED = "received", "Received"
+    CANCELLED = "cancelled", "Cancelled"
     REJECTED = "rejected", "Rejected"
 
 
@@ -461,10 +466,11 @@ class CompanyBatch(TimeStampedModel):
 
     @property
     def cash_recovery_rate(self):
-        total_owed = sum(sale.total_amount for sale in self.agent_sales.filter(status=AgentBatchSaleStatus.APPROVED))
+        tracked_statuses = [AgentBatchSaleStatus.APPROVED, AgentBatchSaleStatus.RECEIVED]
+        total_owed = sum(sale.total_amount for sale in self.agent_sales.filter(status__in=tracked_statuses))
         if total_owed <= 0:
             return 0
-        total_collected = sum(sale.amount_collected for sale in self.agent_sales.filter(status=AgentBatchSaleStatus.APPROVED))
+        total_collected = sum(sale.amount_collected for sale in self.agent_sales.filter(status__in=tracked_statuses))
         return round((total_collected / total_owed) * 100, 2)
 
 
@@ -487,15 +493,36 @@ class AgentBatchSale(TimeStampedModel):
     )
     quantity_requested = models.PositiveIntegerField()
     quantity_approved = models.PositiveIntegerField(default=0)
+    quantity_received = models.PositiveIntegerField(default=0)
     payment_type = models.CharField(max_length=20, choices=AgentBatchSalePaymentType.choices)
     requested_upfront_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     unit_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    credit_terms_days = models.PositiveIntegerField(blank=True, null=True)
     credit_due_date = models.DateField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=AgentBatchSaleStatus.choices, default=AgentBatchSaleStatus.PENDING)
     requested_note = models.TextField(blank=True)
     decision_note = models.TextField(blank=True)
+    receipt_note = models.TextField(blank=True)
+    cancellation_reason = models.TextField(blank=True)
     approved_at = models.DateTimeField(blank=True, null=True)
+    received_at = models.DateTimeField(blank=True, null=True)
     rejected_at = models.DateTimeField(blank=True, null=True)
+    cancelled_at = models.DateTimeField(blank=True, null=True)
+    overdue_notified_at = models.DateTimeField(blank=True, null=True)
+    received_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="received_batch_sales",
+        blank=True,
+        null=True,
+    )
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="cancelled_batch_sales",
+        blank=True,
+        null=True,
+    )
 
     class Meta:
         ordering = ("-created_at",)
@@ -512,8 +539,21 @@ class AgentBatchSale(TimeStampedModel):
             raise ValidationError({"quantity_requested": "Request at least one case."})
         if self.quantity_approved and self.quantity_approved > self.batch.total_cases_produced:
             raise ValidationError({"quantity_approved": "Approved cases cannot exceed the batch total."})
+        if self.quantity_received and self.quantity_received > self.quantity_approved:
+            raise ValidationError({"quantity_received": "Received cases cannot exceed approved cases."})
         if self.requested_upfront_amount < 0:
             raise ValidationError({"requested_upfront_amount": "Upfront payment cannot be negative."})
+        if self.credit_terms_days is not None and self.credit_terms_days < 1:
+            raise ValidationError({"credit_terms_days": "Credit terms must be at least one day."})
+        if self.status == AgentBatchSaleStatus.RECEIVED:
+            if self.quantity_received < 1:
+                raise ValidationError({"quantity_received": "Received sales must record at least one case."})
+            if self.quantity_received != self.quantity_approved:
+                raise ValidationError({"quantity_received": "Full receipt is required for received sales."})
+            if not self.received_at:
+                raise ValidationError({"received_at": "Received sales must record when the stock was confirmed."})
+        if self.status == AgentBatchSaleStatus.CANCELLED and not self.cancellation_reason.strip():
+            raise ValidationError({"cancellation_reason": "Cancelled sales require a cancellation reason."})
 
     @property
     def total_amount(self):
@@ -530,19 +570,25 @@ class AgentBatchSale(TimeStampedModel):
 
     @property
     def outstanding_balance(self):
+        if self.status in {AgentBatchSaleStatus.REJECTED, AgentBatchSaleStatus.CANCELLED}:
+            return Decimal("0.00")
         return max(self.total_amount - self.amount_collected, 0)
 
     @property
     def collection_status(self):
-        if self.status != AgentBatchSaleStatus.APPROVED:
+        if self.status == AgentBatchSaleStatus.CANCELLED:
+            return "cancelled"
+        if self.status == AgentBatchSaleStatus.REJECTED:
+            return "rejected"
+        if self.status not in {AgentBatchSaleStatus.APPROVED, AgentBatchSaleStatus.RECEIVED}:
             return "pending"
         if self.outstanding_balance <= 0:
             return "paid"
-        if self.credit_due_date and self.credit_due_date < timezone.localdate():
+        if self.status == AgentBatchSaleStatus.RECEIVED and self.credit_due_date and self.credit_due_date < timezone.localdate():
             return "overdue"
         if self.amount_collected > 0:
             return "partial"
-        return "unpaid"
+        return "awaiting_receipt" if self.status == AgentBatchSaleStatus.APPROVED else "unpaid"
 
     @property
     def is_overdue(self):

@@ -6,7 +6,11 @@ from django.db import transaction
 from django.utils import timezone
 
 from accounts.models import CustomerAddress, User, UserRole
-from accounts.validators import normalize_ethiopian_phone_number
+from accounts.validators import (
+    normalize_ethiopian_phone_number,
+    validate_document_content_type,
+    validate_file_size,
+)
 from catalog.models import (
     Agent,
     AgentBatchSale,
@@ -34,6 +38,21 @@ def normalize_required_phone(value):
 
 def normalize_optional_phone(value):
     return normalize_ethiopian_phone_number(value, required=False)
+
+
+DOCUMENT_MAX_SIZE_VALIDATOR = validate_file_size(10)
+IMAGE_MAX_SIZE_VALIDATOR = validate_file_size(5)
+REGISTRATION_DOCUMENT_CONTENT_TYPE_VALIDATOR = validate_document_content_type(
+    ("application/pdf", "image/jpeg", "image/png")
+)
+
+
+def run_upload_validators(upload, *validators):
+    if not upload:
+        return upload
+    for validator in validators:
+        validator(upload)
+    return upload
 
 
 class RegistrationForm(forms.ModelForm):
@@ -166,6 +185,12 @@ class CustomerProfileForm(forms.ModelForm):
             raise ValidationError("An account with this phone number already exists.")
         return phone_number
 
+    def clean_profile_image(self):
+        return run_upload_validators(
+            self.cleaned_data.get("profile_image"),
+            IMAGE_MAX_SIZE_VALIDATOR,
+        )
+
 
 class InternalUserCreationForm(forms.ModelForm):
     password = forms.CharField(widget=forms.PasswordInput)
@@ -245,6 +270,19 @@ class CompanyForm(forms.ModelForm):
     def clean_contact_phone(self):
         return normalize_optional_phone(self.cleaned_data.get("contact_phone"))
 
+    def clean_registration_document(self):
+        return run_upload_validators(
+            self.cleaned_data.get("registration_document"),
+            DOCUMENT_MAX_SIZE_VALIDATOR,
+            REGISTRATION_DOCUMENT_CONTENT_TYPE_VALIDATOR,
+        )
+
+    def clean_logo(self):
+        return run_upload_validators(
+            self.cleaned_data.get("logo"),
+            IMAGE_MAX_SIZE_VALIDATOR,
+        )
+
 
 class SystemCompanyRegistrationForm(forms.ModelForm):
     admin_first_name = forms.CharField(max_length=150)
@@ -282,6 +320,19 @@ class SystemCompanyRegistrationForm(forms.ModelForm):
 
     def clean_contact_phone(self):
         return normalize_optional_phone(self.cleaned_data.get("contact_phone"))
+
+    def clean_registration_document(self):
+        return run_upload_validators(
+            self.cleaned_data.get("registration_document"),
+            DOCUMENT_MAX_SIZE_VALIDATOR,
+            REGISTRATION_DOCUMENT_CONTENT_TYPE_VALIDATOR,
+        )
+
+    def clean_logo(self):
+        return run_upload_validators(
+            self.cleaned_data.get("logo"),
+            IMAGE_MAX_SIZE_VALIDATOR,
+        )
 
     def clean_admin_phone_number(self):
         phone_number = normalize_required_phone(self.cleaned_data["admin_phone_number"])
@@ -541,23 +592,50 @@ class AgentBatchSaleApprovalForm(forms.Form):
     quantity_approved = forms.IntegerField(min_value=1)
     unit_price = forms.DecimalField(max_digits=10, decimal_places=2, min_value=0)
     initial_payment_amount = forms.DecimalField(max_digits=10, decimal_places=2, min_value=0, required=False)
-    credit_due_date = forms.DateField(required=False, widget=forms.DateInput(attrs={"type": "date"}))
+    credit_terms_days = forms.IntegerField(
+        min_value=1,
+        required=False,
+        label="Days to repay after stock is confirmed received.",
+    )
     decision_note = forms.CharField(required=False, widget=forms.Textarea(attrs={"rows": 2}))
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         for field in self.fields.values():
             field.widget.attrs["class"] = "form-control"
+        self.fields["credit_terms_days"].widget.attrs.update({"min": "1", "step": "1", "placeholder": "e.g. 14"})
+        self.fields["credit_terms_days"].help_text = (
+            "Use this for partial-payment or credit approvals. The countdown starts when the agent confirms receipt."
+        )
 
     def clean_initial_payment_amount(self):
         return self.cleaned_data.get("initial_payment_amount") or 0
 
     def clean(self):
         cleaned_data = super().clean()
-        credit_due_date = cleaned_data.get("credit_due_date")
-        if credit_due_date and credit_due_date < timezone.localdate():
-            raise ValidationError("Credit due date cannot be in the past.")
+        credit_terms_days = cleaned_data.get("credit_terms_days")
+        if credit_terms_days is not None and credit_terms_days < 1:
+            raise ValidationError("Credit terms must be at least one day.")
         return cleaned_data
+
+
+class AgentBatchSaleReceiptForm(forms.Form):
+    receipt_note = forms.CharField(required=False, widget=forms.Textarea(attrs={"rows": 2}))
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["receipt_note"].widget.attrs["class"] = "form-control"
+        self.fields["receipt_note"].label = "Receipt note"
+        self.fields["receipt_note"].help_text = "Optional warehouse or handoff note for the confirmed receipt."
+
+
+class AgentBatchSaleCancellationForm(forms.Form):
+    reason = forms.CharField(widget=forms.Textarea(attrs={"rows": 2}))
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["reason"].widget.attrs["class"] = "form-control"
+        self.fields["reason"].label = "Cancellation reason"
 
 
 class AgentBatchSalePaymentForm(forms.ModelForm):
@@ -841,6 +919,12 @@ class CompanyProductForm(forms.ModelForm):
         if queryset.exists():
             raise ValidationError("A product with this name already exists for your company.")
         return name
+
+    def clean_image(self):
+        return run_upload_validators(
+            self.cleaned_data.get("image"),
+            IMAGE_MAX_SIZE_VALIDATOR,
+        )
 
 
 class CompanyAgentUpdateForm(forms.ModelForm):

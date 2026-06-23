@@ -8,7 +8,7 @@ from django.contrib.auth.forms import PasswordResetForm
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models import Avg, Count, Q, Sum
+from django.db.models import Avg, Count, Prefetch, Q, Sum
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse, reverse_lazy
@@ -19,7 +19,9 @@ from django.views.generic import DetailView, FormView, TemplateView, UpdateView
 
 from accounts.forms import (
     AgentBatchSaleApprovalForm,
+    AgentBatchSaleCancellationForm,
     AgentBatchSalePaymentForm,
+    AgentBatchSaleReceiptForm,
     AgentBatchSaleRequestForm,
     AgentForm,
     AgentDriverCreateForm,
@@ -86,6 +88,8 @@ from catalog.models import (
 from catalog.services import (
     apply_agent_inventory_adjustment,
     approve_agent_batch_sale,
+    cancel_agent_batch_sale,
+    confirm_agent_batch_sale_receipt,
     confirm_agent_batch_sale_payment,
     create_company_starter_catalog,
     get_agent_open_batch_balance,
@@ -501,22 +505,31 @@ def build_company_batch_rows(company):
     )
     rows = []
     for batch in batches:
-        approved_sales = [sale for sale in batch.agent_sales.all() if sale.status == AgentBatchSaleStatus.APPROVED]
-        total_owed = sum(sale.total_amount for sale in approved_sales)
-        total_collected = sum(sale.amount_collected for sale in approved_sales)
-        remaining_with_agents = sum(get_agent_batch_sale_remaining_cases(sale) for sale in approved_sales)
+        exposure_sales = [
+            sale
+            for sale in batch.agent_sales.all()
+            if sale.status in {AgentBatchSaleStatus.APPROVED, AgentBatchSaleStatus.RECEIVED}
+        ]
+        received_sales = [sale for sale in exposure_sales if sale.status == AgentBatchSaleStatus.RECEIVED]
+        total_owed = sum(sale.total_amount for sale in exposure_sales)
+        total_collected = sum(sale.amount_collected for sale in exposure_sales)
+        remaining_with_agents = sum(get_agent_batch_sale_remaining_cases(sale) for sale in received_sales)
+        total_received_cases = sum(sale.quantity_received for sale in received_sales)
         rows.append(
             {
                 "object": batch,
-                "approved_sales_count": len(approved_sales),
+                "approved_sales_count": len(exposure_sales),
                 "cases_sold": batch.cases_sold,
                 "total_owed": total_owed,
                 "total_collected": total_collected,
                 "outstanding_balance": max(total_owed - total_collected, Decimal("0.00")),
                 "cash_recovery_rate": batch.cash_recovery_rate,
+                "reserved_cases": sum(
+                    sale.quantity_approved for sale in exposure_sales if sale.status == AgentBatchSaleStatus.APPROVED
+                ),
                 "remaining_with_agents": remaining_with_agents,
-                "distributed_cases": max(sum(sale.quantity_approved for sale in approved_sales) - remaining_with_agents, 0),
-                "overdue_count": sum(1 for sale in approved_sales if sale.is_overdue),
+                "distributed_cases": max(total_received_cases - remaining_with_agents, 0),
+                "overdue_count": sum(1 for sale in received_sales if sale.is_overdue),
             }
         )
     return rows
@@ -526,43 +539,52 @@ def build_company_batch_detail(batch):
     sales = list(
         batch.agent_sales.select_related("agent", "requested_by", "approved_by").prefetch_related("payments").order_by("-created_at")
     )
-    approved_sales = [sale for sale in sales if sale.status == AgentBatchSaleStatus.APPROVED]
+    exposure_sales = [
+        sale for sale in sales if sale.status in {AgentBatchSaleStatus.APPROVED, AgentBatchSaleStatus.RECEIVED}
+    ]
+    received_sales = [sale for sale in exposure_sales if sale.status == AgentBatchSaleStatus.RECEIVED]
     sale_rows = []
     for sale in sales:
-        remaining_cases = get_agent_batch_sale_remaining_cases(sale) if sale.status == AgentBatchSaleStatus.APPROVED else 0
+        remaining_cases = get_agent_batch_sale_remaining_cases(sale) if sale.status == AgentBatchSaleStatus.RECEIVED else 0
+        received_cases = sale.quantity_received if sale.status == AgentBatchSaleStatus.RECEIVED else 0
         sale_rows.append(
             {
                 "sale": sale,
+                "received_cases": received_cases,
                 "remaining_cases": remaining_cases,
-                "distributed_cases": max(sale.quantity_approved - remaining_cases, 0) if sale.status == AgentBatchSaleStatus.APPROVED else 0,
+                "distributed_cases": max(received_cases - remaining_cases, 0),
                 "collection_status": sale.collection_status,
             }
         )
 
     top_agent_map = {}
-    for sale in approved_sales:
+    for sale in received_sales:
         row = top_agent_map.setdefault(
             sale.agent_id,
             {"agent": sale.agent, "cases": 0, "outstanding": Decimal("0.00")},
         )
-        row["cases"] += sale.quantity_approved
+        row["cases"] += sale.quantity_received
         row["outstanding"] += sale.outstanding_balance
     top_agents = sorted(top_agent_map.values(), key=lambda row: (-row["cases"], row["agent"].name.lower()))
-    total_owed = sum(sale.total_amount for sale in approved_sales)
-    total_collected = sum(sale.amount_collected for sale in approved_sales)
-    remaining_with_agents = sum(row["remaining_cases"] for row in sale_rows if row["sale"].status == AgentBatchSaleStatus.APPROVED)
+    total_owed = sum(sale.total_amount for sale in exposure_sales)
+    total_collected = sum(sale.amount_collected for sale in exposure_sales)
+    remaining_with_agents = sum(row["remaining_cases"] for row in sale_rows if row["sale"].status == AgentBatchSaleStatus.RECEIVED)
+    total_received_cases = sum(sale.quantity_received for sale in received_sales)
     metrics = {
         "cases_sold": batch.cases_sold,
         "unsold_cases_remaining": batch.unsold_cases_remaining,
         "recalled_cases": batch.recalled_cases,
+        "reserved_cases": sum(
+            sale.quantity_approved for sale in exposure_sales if sale.status == AgentBatchSaleStatus.APPROVED
+        ),
         "remaining_with_agents": remaining_with_agents,
-        "distributed_cases": max(sum(sale.quantity_approved for sale in approved_sales) - remaining_with_agents, 0),
+        "distributed_cases": max(total_received_cases - remaining_with_agents, 0),
         "sales_velocity_per_day": batch.sales_velocity_per_day,
         "cash_recovery_rate": batch.cash_recovery_rate,
         "total_owed": total_owed,
         "total_collected": total_collected,
         "outstanding_balance": max(total_owed - total_collected, Decimal("0.00")),
-        "overdue_sales_count": sum(1 for sale in approved_sales if sale.is_overdue),
+        "overdue_sales_count": sum(1 for sale in received_sales if sale.is_overdue),
     }
     return metrics, sale_rows, top_agents
 
@@ -586,7 +608,12 @@ def serialize_agent_batch_sale_for_audit(sale):
         "payment_type": sale.payment_type,
         "quantity_requested": sale.quantity_requested,
         "quantity_approved": sale.quantity_approved,
+        "quantity_received": sale.quantity_received,
         "unit_price": str(sale.unit_price),
+        "credit_terms_days": sale.credit_terms_days,
+        "credit_due_date": sale.credit_due_date.isoformat() if sale.credit_due_date else "",
+        "received_at": sale.received_at.isoformat() if sale.received_at else "",
+        "cancelled_at": sale.cancelled_at.isoformat() if sale.cancelled_at else "",
         "outstanding_balance": str(sale.outstanding_balance),
     }
 
@@ -726,19 +753,65 @@ def serialize_refund_for_audit(refund_request):
 
 def build_user_company_labels(user):
     labels = set()
+    managed_company = user._state.fields_cache.get("managed_company")
     if user.managed_company_id:
-        labels.add(user.managed_company.name)
-    labels.update(user.managed_companies.values_list("name", flat=True))
-    labels.update(user.managed_agent_branches.values_list("company__name", flat=True))
-    driver_profile = getattr(user, "driver_profile", None)
+        if managed_company is not None:
+            labels.add(managed_company.name)
+        else:
+            labels.add(user.managed_company.name)
+
+    prefetched_managed_companies = getattr(user, "prefetched_managed_companies", None)
+    if prefetched_managed_companies is not None:
+        labels.update(company.name for company in prefetched_managed_companies if company.name)
+    else:
+        labels.update(user.managed_companies.values_list("name", flat=True))
+
+    prefetched_managed_agent_branches = getattr(user, "prefetched_managed_agent_branches", None)
+    if prefetched_managed_agent_branches is not None:
+        labels.update(
+            agent.company.name
+            for agent in prefetched_managed_agent_branches
+            if agent.company_id and agent.company and agent.company.name
+        )
+    else:
+        labels.update(user.managed_agent_branches.values_list("company__name", flat=True))
+
+    if "driver_profile" in user._state.fields_cache:
+        driver_profile = user._state.fields_cache["driver_profile"]
+    else:
+        driver_profile = getattr(user, "driver_profile", None)
     if driver_profile and driver_profile.agent_id:
         labels.add(driver_profile.agent.company.name)
-    labels.update(user.orders.values_list("company__name", flat=True))
+
+    prefetched_orders = getattr(user, "prefetched_orders", None)
+    if prefetched_orders is not None:
+        labels.update(order.company.name for order in prefetched_orders if order.company_id and order.company and order.company.name)
+    else:
+        labels.update(user.orders.values_list("company__name", flat=True))
     return ", ".join(sorted(label for label in labels if label)) or "Platform"
 
 
 def get_system_user_queryset(request):
-    queryset = User.objects.all().order_by("first_name", "last_name", "email")
+    queryset = User.objects.select_related(
+        "managed_company",
+        "driver_profile__agent__company",
+    ).prefetch_related(
+        Prefetch(
+            "managed_companies",
+            queryset=Company.objects.order_by("name"),
+            to_attr="prefetched_managed_companies",
+        ),
+        Prefetch(
+            "managed_agent_branches",
+            queryset=Agent.objects.select_related("company").order_by("name"),
+            to_attr="prefetched_managed_agent_branches",
+        ),
+        Prefetch(
+            "orders",
+            queryset=Order.objects.select_related("company").order_by("created_at"),
+            to_attr="prefetched_orders",
+        ),
+    ).order_by("first_name", "last_name", "email")
     role_filter = request.GET.get("role", "").strip()
     status_filter = request.GET.get("status", "").strip()
     company_filter = request.GET.get("company", "").strip()
@@ -1425,7 +1498,12 @@ class AgentBatchSaleRequestCreateView(AgentManagerRequiredMixin, View):
 class AgentBatchSalePaymentCreateView(AgentManagerRequiredMixin, View):
     def post(self, request, pk):
         agent = get_managed_agent_or_404(request.user)
-        sale = get_object_or_404(AgentBatchSale, pk=pk, agent=agent, status=AgentBatchSaleStatus.APPROVED)
+        sale = get_object_or_404(
+            AgentBatchSale,
+            pk=pk,
+            agent=agent,
+            status__in=[AgentBatchSaleStatus.APPROVED, AgentBatchSaleStatus.RECEIVED],
+        )
         form = AgentBatchSalePaymentForm(request.POST)
         if form.is_valid():
             try:
@@ -1449,6 +1527,38 @@ class AgentBatchSalePaymentCreateView(AgentManagerRequiredMixin, View):
                 messages.error(request, exc.messages[0] if exc.messages else "Unable to submit that payment.")
         else:
             messages.error(request, "Unable to submit that payment.")
+        return redirect("accounts:agent_inventory")
+
+
+class AgentBatchSaleReceiptConfirmView(AgentManagerRequiredMixin, View):
+    def post(self, request, pk):
+        agent = get_managed_agent_or_404(request.user)
+        sale = get_object_or_404(AgentBatchSale, pk=pk, agent=agent)
+        old_values = serialize_agent_batch_sale_for_audit(sale)
+        form = AgentBatchSaleReceiptForm(request.POST)
+        if not form.is_valid():
+            messages.error(request, "Review the receipt note before continuing.")
+            return redirect("accounts:agent_inventory")
+        try:
+            confirm_agent_batch_sale_receipt(
+                sale=sale,
+                received_by=request.user,
+                receipt_note=form.cleaned_data.get("receipt_note", ""),
+            )
+            sale.refresh_from_db()
+            record_audit_log(
+                request=request,
+                actor=request.user,
+                action="agent_batch_sale.received",
+                entity_type="agent_batch_sale",
+                entity_id=sale.pk,
+                entity_label=sale.batch.batch_number,
+                old_values=old_values,
+                new_values=serialize_agent_batch_sale_for_audit(sale),
+            )
+            messages.success(request, f"Receipt confirmed for batch {sale.batch.batch_number}.")
+        except ValidationError as exc:
+            messages.error(request, exc.messages[0] if exc.messages else "Unable to confirm that stock receipt.")
         return redirect("accounts:agent_inventory")
 
 
@@ -1625,12 +1735,18 @@ class AgentInventoryView(AgentManagerRequiredMixin, TemplateView):
         )
         context["batch_request_form"] = batch_request_form
         context["batch_payment_form"] = AgentBatchSalePaymentForm()
+        context["batch_receipt_form"] = AgentBatchSaleReceiptForm()
         context["restock_form"] = RestockRequestForm(products=Product.objects.filter(company=agent.company))
         context["company_products"] = Product.objects.filter(company=agent.company, is_active=True).order_by("name")
         context["available_company_batches"] = list(batch_request_form.fields["batch"].queryset)
         context["inventory_batches"] = agent.inventory_batches.select_related("product")[:12]
         context["restock_requests"] = agent.restock_requests.select_related("product", "requested_by", "approved_by")[:12]
-        context["batch_sales"] = agent.batch_sales.select_related("batch__product", "approved_by").prefetch_related("payments")[:25]
+        context["batch_sales"] = agent.batch_sales.select_related(
+            "batch__product",
+            "approved_by",
+            "received_by",
+            "cancelled_by",
+        ).prefetch_related("payments")[:25]
         context["batch_payments"] = AgentBatchSalePayment.objects.filter(sale__agent=agent).select_related(
             "sale__batch",
             "confirmed_by",
@@ -2317,12 +2433,19 @@ class CompanyInventoryView(CompanyAdminRequiredMixin, TemplateView):
         context["stock_rows"] = stock_rows
         context["inventory_summary"] = summary
         context["batch_form"] = kwargs.get("batch_form") or CompanyBatchForm(company=company)
+        context["batch_sale_approval_form"] = AgentBatchSaleApprovalForm()
+        context["batch_sale_cancellation_form"] = AgentBatchSaleCancellationForm()
         context["products"] = company.products.filter(is_active=True).order_by("name")
         context["company_batches"] = build_company_batch_rows(company)
+        context["approval_today"] = timezone.localdate()
         context["pending_batch_sales"] = AgentBatchSale.objects.filter(
             agent__company=company,
             status=AgentBatchSaleStatus.PENDING,
         ).select_related("agent", "batch__product", "requested_by")
+        context["active_batch_sales"] = AgentBatchSale.objects.filter(
+            agent__company=company,
+            status__in=[AgentBatchSaleStatus.APPROVED, AgentBatchSaleStatus.RECEIVED],
+        ).select_related("agent", "batch__product", "requested_by", "received_by", "cancelled_by").prefetch_related("payments")
         context["pending_batch_payments"] = AgentBatchSalePayment.objects.filter(
             sale__agent__company=company,
             status=AgentBatchSalePaymentStatus.PENDING,
@@ -2428,7 +2551,7 @@ class CompanyBatchSaleDecisionView(CompanyAdminRequiredMixin, View):
                     quantity_approved=form.cleaned_data["quantity_approved"],
                     unit_price=form.cleaned_data["unit_price"],
                     initial_payment_amount=form.cleaned_data.get("initial_payment_amount") or 0,
-                    credit_due_date=form.cleaned_data.get("credit_due_date"),
+                    credit_terms_days=form.cleaned_data.get("credit_terms_days"),
                     decision_note=form.cleaned_data.get("decision_note", ""),
                 )
                 sale.refresh_from_db()
@@ -2442,7 +2565,7 @@ class CompanyBatchSaleDecisionView(CompanyAdminRequiredMixin, View):
                     old_values=old_values,
                     new_values=serialize_agent_batch_sale_for_audit(sale),
                 )
-                messages.success(request, f"Approved stock request from {sale.agent.name}.")
+                messages.success(request, f"Approved stock request from {sale.agent.name} and awaiting receipt confirmation.")
             except ValidationError as exc:
                 messages.error(request, exc.messages[0] if exc.messages else "Unable to approve that stock request.")
         else:
@@ -2463,6 +2586,38 @@ class CompanyBatchSaleDecisionView(CompanyAdminRequiredMixin, View):
                 messages.info(request, f"Rejected stock request from {sale.agent.name}.")
             except ValidationError as exc:
                 messages.error(request, exc.messages[0] if exc.messages else "Unable to reject that stock request.")
+        return redirect(request.POST.get("next") or "accounts:company_inventory")
+
+
+class CompanyBatchSaleCancelView(CompanyAdminRequiredMixin, View):
+    def post(self, request, pk):
+        company = get_managed_company_or_404(request.user)
+        sale = get_object_or_404(AgentBatchSale, pk=pk, agent__company=company)
+        old_values = serialize_agent_batch_sale_for_audit(sale)
+        form = AgentBatchSaleCancellationForm(request.POST)
+        if not form.is_valid():
+            messages.error(request, "Provide a cancellation reason before continuing.")
+            return redirect(request.POST.get("next") or "accounts:company_inventory")
+        try:
+            cancel_agent_batch_sale(
+                sale=sale,
+                cancelled_by=request.user,
+                reason=form.cleaned_data["reason"],
+            )
+            sale.refresh_from_db()
+            record_audit_log(
+                request=request,
+                actor=request.user,
+                action="agent_batch_sale.cancelled",
+                entity_type="agent_batch_sale",
+                entity_id=sale.pk,
+                entity_label=sale.batch.batch_number,
+                old_values=old_values,
+                new_values=serialize_agent_batch_sale_for_audit(sale),
+            )
+            messages.warning(request, f"Cancelled batch sale for {sale.agent.name}.")
+        except ValidationError as exc:
+            messages.error(request, exc.messages[0] if exc.messages else "Unable to cancel that batch sale.")
         return redirect(request.POST.get("next") or "accounts:company_inventory")
 
 
