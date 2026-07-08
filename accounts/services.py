@@ -1,10 +1,12 @@
 import logging
+import math
 import secrets
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
 from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 
 from accounts.models import RegistrationOTP, User, UserRole
@@ -20,7 +22,7 @@ def get_company_admin_users(company):
         managed_company=company,
     ).order_by("first_name", "last_name", "email")
     primary_admin = getattr(company, "admin", None)
-    if primary_admin and primary_admin.role == UserRole.COMPANY_ADMIN and primary_admin.managed_company_id == company.pk:
+    if primary_admin and primary_admin.role == UserRole.COMPANY_ADMIN:
         queryset = queryset | User.objects.filter(pk=primary_admin.pk)
     return queryset.distinct()
 
@@ -30,31 +32,78 @@ def _generate_numeric_otp(length=6):
     return f"{secrets.randbelow(upper_bound):0{length}d}"
 
 
-def get_registration_resend_wait_seconds(user):
-    latest_otp = user.registration_otps.order_by("-created_at").first()
+def invalidate_expired_registration_otps(user, now=None):
+    now = now or timezone.now()
+    return RegistrationOTP.objects.filter(
+        user=user,
+        consumed_at__isnull=True,
+        expires_at__lte=now,
+    ).update(consumed_at=F("expires_at"), updated_at=now)
+
+
+def get_latest_registration_otp(user):
+    return user.registration_otps.order_by("-created_at").first()
+
+
+def get_registration_resend_wait_seconds(user, now=None):
+    now = now or timezone.now()
+    latest_otp = get_latest_registration_otp(user)
     if latest_otp is None:
         return 0
 
     cooldown_window = timezone.timedelta(seconds=settings.REGISTRATION_OTP_RESEND_SECONDS)
     available_at = latest_otp.created_at + cooldown_window
-    remaining_seconds = int((available_at - timezone.now()).total_seconds())
+    remaining_seconds = math.ceil((available_at - now).total_seconds())
     return max(0, remaining_seconds)
 
 
+def get_registration_otp_state(user, now=None):
+    now = now or timezone.now()
+    invalidate_expired_registration_otps(user, now=now)
+    latest_otp = get_latest_registration_otp(user)
+    active_otp = (
+        user.registration_otps.filter(consumed_at__isnull=True, expires_at__gt=now)
+        .order_by("-created_at")
+        .first()
+    )
+    resend_available_at = None
+    resend_wait_seconds = 0
+    if latest_otp is not None:
+        resend_available_at = latest_otp.created_at + timezone.timedelta(
+            seconds=settings.REGISTRATION_OTP_RESEND_SECONDS
+        )
+        resend_wait_seconds = get_registration_resend_wait_seconds(user, now=now)
+
+    return {
+        "active_otp": active_otp,
+        "latest_otp": latest_otp,
+        "otp_expires_at": active_otp.expires_at if active_otp else None,
+        "otp_issued_at": active_otp.created_at if active_otp else None,
+        "resend_available_at": resend_available_at,
+        "resend_wait_seconds": resend_wait_seconds,
+        "server_now": now,
+        "has_expired_otp": bool(latest_otp and active_otp is None and latest_otp.expires_at <= now),
+    }
+
+
 def create_registration_otp(user):
-    resend_wait_seconds = get_registration_resend_wait_seconds(user)
+    if user.email_verified_at or user.is_active:
+        raise ValidationError("This account is already verified. Please log in.")
+
+    now = timezone.now()
+    invalidate_expired_registration_otps(user, now=now)
+    resend_wait_seconds = get_registration_resend_wait_seconds(user, now=now)
     if resend_wait_seconds:
         raise ValidationError(
             f"Please wait {resend_wait_seconds} second{'s' if resend_wait_seconds != 1 else ''} before requesting another OTP."
         )
 
-    now = timezone.now()
     with transaction.atomic():
         RegistrationOTP.objects.filter(
             user=user,
             consumed_at__isnull=True,
             expires_at__gt=now,
-        ).update(consumed_at=now)
+        ).update(consumed_at=now, updated_at=now)
         otp = RegistrationOTP.objects.create(
             user=user,
             email=user.email,
@@ -76,6 +125,7 @@ def create_registration_otp(user):
 
 def verify_registration_otp(user, code):
     now = timezone.now()
+    invalidate_expired_registration_otps(user, now=now)
     otp = (
         user.registration_otps.filter(
             code=(code or "").strip(),
@@ -88,8 +138,13 @@ def verify_registration_otp(user, code):
     if otp is None:
         raise ValidationError("That OTP is invalid or has expired. Please request a new code.")
 
-    otp.mark_consumed()
-    user.mark_email_verified()
+    with transaction.atomic():
+        otp.mark_consumed(when=now)
+        user.registration_otps.filter(consumed_at__isnull=True).exclude(pk=otp.pk).update(
+            consumed_at=now,
+            updated_at=now,
+        )
+        user.mark_email_verified()
     send_registration_success_email(user)
     notify_user(
         user,

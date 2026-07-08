@@ -7,6 +7,7 @@ from django.views.generic import ListView
 from catalog.forms import CompanyFilterForm
 from catalog.models import Company
 from core.map_services import reverse_geocode_coordinate, search_addis_locations
+from core.navigation import get_user_home_url
 
 
 class HomeLandingView(ListView):
@@ -44,6 +45,12 @@ class HomeLandingView(ListView):
         query_params = self.request.GET.copy()
         query_params.pop("page", None)
         context["query_string"] = query_params.urlencode()
+        context["portal_url"] = get_user_home_url(self.request.user)
+        context["unread_notifications_count"] = (
+            self.request.user.notifications.filter(is_read=False).count()
+            if self.request.user.is_authenticated
+            else 0
+        )
         return context
 
 

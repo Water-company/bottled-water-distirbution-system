@@ -6,6 +6,17 @@ from django.views.generic import DetailView, ListView
 from cart.forms import AddToCartForm
 from catalog.forms import CompanyFilterForm, ProductFilterForm
 from catalog.models import Company, Product
+from core.navigation import get_user_home_url
+
+
+class CustomerCatalogAccessMixin:
+    denied_message = "That page is only available to customer accounts."
+
+    def dispatch(self, request, *args, **kwargs):
+        if request.user.is_authenticated and not getattr(request.user, "is_customer", False):
+            messages.warning(request, self.denied_message)
+            return redirect(get_user_home_url(request.user))
+        return super().dispatch(request, *args, **kwargs)
 
 
 class CompanyListView(ListView):
@@ -35,7 +46,7 @@ class CompanyListView(ListView):
         return context
 
 
-class ProductListView(ListView):
+class ProductListView(CustomerCatalogAccessMixin, ListView):
     model = Product
     template_name = "catalog/product_list.html"
     context_object_name = "products"
@@ -84,7 +95,7 @@ class ProductListView(ListView):
         return context
 
 
-class ProductDetailView(DetailView):
+class ProductDetailView(CustomerCatalogAccessMixin, DetailView):
     model = Product
     template_name = "catalog/product_detail.html"
     context_object_name = "product"

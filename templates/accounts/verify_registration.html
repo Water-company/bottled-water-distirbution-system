@@ -6,7 +6,26 @@
         <div class="hero-card p-4 p-lg-5">
             <span class="eyebrow">Verify Account</span>
             <h1 class="display-6 fw-semibold mt-2 mb-3">Enter the OTP we emailed to you</h1>
-            <p class="text-secondary">Your customer account is created, but it must be verified before login. The OTP expires quickly, so use the latest email.</p>
+            <p class="text-secondary mb-2">Your customer account is created, but it must be verified before login. Use the latest OTP we sent.</p>
+            <p
+                class="small {% if has_expired_otp %}text-danger{% else %}text-secondary{% endif %} mb-4"
+                id="otp-expiry-status"
+                aria-live="polite"
+                data-email="{{ otp_state_email|default:'' }}"
+                data-has-expired-otp="{% if has_expired_otp %}true{% else %}false{% endif %}"
+                data-server-now="{% if registration_otp_server_now %}{{ registration_otp_server_now|date:'c' }}{% endif %}"
+                data-issued-at="{% if otp_issued_at %}{{ otp_issued_at|date:'c' }}{% endif %}"
+                data-expires-at="{% if otp_expires_at %}{{ otp_expires_at|date:'c' }}{% endif %}"
+                data-resend-available-at="{% if resend_available_at %}{{ resend_available_at|date:'c' }}{% endif %}"
+            >
+                {% if otp_expires_at %}
+                    This OTP expires at {{ otp_expires_at|date:"M d, Y H:i:s" }}.
+                {% elif has_expired_otp %}
+                    Your latest OTP has expired. Request a new code to continue.
+                {% else %}
+                    Enter the OTP from your email, or request a fresh one if you no longer have a valid code.
+                {% endif %}
+            </p>
             <form method="post">
                 {% csrf_token %}
                 <div class="mb-3">
@@ -20,16 +39,15 @@
                     {% for error in form.otp_code.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
                 </div>
                 {% for error in form.non_field_errors %}<div class="text-danger small mb-3">{{ error }}</div>{% endfor %}
-                <button type="submit" class="btn btn-primary w-100">Verify and Continue</button>
+                <button type="submit" class="btn btn-primary w-100" id="verify-otp-button">Verify and Continue</button>
             </form>
             <form method="post" action="{% url 'accounts:resend_registration_otp' %}" class="mt-3">
                 {% csrf_token %}
-                <input type="hidden" name="email" value="{{ form.email.value|default:'' }}">
+                <input type="hidden" name="email" value="{{ form.email.value|default:'' }}" id="resend-otp-email">
                 <button
                     type="submit"
                     class="btn btn-outline-primary w-100"
                     id="resend-otp-button"
-                    data-wait-seconds="{{ resend_wait_seconds|default:0 }}"
                 >
                     Resend OTP
                 </button>
@@ -42,25 +60,153 @@
 <script>
     (function () {
         const resendButton = document.getElementById("resend-otp-button");
-        if (!resendButton) {
+        const verifyButton = document.getElementById("verify-otp-button");
+        const expiryStatus = document.getElementById("otp-expiry-status");
+        const emailInput = document.getElementById("{{ form.email.id_for_label }}");
+        const resendEmailInput = document.getElementById("resend-otp-email");
+        if (!resendButton || !expiryStatus) {
             return;
         }
 
-        let remainingSeconds = Number(resendButton.dataset.waitSeconds || 0);
+        const email = (expiryStatus.dataset.email || "").trim().toLowerCase();
+        const storageKey = email ? `registration-otp-state:${email}` : "";
 
-        function renderCountdown() {
-            if (remainingSeconds > 0) {
-                resendButton.disabled = true;
-                resendButton.textContent = `Resend OTP in ${remainingSeconds}s`;
-                remainingSeconds -= 1;
-                window.setTimeout(renderCountdown, 1000);
-                return;
-            }
-            resendButton.disabled = false;
-            resendButton.textContent = "Resend OTP";
+        function parseIsoDate(value) {
+            const parsedValue = Date.parse(value || "");
+            return Number.isNaN(parsedValue) ? null : parsedValue;
         }
 
-        renderCountdown();
+        let state = {
+            issuedAtMs: parseIsoDate(expiryStatus.dataset.issuedAt),
+            expiresAtMs: parseIsoDate(expiryStatus.dataset.expiresAt),
+            resendAvailableAtMs: parseIsoDate(expiryStatus.dataset.resendAvailableAt),
+        };
+        const hasExpiredOtp = expiryStatus.dataset.hasExpiredOtp === "true";
+        const serverNowMs = parseIsoDate(expiryStatus.dataset.serverNow);
+        const clientServerOffsetMs = serverNowMs === null ? 0 : (Date.now() - serverNowMs);
+
+        function getEstimatedServerNowMs() {
+            return Date.now() - clientServerOffsetMs;
+        }
+
+        function stateRank(candidateState) {
+            return Math.max(
+                candidateState.issuedAtMs || 0,
+                candidateState.expiresAtMs || 0,
+                candidateState.resendAvailableAtMs || 0,
+            );
+        }
+
+        function mergeState(nextState) {
+            if (stateRank(nextState) >= stateRank(state)) {
+                state = nextState;
+            }
+        }
+
+        function persistState() {
+            if (!storageKey) {
+                return;
+            }
+            window.localStorage.setItem(
+                storageKey,
+                JSON.stringify({
+                    issuedAtMs: state.issuedAtMs,
+                    expiresAtMs: state.expiresAtMs,
+                    resendAvailableAtMs: state.resendAvailableAtMs,
+                }),
+            );
+        }
+
+        function hydrateStateFromStorage() {
+            if (!storageKey) {
+                return;
+            }
+            try {
+                const storedState = JSON.parse(window.localStorage.getItem(storageKey) || "null");
+                if (storedState && typeof storedState === "object") {
+                    mergeState({
+                        issuedAtMs: storedState.issuedAtMs || null,
+                        expiresAtMs: storedState.expiresAtMs || null,
+                        resendAvailableAtMs: storedState.resendAvailableAtMs || null,
+                    });
+                }
+            } catch (error) {
+                window.localStorage.removeItem(storageKey);
+            }
+        }
+
+        function syncResendEmail() {
+            if (emailInput && resendEmailInput) {
+                resendEmailInput.value = emailInput.value;
+            }
+        }
+
+        function formatDuration(totalSeconds) {
+            const safeSeconds = Math.max(0, totalSeconds);
+            const minutes = Math.floor(safeSeconds / 60);
+            const seconds = safeSeconds % 60;
+            return `${minutes}:${String(seconds).padStart(2, "0")}`;
+        }
+
+        function renderCountdowns() {
+            const nowMs = getEstimatedServerNowMs();
+            const resendRemainingSeconds = state.resendAvailableAtMs
+                ? Math.max(0, Math.ceil((state.resendAvailableAtMs - nowMs) / 1000))
+                : 0;
+            if (resendRemainingSeconds > 0) {
+                resendButton.disabled = true;
+                resendButton.textContent = `Resend OTP in ${resendRemainingSeconds}s`;
+            } else {
+                resendButton.disabled = false;
+                resendButton.textContent = "Resend OTP";
+            }
+
+            const expiryRemainingSeconds = state.expiresAtMs
+                ? Math.ceil((state.expiresAtMs - nowMs) / 1000)
+                : null;
+            if (expiryRemainingSeconds !== null && expiryRemainingSeconds > 0) {
+                expiryStatus.classList.remove("text-danger");
+                expiryStatus.classList.add("text-secondary");
+                expiryStatus.textContent = `This OTP expires in ${formatDuration(expiryRemainingSeconds)}.`;
+                if (verifyButton) {
+                    verifyButton.disabled = false;
+                }
+            } else if (expiryRemainingSeconds !== null || hasExpiredOtp) {
+                expiryStatus.classList.remove("text-secondary");
+                expiryStatus.classList.add("text-danger");
+                expiryStatus.textContent = "This OTP has expired. Request a new code to continue.";
+                if (verifyButton) {
+                    verifyButton.disabled = true;
+                }
+            }
+
+            syncResendEmail();
+        }
+
+        hydrateStateFromStorage();
+        persistState();
+        syncResendEmail();
+        if (emailInput) {
+            emailInput.addEventListener("input", syncResendEmail);
+        }
+        window.addEventListener("storage", function (event) {
+            if (!storageKey || event.key !== storageKey || !event.newValue) {
+                return;
+            }
+            try {
+                const nextState = JSON.parse(event.newValue);
+                mergeState({
+                    issuedAtMs: nextState.issuedAtMs || null,
+                    expiresAtMs: nextState.expiresAtMs || null,
+                    resendAvailableAtMs: nextState.resendAvailableAtMs || null,
+                });
+                renderCountdowns();
+            } catch (error) {
+                window.localStorage.removeItem(storageKey);
+            }
+        });
+        renderCountdowns();
+        window.setInterval(renderCountdowns, 1000);
     })();
 </script>
 {% endblock %}

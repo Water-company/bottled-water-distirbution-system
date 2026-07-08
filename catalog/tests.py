@@ -1,10 +1,17 @@
-from django.test import TestCase
+from django.contrib.messages import get_messages
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from accounts.models import User
-from catalog.models import Company, Product
+from accounts.models import User, UserRole
+from catalog.models import Agent, Company, Product
 
 
+@override_settings(
+    STORAGES={
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    },
+)
 class CatalogBrowsingTests(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -71,4 +78,46 @@ class CatalogBrowsingTests(TestCase):
         response = self.client.get(reverse("products:detail", kwargs={"slug": product.slug}))
         self.assertEqual(response.status_code, 200)
 
-# Create your tests here.
+    def test_internal_user_is_redirected_from_product_list_to_their_dashboard(self):
+        system_admin = User.objects.create_user(
+            email="catalog-admin@example.com",
+            password="StrongPass123!",
+            first_name="Catalog",
+            last_name="Admin",
+            phone_number="+251911000031",
+            role=UserRole.SYSTEM_ADMIN,
+        )
+
+        self.client.force_login(system_admin)
+        response = self.client.get(reverse("products:list"))
+
+        self.assertRedirects(response, reverse("accounts:system_dashboard"))
+        messages = [message.message for message in get_messages(response.wsgi_request)]
+        self.assertIn("That page is only available to customer accounts.", messages)
+
+    def test_internal_user_is_redirected_from_product_detail_to_their_dashboard(self):
+        agent_manager = User.objects.create_user(
+            email="catalog-manager@example.com",
+            password="StrongPass123!",
+            first_name="Catalog",
+            last_name="Manager",
+            phone_number="+251911000032",
+            role=UserRole.AGENT_MANAGER,
+        )
+        Agent.objects.create(
+            company=self.company_one,
+            name="Bole Branch",
+            location_name="Bole",
+            latitude="9.010000",
+            longitude="38.760000",
+            service_radius_km="12.00",
+            admin=agent_manager,
+        )
+
+        self.client.force_login(agent_manager)
+        product = Product.objects.get(name="Family Pack")
+        response = self.client.get(reverse("products:detail", kwargs={"slug": product.slug}))
+
+        self.assertRedirects(response, reverse("accounts:agent_dashboard"))
+        messages = [message.message for message in get_messages(response.wsgi_request)]
+        self.assertIn("That page is only available to customer accounts.", messages)

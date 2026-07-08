@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.conf import settings
 from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
@@ -22,6 +23,7 @@ from catalog.models import (
     Company,
     CompanyBatch,
     CompanyBatchStatus,
+    CompanyVerificationStatus,
     Driver,
     InventoryBatch,
     InventoryTransaction,
@@ -40,7 +42,13 @@ from orders.models import Order, OrderStatus, Payment, PaymentProvider, PaymentS
 from orders.services import request_order_refund
 
 
-@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    STORAGES={
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    },
+)
 class AccountFlowTests(TestCase):
     def test_registration_creates_inactive_user_and_sends_otp_email(self):
         response = self.client.post(
@@ -62,7 +70,7 @@ class AccountFlowTests(TestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("OTP", mail.outbox[0].body)
 
-    def test_otp_verification_activates_user_and_sends_success_email(self):
+    def test_otp_verification_activates_user_within_expiry_window_and_sends_success_email(self):
         self.client.post(
             reverse("accounts:register"),
             {
@@ -88,6 +96,35 @@ class AccountFlowTests(TestCase):
         self.assertIsNotNone(user.email_verified_at)
         self.assertIsNotNone(otp.consumed_at)
         self.assertEqual(len(mail.outbox), 2)
+
+    def test_expired_registration_otp_is_rejected_and_invalidated(self):
+        self.client.post(
+            reverse("accounts:register"),
+            {
+                "first_name": "Expired",
+                "last_name": "User",
+                "email": "expired@example.com",
+                "phone_number": "+251911000003",
+                "password1": "StrongPass123!",
+                "password2": "StrongPass123!",
+            },
+        )
+        user = User.objects.get(email="expired@example.com")
+        otp = RegistrationOTP.objects.filter(user=user).latest("created_at")
+        expired_at = timezone.now() - timezone.timedelta(seconds=5)
+        RegistrationOTP.objects.filter(pk=otp.pk).update(expires_at=expired_at)
+
+        response = self.client.post(
+            reverse("accounts:verify_registration"),
+            {"email": user.email, "otp_code": otp.code},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "That OTP is invalid or has expired. Please request a new code.")
+        user.refresh_from_db()
+        otp.refresh_from_db()
+        self.assertFalse(user.is_active)
+        self.assertEqual(otp.consumed_at, otp.expires_at)
 
     def test_resend_registration_otp_sends_fresh_email(self):
         self.client.post(
@@ -118,7 +155,35 @@ class AccountFlowTests(TestCase):
         first_otp.refresh_from_db()
         self.assertNotEqual(first_otp.pk, latest_otp.pk)
         self.assertIsNotNone(first_otp.consumed_at)
+        self.assertGreater(latest_otp.expires_at, first_otp.expires_at)
         self.assertEqual(len(mail.outbox), 2)
+
+    def test_verify_registration_page_exposes_server_timestamps_for_countdowns(self):
+        self.client.post(
+            reverse("accounts:register"),
+            {
+                "first_name": "Timer",
+                "last_name": "User",
+                "email": "timer@example.com",
+                "phone_number": "+251911000014",
+                "password1": "StrongPass123!",
+                "password2": "StrongPass123!",
+            },
+        )
+        user = User.objects.get(email="timer@example.com")
+        otp = RegistrationOTP.objects.filter(user=user).latest("created_at")
+
+        response = self.client.get(reverse("accounts:verify_registration"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["otp_expires_at"], otp.expires_at)
+        self.assertEqual(response.context["otp_issued_at"], otp.created_at)
+        self.assertEqual(
+            response.context["resend_available_at"],
+            otp.created_at + timezone.timedelta(seconds=settings.REGISTRATION_OTP_RESEND_SECONDS),
+        )
+        self.assertContains(response, 'data-expires-at="')
+        self.assertContains(response, 'data-resend-available-at="')
 
     def test_login_is_blocked_until_registration_is_verified(self):
         self.client.post(
@@ -1725,6 +1790,27 @@ class SystemAdminPortalTests(TestCase):
         self.assertEqual(company.admin.managed_company, company)
         self.assertTrue(AuditLog.objects.filter(action="company.created", entity_label="Aqua Capital").exists())
 
+    def test_system_admin_created_company_admin_for_pending_company_stays_inactive(self):
+        response = self.client.post(
+            reverse("accounts:create_company_admin"),
+            {
+                "first_name": "Pending",
+                "last_name": "Admin",
+                "email": "pending-admin@example.com",
+                "phone_number": "+251911000082",
+                "password": "StrongPass123!",
+                "role": UserRole.COMPANY_ADMIN,
+                "company_id": self.company.pk,
+                "next": reverse("accounts:system_dashboard"),
+            },
+        )
+
+        self.assertRedirects(response, reverse("accounts:system_dashboard"))
+        admin_user = User.objects.get(email="pending-admin@example.com")
+        self.assertEqual(admin_user.managed_company, self.company)
+        self.assertFalse(admin_user.is_active)
+        self.assertTrue(AuditLog.objects.filter(action="user.created", entity_label=admin_user.email).exists())
+
     def test_system_admin_can_edit_user_role_and_active_state(self):
         response = self.client.post(
             reverse("accounts:system_user_edit", kwargs={"pk": self.driver_user.pk}),
@@ -1743,6 +1829,26 @@ class SystemAdminPortalTests(TestCase):
         self.assertEqual(self.driver_user.role, UserRole.AGENT_MANAGER)
         self.assertFalse(self.driver_user.is_active)
         self.assertTrue(AuditLog.objects.filter(action="user.updated", entity_label=self.driver_user.email).exists())
+
+    def test_pending_company_admin_assignment_forces_inactive_even_when_activation_is_requested(self):
+        response = self.client.post(
+            reverse("accounts:system_user_edit", kwargs={"pk": self.driver_user.pk}),
+            {
+                "first_name": "Fleet",
+                "last_name": "Driver",
+                "email": self.driver_user.email,
+                "phone_number": self.driver_user.phone_number,
+                "role": UserRole.COMPANY_ADMIN,
+                "managed_company": self.company.pk,
+                "is_active": "on",
+            },
+        )
+
+        self.assertRedirects(response, reverse("accounts:system_users"))
+        self.driver_user.refresh_from_db()
+        self.assertEqual(self.driver_user.role, UserRole.COMPANY_ADMIN)
+        self.assertEqual(self.driver_user.managed_company, self.company)
+        self.assertFalse(self.driver_user.is_active)
 
     def test_system_admin_bulk_action_can_deactivate_selected_users(self):
         response = self.client.post(
@@ -1783,6 +1889,28 @@ class SystemAdminPortalTests(TestCase):
         self.assertEqual(announcement.sent_count, 1)
         self.assertEqual(Notification.objects.filter(recipient=self.driver_user, title="Driver policy update").count(), 1)
         self.assertEqual(len(mail.outbox), 1)
+
+    def test_verifying_company_activates_primary_company_admin_and_sends_activation_email(self):
+        self.company_admin.is_active = False
+        self.company_admin.email_verified_at = None
+        self.company_admin.save(update_fields=["is_active", "email_verified_at", "updated_at"])
+
+        response = self.client.post(
+            reverse("accounts:verify_company", kwargs={"pk": self.company.pk}),
+            {"efda_reference": "EFDA-READY-001"},
+        )
+
+        self.assertRedirects(response, reverse("accounts:system_dashboard"))
+        self.company.refresh_from_db()
+        self.company_admin.refresh_from_db()
+        self.assertTrue(self.company.is_verified)
+        self.assertEqual(self.company.verification_status, CompanyVerificationStatus.VERIFIED)
+        self.assertEqual(self.company_admin.managed_company, self.company)
+        self.assertTrue(self.company_admin.is_active)
+        self.assertIsNotNone(self.company_admin.email_verified_at)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn(self.company_admin.email, mail.outbox[0].to)
+        self.assertTrue(AuditLog.objects.filter(action="company.verified", entity_label=self.company.name).exists())
 
     def test_system_admin_can_suspend_and_reactivate_company(self):
         self.company.verification_status = "verified"

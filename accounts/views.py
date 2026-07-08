@@ -62,7 +62,7 @@ from accounts.reporting import (
 from accounts.services import (
     create_registration_otp,
     get_company_admin_users,
-    get_registration_resend_wait_seconds,
+    get_registration_otp_state,
     send_company_admin_activation_email,
     verify_registration_otp,
 )
@@ -289,6 +289,21 @@ def get_managed_company_or_404(user, request=None):
     if default_company is not None:
         return default_company
     raise Http404("No company is assigned to this company admin account.")
+
+
+def sync_company_admin_account(admin_user, company, *, is_active=None, ensure_email_verified=False):
+    update_fields = ["updated_at"]
+    if admin_user.managed_company_id != company.pk:
+        admin_user.managed_company = company
+        update_fields.append("managed_company")
+    if is_active is not None and admin_user.is_active != is_active:
+        admin_user.is_active = is_active
+        update_fields.append("is_active")
+    if ensure_email_verified and admin_user.email_verified_at is None:
+        admin_user.email_verified_at = timezone.now()
+        update_fields.append("email_verified_at")
+    if len(update_fields) > 1:
+        admin_user.save(update_fields=update_fields)
 
 
 def ensure_agent_stock_rows(agent):
@@ -1088,17 +1103,35 @@ class VerifyRegistrationOTPView(FormView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        pending_email = (
-            self.request.session.get("pending_registration_email")
-            or self.get_initial().get("email")
-            or ""
-        )
-        resend_wait_seconds = 0
+        form = context.get("form")
+        pending_email = ""
+        if form is not None and getattr(form, "is_bound", False):
+            pending_email = (form.data.get("email") or "").lower()
+        if not pending_email:
+            pending_email = (
+                self.request.session.get("pending_registration_email")
+                or self.get_initial().get("email")
+                or ""
+            )
+        otp_state = {
+            "otp_expires_at": None,
+            "otp_issued_at": None,
+            "resend_available_at": None,
+            "resend_wait_seconds": 0,
+            "server_now": timezone.now(),
+            "has_expired_otp": False,
+        }
         if pending_email:
             user = User.objects.filter(email__iexact=pending_email, role=UserRole.CUSTOMER).first()
-            if user:
-                resend_wait_seconds = get_registration_resend_wait_seconds(user)
-        context["resend_wait_seconds"] = resend_wait_seconds
+            if user and not user.email_verified_at:
+                otp_state = get_registration_otp_state(user)
+        context["resend_wait_seconds"] = otp_state["resend_wait_seconds"]
+        context["otp_expires_at"] = otp_state["otp_expires_at"]
+        context["otp_issued_at"] = otp_state["otp_issued_at"]
+        context["resend_available_at"] = otp_state["resend_available_at"]
+        context["registration_otp_server_now"] = otp_state["server_now"]
+        context["has_expired_otp"] = otp_state["has_expired_otp"]
+        context["otp_state_email"] = pending_email
         return context
 
     def form_valid(self, form):
@@ -3316,8 +3349,7 @@ class CompanyVerificationDecisionView(SystemAdminRequiredMixin, View):
             company.verification_note = note or "Suspended by system admin."
             company.save()
             for admin_user in get_company_admin_users(company):
-                admin_user.is_active = False
-                admin_user.save(update_fields=["is_active", "updated_at"])
+                sync_company_admin_account(admin_user, company, is_active=False)
                 notify_user(
                     admin_user,
                     "Company suspended",
@@ -3342,8 +3374,7 @@ class CompanyVerificationDecisionView(SystemAdminRequiredMixin, View):
             company.verification_note = note or company.verification_note
             company.save()
             for admin_user in get_company_admin_users(company):
-                admin_user.is_active = True
-                admin_user.save(update_fields=["is_active", "updated_at"])
+                sync_company_admin_account(admin_user, company, is_active=True)
                 notify_user(
                     admin_user,
                     "Company reactivated",
@@ -3371,6 +3402,7 @@ class CompanyVerificationDecisionView(SystemAdminRequiredMixin, View):
             company.verification_note = note
             company.save()
             for admin_user in get_company_admin_users(company):
+                sync_company_admin_account(admin_user, company, is_active=False)
                 notify_user(
                     admin_user,
                     "Company resubmitted to EFDA",
@@ -3399,10 +3431,12 @@ class CompanyVerificationDecisionView(SystemAdminRequiredMixin, View):
             company.is_verified = True
             company.save()
             for admin_user in get_company_admin_users(company):
-                admin_user.is_active = True
-                if admin_user.email_verified_at is None:
-                    admin_user.email_verified_at = timezone.now()
-                admin_user.save(update_fields=["is_active", "email_verified_at", "updated_at"])
+                sync_company_admin_account(
+                    admin_user,
+                    company,
+                    is_active=True,
+                    ensure_email_verified=True,
+                )
                 notify_user(
                     admin_user,
                     "Company verified",
@@ -3428,8 +3462,7 @@ class CompanyVerificationDecisionView(SystemAdminRequiredMixin, View):
             company.is_verified = False
             company.save()
             for admin_user in get_company_admin_users(company):
-                admin_user.is_active = False
-                admin_user.save(update_fields=["is_active", "updated_at"])
+                sync_company_admin_account(admin_user, company, is_active=False)
                 notify_user(
                     admin_user,
                     "Company verification rejected",

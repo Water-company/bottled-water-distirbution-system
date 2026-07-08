@@ -28,6 +28,7 @@
               "on-error": "#ffffff",
               "on-surface": "#0d1c2e",
               "surface-container-low": "#eff4ff",
+              "surface-container-lowest": "#ffffff",
               "secondary-fixed-dim": "#b7c9d5",
               "on-tertiary": "#ffffff",
               "on-secondary-fixed-variant": "#384953",
@@ -50,6 +51,7 @@
               "on-secondary": "#ffffff",
               secondary: "#50616b",
               "secondary-container": "#d3e5f1",
+              "secondary-fixed-variant": "#384953",
               "on-secondary-fixed": "#0c1e26",
               "error-container": "#ffdad6",
               "surface-bright": "#f8f9ff",
@@ -175,7 +177,7 @@
       <div
         class="flex items-center justify-between px-margin-mobile h-full w-full max-w-container-max mx-auto"
       >
-        <div class="flex items-center gap-2">
+        <a class="flex items-center gap-2" href="{% url 'home' %}">
           <span class="material-symbols-outlined text-primary text-2xl"
             >water_drop</span
           >
@@ -183,7 +185,7 @@
             class="font-display text-headline-md-mobile font-extrabold text-primary tracking-tight"
             >AquaFlow</span
           >
-        </div>
+        </a>
         <nav class="hidden md:flex items-center gap-8">
           <a
             class="text-primary font-bold border-b-2 border-primary py-1"
@@ -206,12 +208,57 @@
             >Contact</a
           >
         </nav>
-        <div class="flex items-center gap-4">
-          <button
-            class="material-symbols-outlined text-on-surface-variant cursor-pointer"
+        <div class="flex items-center gap-2 sm:gap-3">
+          {% if request.user.is_authenticated %}
+          <a
+            aria-label="Notifications"
+            class="relative inline-flex h-10 w-10 items-center justify-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-container hover:text-primary"
+            href="{% url 'accounts:notifications' %}"
           >
-            notifications
-          </button>
+            <span class="material-symbols-outlined">notifications</span>
+            {% if unread_notifications_count %}
+            <span
+              class="absolute -right-0.5 -top-0.5 min-w-[1.25rem] rounded-full bg-primary px-1 py-0.5 text-[11px] font-bold leading-none text-on-primary"
+            >
+              {{ unread_notifications_count }}
+            </span>
+            {% endif %}
+          </a>
+          <a
+            class="hidden sm:inline-flex items-center rounded-full border border-outline-variant px-4 py-2 text-sm font-semibold text-on-surface transition-colors hover:border-primary hover:text-primary"
+            href="{{ portal_url }}"
+          >
+            Dashboard
+          </a>
+          <a
+            aria-label="Profile"
+            class="inline-flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-outline-variant bg-surface text-sm font-bold text-primary transition-colors hover:border-primary"
+            href="{% url 'accounts:profile' %}"
+          >
+            {% if request.user.profile_image %}
+            <img
+              alt="{{ request.user.full_name|default:request.user.email }}"
+              class="h-full w-full object-cover"
+              src="{{ request.user.profile_image.url }}"
+            />
+            {% else %}
+            <span>{{ request.user.first_name|default:request.user.email|first|upper }}</span>
+            {% endif %}
+          </a>
+          {% else %}
+          <a
+            class="hidden sm:inline-flex items-center rounded-full border border-outline-variant px-4 py-2 text-sm font-semibold text-on-surface transition-colors hover:border-primary hover:text-primary"
+            href="{% url 'accounts:register' %}"
+          >
+            Register
+          </a>
+          <a
+            class="inline-flex items-center rounded-full bg-primary px-4 py-2 text-sm font-semibold text-on-primary shadow-sm transition-colors hover:bg-primary-container"
+            href="{% url 'accounts:login' %}"
+          >
+            Login
+          </a>
+          {% endif %}
         </div>
       </div>
     </header>
@@ -238,8 +285,8 @@
           <h1
             class="font-display-mobile text-display-mobile md:font-display md:text-display text-on-surface leading-tight"
           >
-            Never run out.<br /><span class="text-primary">Always</span> in
-            stock.
+            Find trusted water suppliers with
+            <span class="text-primary">live availability</span>.
           </h1>
           <p
             class="font-body-lg text-body-lg text-on-surface-variant max-w-xl mx-auto"
@@ -261,9 +308,9 @@
             </a>
             <a
               class="w-full sm:w-auto px-8 py-4 border border-outline text-on-surface font-bold rounded-lg hover:bg-surface-container transition-all active:scale-95 text-center"
-              href="{% url 'accounts:login' %}"
+              href="{% if request.user.is_authenticated %}{{ portal_url }}{% else %}{% url 'accounts:login' %}{% endif %}"
             >
-              Login to Portal
+              {% if request.user.is_authenticated %}Open Dashboard{% else %}Login to Portal{% endif %}
             </a>
           </div>
         </div>
@@ -349,7 +396,7 @@
             </div>
           </form>
           <p class="mt-3 text-sm text-on-surface-variant" id="company-search-feedback">
-            Start typing to filter companies instantly without leaving the page.
+            Start typing to filter verified companies without leaving the page.
           </p>
         </div>
         <!-- Bento-ish Grid for Companies -->
@@ -388,9 +435,9 @@
             <!-- Action Buttons - Single button centered -->
             <a
               class="w-full px-4 py-2.5 rounded-xl border border-primary text-primary font-semibold text-sm bg-transparent hover:bg-primary hover:text-white transition-all duration-300 text-center"
-              href="{% url 'products:list' %}?company={{ company.pk }}"
+              href="{% if request.user.is_authenticated and not request.user.is_customer %}{{ portal_url }}{% else %}{% url 'products:list' %}?company={{ company.pk }}{% endif %}"
             >
-              View Products
+              {% if request.user.is_authenticated and not request.user.is_customer %}Open Dashboard{% else %}View Products{% endif %}
             </a>
           </div>
           {% empty %}
@@ -516,18 +563,17 @@
             <h2
               class="font-headline-lg text-headline-lg text-on-primary mt-4 mb-6"
             >
-              Need help choosing a company or tracking an order?
+              Need a quicker way to follow deliveries and company updates?
             </h2>
             <p class="font-body-lg text-body-lg text-on-primary/80 mb-8">
-              Use the customer portal after login for real-time tracking and
-              push notifications. For immediate inquiries, our support team is
-              available 24/7 for our registered clients.
+              Sign in to your AquaFlow portal to review notifications, track
+              active orders, and keep every delivery conversation in one place.
             </p>
             <a
               class="px-8 py-4 bg-white text-primary font-bold rounded-lg hover:bg-surface-container transition-all active:scale-95 shadow-md"
-              href="{% if request.user.is_authenticated %}{% url 'accounts:notifications' %}{% else %}{% url 'accounts:login' %}{% endif %}"
+              href="{% if request.user.is_authenticated %}{% url 'accounts:notifications' %}{% else %}{% url 'accounts:register' %}{% endif %}"
             >
-              Visit Support Center
+              {% if request.user.is_authenticated %}View Notifications{% else %}Create an Account{% endif %}
             </a>
           </div>
         </div>
@@ -551,8 +597,12 @@
           >
         </div>
         <hr class="w-full border-outline-variant max-w-md" />
-        <p class="font-body-md text-body-md text-secondary-fixed-variant">
+        <p class="hidden">
           Â© 2024 AquaFlow Distribution Systems. The Fluid Workspace. All rights
+          reserved.
+        </p>
+        <p class="font-body-md text-body-md text-secondary-fixed-variant">
+          &copy; {% now "Y" %} AquaFlow Distribution Systems. All rights
           reserved.
         </p>
       </div>
@@ -655,7 +705,7 @@
             }
             companyResultsShell.innerHTML = nextResultsShell.innerHTML;
             window.history.replaceState({}, "", targetUrl);
-            companySearchFeedback.textContent = "Companies updated instantly.";
+            companySearchFeedback.textContent = "Results updated.";
           } catch (error) {
             if (requestId !== activeSearchRequest) {
               return;

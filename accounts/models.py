@@ -90,12 +90,33 @@ class User(TimeStampedModel, AbstractBaseUser, PermissionsMixin):
         return self.full_name or self.email
 
     def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        normalized_update_fields = set(update_fields) if update_fields is not None else None
+
         self.is_customer = self.role == UserRole.CUSTOMER
         if self.role != UserRole.COMPANY_ADMIN:
             self.managed_company = None
+            if normalized_update_fields is not None:
+                normalized_update_fields.add("managed_company")
+        elif self.managed_company_id:
+            managed_company = self._state.fields_cache.get("managed_company")
+            if managed_company is None:
+                managed_company = self.managed_company
+            if managed_company is not None and not managed_company.is_verified:
+                self.is_active = False
+                if normalized_update_fields is not None:
+                    normalized_update_fields.add("is_active")
+
         if self.role == UserRole.SYSTEM_ADMIN:
             self.is_staff = True
             self.is_superuser = True
+        else:
+            self.is_staff = False
+            self.is_superuser = False
+
+        if normalized_update_fields is not None:
+            normalized_update_fields.update({"is_customer", "is_staff", "is_superuser"})
+            kwargs["update_fields"] = tuple(normalized_update_fields)
         super().save(*args, **kwargs)
 
     @property
@@ -176,8 +197,8 @@ class RegistrationOTP(TimeStampedModel):
     def is_valid(self):
         return self.consumed_at is None and self.expires_at > timezone.now()
 
-    def mark_consumed(self):
-        self.consumed_at = timezone.now()
+    def mark_consumed(self, when=None):
+        self.consumed_at = when or timezone.now()
         self.save(update_fields=["consumed_at", "updated_at"])
 
 
