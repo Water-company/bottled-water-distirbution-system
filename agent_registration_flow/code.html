@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Agent Registration | Fluid Professional</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "surface-dim": "#d9d9e1",
+                        "surface-bright": "#faf8ff",
+                        "secondary-fixed": "#d6e5ef",
+                        "on-primary-fixed": "#001945",
+                        "secondary-container": "#d3e2ed",
+                        "secondary": "#526069",
+                        "on-secondary-container": "#56656e",
+                        "primary-container": "#0d47a1",
+                        "inverse-on-surface": "#f0f0f8",
+                        "tertiary-fixed": "#a3f69c",
+                        "surface-variant": "#e2e2ea",
+                        "on-primary": "#ffffff",
+                        "surface": "#faf8ff",
+                        "tertiary-container": "#005914",
+                        "on-tertiary-fixed": "#002204",
+                        "surface-container-highest": "#e2e2ea",
+                        "error": "#ba1a1a",
+                        "primary": "#003178",
+                        "outline-variant": "#c3c6d4",
+                        "on-secondary-fixed-variant": "#3b4951",
+                        "on-error-container": "#93000a",
+                        "surface-container-lowest": "#ffffff",
+                        "inverse-surface": "#2e3036",
+                        "on-surface-variant": "#434652",
+                        "on-primary-container": "#a1bbff",
+                        "on-error": "#ffffff",
+                        "surface-container-high": "#e8e7f0",
+                        "surface-container-low": "#f3f3fb",
+                        "on-surface": "#1a1b21",
+                        "on-tertiary": "#ffffff",
+                        "surface-container": "#ededf5",
+                        "surface-tint": "#2b5bb5",
+                        "on-background": "#1a1b21",
+                        "primary-fixed-dim": "#b0c6ff",
+                        "tertiary-fixed-dim": "#88d982",
+                        "secondary-fixed-dim": "#bac9d3",
+                        "on-primary-fixed-variant": "#00429c",
+                        "error-container": "#ffdad6",
+                        "on-tertiary-fixed-variant": "#005312",
+                        "on-tertiary-container": "#7ecf79",
+                        "tertiary": "#003f0b",
+                        "outline": "#737783",
+                        "on-secondary": "#ffffff",
+                        "primary-fixed": "#d9e2ff",
+                        "inverse-primary": "#b0c6ff",
+                        "on-secondary-fixed": "#0f1d25",
+                        "background": "#faf8ff"
+                    },
+                    fontFamily: {
+                        "headline": ["Inter"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; background-color: #faf8ff; }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+        .tonal-shift { background-color: #f3f3fb; }
+        .glass-header { background: rgba(250, 248, 255, 0.8); backdrop-filter: blur(20px); }
+        .input-focus-animate:focus { border-bottom-width: 2px; border-color: #003178; outline: none; }
+    </style>
+</head>
+<body class="text-on-surface">
+<!-- Sidebar Navigation Shell -->
+<aside class="flex flex-col fixed left-0 top-0 h-full h-screen w-64 border-r-0 bg-slate-50 dark:bg-slate-900 z-50">
+<div class="px-6 py-8">
+<div class="text-xl font-bold text-blue-900 dark:text-blue-100 italic mb-8">Fluid Admin</div>
+<button class="w-full bg-gradient-to-br from-primary to-primary-container text-on-primary py-3 px-4 rounded-lg font-semibold flex items-center justify-center gap-2 mb-8 shadow-lg shadow-primary/20 scale-95 active:opacity-80 transition-all">
+<span class="material-symbols-outlined">add</span>
+                New Dispatch
+            </button>
+<nav class="space-y-1">
+<a class="flex items-center gap-3 px-4 py-3 text-blue-700 dark:text-blue-300 font-bold border-r-4 border-blue-700 dark:border-blue-400 bg-blue-50/50 dark:bg-blue-900/20 font-['Inter'] font-medium text-sm tracking-wide" href="#">
+<span class="material-symbols-outlined" data-icon="badge">badge</span>
+                    Agent Management
+                </a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-300 hover:bg-white dark:hover:bg-slate-800 transition-colors duration-200 font-['Inter'] font-medium text-sm tracking-wide" href="#">
+<span class="material-symbols-outlined" data-icon="inventory_2">inventory_2</span>
+                    Inventory
+                </a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-300 hover:bg-white dark:hover:bg-slate-800 transition-colors duration-200 font-['Inter'] font-medium text-sm tracking-wide" href="#">
+<span class="material-symbols-outlined" data-icon="monitoring">monitoring</span>
+                    Performance
+                </a>
+</nav>
+</div>
+<div class="mt-auto px-6 py-8 border-t border-slate-200/50">
+<nav class="space-y-1">
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-300 hover:bg-white dark:hover:bg-slate-800 transition-colors duration-200 font-['Inter'] font-medium text-sm tracking-wide" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+                    Settings
+                </a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-300 hover:bg-white dark:hover:bg-slate-800 transition-colors duration-200 font-['Inter'] font-medium text-sm tracking-wide" href="#">
+<span class="material-symbols-outlined" data-icon="help">help</span>
+                    Support
+                </a>
+</nav>
+<div class="mt-6 flex items-center gap-3 px-4">
+<div class="w-8 h-8 rounded-full bg-primary-fixed-dim flex items-center justify-center text-primary text-xs font-bold">JD</div>
+<div class="overflow-hidden">
+<p class="text-xs font-bold truncate">Regional Workspace</p>
+<p class="text-[10px] text-on-surface-variant truncate">Admin Access</p>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="ml-64 min-h-screen bg-surface">
+<!-- Top Navigation Bar -->
+<header class="flex justify-between items-center w-full px-8 py-3 h-16 sticky top-0 z-40 bg-white/80 dark:bg-slate-950/80 backdrop-blur-md shadow-sm shadow-blue-900/5">
+<div class="flex items-center gap-6">
+<div class="relative">
+<span class="absolute left-3 top-1/2 -translate-y-1/2 text-outline material-symbols-outlined">search</span>
+<input class="pl-10 pr-4 py-2 bg-surface-container-low border-none rounded-full text-sm focus:ring-2 focus:ring-primary/20 w-64 transition-all" placeholder="Search agents or files..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 text-slate-600 hover:text-blue-600 transition-all">
+<span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+</button>
+<button class="p-2 text-slate-600 hover:text-blue-600 transition-all">
+<span class="material-symbols-outlined" data-icon="apps">apps</span>
+</button>
+<div class="h-8 w-[1px] bg-outline-variant/30 mx-2"></div>
+<img alt="Administrator Profile" class="w-8 h-8 rounded-full object-cover border border-outline-variant/20" data-alt="Professional headshot of a corporate administrator in a modern office setting with soft natural lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCAzvgmWtVFylk0YLq1THnC6Ym1rb0ex5jPIYPomzXpKjEhrjGhurkwLzjPHUqPdTwwxVdz038277zDz-DgFS0H13hzLgCLSHGA8XapcUMoL-iAXGIsz7sYNuURJMIIHHEjmK3llLdwrgc4qQzJ-eSKN-ZUPVXqggaGsdgCbuZy5qKyBjOcnm18PCiY7suXcFTx0-XQNylzuCZUb-wnowprq8hgCB_iyMdYpCiCOSPyH7H0P0VR7u7-xUecFU2q3H3QobbWThHtjvFr"/>
+</div>
+</header>
+<!-- Page Content -->
+<div class="p-8 max-w-5xl mx-auto">
+<!-- Hero Header Section -->
+<div class="mb-12">
+<nav class="flex items-center gap-2 text-xs font-label uppercase tracking-widest text-on-surface-variant mb-4">
+<span>Management</span>
+<span class="material-symbols-outlined text-[12px]">chevron_right</span>
+<span class="text-primary font-bold">Onboard New Agent</span>
+</nav>
+<h1 class="text-4xl font-headline font-black tracking-tight text-primary mb-2">Agent Registration</h1>
+<p class="text-on-surface-variant max-w-2xl">Initialize a new business partnership. Complete the following sections to establish the agent company within the Fluid Professional ecosystem.</p>
+</div>
+<!-- Form Multi-step Progress -->
+<div class="grid grid-cols-3 gap-4 mb-10">
+<div class="flex flex-col gap-2">
+<div class="h-1.5 w-full bg-primary rounded-full"></div>
+<span class="text-[10px] font-bold uppercase tracking-tighter text-primary">01. Business Details</span>
+</div>
+<div class="flex flex-col gap-2 opacity-40">
+<div class="h-1.5 w-full bg-outline-variant rounded-full"></div>
+<span class="text-[10px] font-bold uppercase tracking-tighter">02. Service Areas</span>
+</div>
+<div class="flex flex-col gap-2 opacity-40">
+<div class="h-1.5 w-full bg-outline-variant rounded-full"></div>
+<span class="text-[10px] font-bold uppercase tracking-tighter">03. Contact Info</span>
+</div>
+</div>
+<!-- Registration Form Container -->
+<div class="grid grid-cols-12 gap-8">
+<!-- Main Form Body (Asymmetric Layout) -->
+<div class="col-span-12 lg:col-span-8 space-y-8">
+<!-- Section: Business Identity -->
+<section class="bg-surface-container-lowest p-8 rounded-xl shadow-sm shadow-blue-900/5 transition-all">
+<div class="flex items-center gap-3 mb-8">
+<div class="w-10 h-10 rounded-lg bg-primary-fixed-dim flex items-center justify-center">
+<span class="material-symbols-outlined text-primary">domain</span>
+</div>
+<div>
+<h3 class="text-lg font-headline font-bold text-on-surface">Business Identity</h3>
+<p class="text-xs text-on-surface-variant">Legal entity information and licensing</p>
+</div>
+</div>
+<div class="space-y-6">
+<div class="group">
+<label class="block text-[10px] font-label font-bold uppercase tracking-widest text-on-surface-variant mb-1 group-focus-within:text-primary transition-colors">Registered Company Name</label>
+<input class="w-full bg-surface-container-highest border-none border-b-2 border-transparent input-focus-animate px-4 py-3 text-sm rounded-t-lg" placeholder="e.g. BlueWave Logistics International" type="text"/>
+</div>
+<div class="grid grid-cols-2 gap-6">
+<div class="group">
+<label class="block text-[10px] font-label font-bold uppercase tracking-widest text-on-surface-variant mb-1">Business License Number</label>
+<input class="w-full bg-surface-container-highest border-none border-b-2 border-transparent input-focus-animate px-4 py-3 text-sm rounded-t-lg" placeholder="BL-9980-X" type="text"/>
+</div>
+<div class="group">
+<label class="block text-[10px] font-label font-bold uppercase tracking-widest text-on-surface-variant mb-1">Tax ID / VAT</label>
+<input class="w-full bg-surface-container-highest border-none border-b-2 border-transparent input-focus-animate px-4 py-3 text-sm rounded-t-lg" placeholder="99-1234567" type="text"/>
+</div>
+</div>
+<div class="pt-2">
+<label class="block text-[10px] font-label font-bold uppercase tracking-widest text-on-surface-variant mb-3">Operating License Document</label>
+<div class="border-2 border-dashed border-outline-variant/30 rounded-xl p-8 flex flex-col items-center justify-center bg-surface-container-low hover:bg-surface-container transition-all cursor-pointer group">
+<span class="material-symbols-outlined text-3xl text-outline mb-2 group-hover:text-primary transition-colors">cloud_upload</span>
+<p class="text-sm font-medium text-on-surface-variant">Drag and drop PDF or <span class="text-primary underline">browse</span></p>
+<p class="text-[10px] text-outline mt-1 italic">Maximum file size: 10MB</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Section: Service Coverage -->
+<section class="bg-surface-container-lowest p-8 rounded-xl shadow-sm shadow-blue-900/5">
+<div class="flex items-center gap-3 mb-8">
+<div class="w-10 h-10 rounded-lg bg-tertiary-fixed flex items-center justify-center">
+<span class="material-symbols-outlined text-tertiary">map</span>
+</div>
+<div>
+<h3 class="text-lg font-headline font-bold text-on-surface">Service Areas</h3>
+<p class="text-xs text-on-surface-variant">Define the geographic operational boundaries</p>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+<div class="space-y-4">
+<label class="block text-[10px] font-label font-bold uppercase tracking-widest text-on-surface-variant mb-1">Primary City</label>
+<select class="w-full bg-surface-container-highest border-none border-b-2 border-transparent px-4 py-3 text-sm rounded-t-lg focus:ring-0">
+<option>Select Metropolitan Area</option>
+<option>New York City</option>
+<option>Chicago</option>
+<option>Los Angeles</option>
+</select>
+<label class="block text-[10px] font-label font-bold uppercase tracking-widest text-on-surface-variant mt-6 mb-1">Active Sub-cities / Districts</label>
+<div class="flex flex-wrap gap-2">
+<div class="flex items-center gap-2 px-3 py-1.5 bg-secondary-container text-on-secondary-container rounded-md text-[11px] font-bold">
+                                        Manhattan <span class="material-symbols-outlined text-[14px] cursor-pointer">close</span>
+</div>
+<div class="flex items-center gap-2 px-3 py-1.5 bg-secondary-container text-on-secondary-container rounded-md text-[11px] font-bold">
+                                        Brooklyn <span class="material-symbols-outlined text-[14px] cursor-pointer">close</span>
+</div>
+<button class="flex items-center gap-1 px-3 py-1.5 border border-outline-variant/30 rounded-md text-[11px] font-bold text-primary hover:bg-primary/5 transition-all">
+<span class="material-symbols-outlined text-[14px]">add</span> Add District
+                                    </button>
+</div>
+</div>
+<div class="relative h-48 rounded-xl overflow-hidden shadow-inner bg-slate-200">
+<img alt="Map of metropolitan area" class="w-full h-full object-cover opacity-60 grayscale" data-alt="Abstract aerial satellite view of a dense metropolitan grid with soft blue overlays and glowing data points indicating service regions" data-location="New York" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAYaZNB8AYlVDUjT32TupMDnERXnPWIURw8AW95O_2EXTF2Kdpcwe2OqAS4EQ_zb93jYwOcpCAax9TIIAhh-lDOsi0ZT7yhnDrISsTqd4O1UujCB9h9XMZY_1Wz83ew_CfxvtBP2M3lx6dNLkC5Lokyy-T_aMJ6OWuQb07pgoPr0Zyiaxd5j4vQzGQX0jFFa6E2WRXEG9j_xlO3GOFL_nF8xiHR6WXUTvTNoNy5fP0wwqxpHc7Onetv4QSAavLfQceeoreIxJ7TA438"/>
+<div class="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent"></div>
+<div class="absolute bottom-3 left-3 bg-white/90 backdrop-blur px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px] text-error" style="font-variation-settings: 'FILL' 1;">location_on</span>
+                                    Coverage Preview
+                                </div>
+</div>
+</div>
+</section>
+<!-- Section: Contact Details -->
+<section class="bg-surface-container-lowest p-8 rounded-xl shadow-sm shadow-blue-900/5">
+<div class="flex items-center gap-3 mb-8">
+<div class="w-10 h-10 rounded-lg bg-secondary-fixed flex items-center justify-center">
+<span class="material-symbols-outlined text-secondary">contact_mail</span>
+</div>
+<div>
+<h3 class="text-lg font-headline font-bold text-on-surface">Contact Information</h3>
+<p class="text-xs text-on-surface-variant">Primary point of contact for the agent entity</p>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-6">
+<div class="group">
+<label class="block text-[10px] font-label font-bold uppercase tracking-widest text-on-surface-variant mb-1">Point of Contact Name</label>
+<input class="w-full bg-surface-container-highest border-none border-b-2 border-transparent input-focus-animate px-4 py-3 text-sm rounded-t-lg" placeholder="e.g. Sarah Jenkins" type="text"/>
+</div>
+<div class="group">
+<label class="block text-[10px] font-label font-bold uppercase tracking-widest text-on-surface-variant mb-1">Official Email</label>
+<input class="w-full bg-surface-container-highest border-none border-b-2 border-transparent input-focus-animate px-4 py-3 text-sm rounded-t-lg" placeholder="admin@agentco.com" type="email"/>
+</div>
+<div class="group col-span-2">
+<label class="block text-[10px] font-label font-bold uppercase tracking-widest text-on-surface-variant mb-1">Phone Number</label>
+<input class="w-full bg-surface-container-highest border-none border-b-2 border-transparent input-focus-animate px-4 py-3 text-sm rounded-t-lg" placeholder="+1 (555) 000-0000" type="tel"/>
+</div>
+</div>
+</section>
+<!-- Footer Actions -->
+<div class="flex items-center justify-between pt-4">
+<button class="px-6 py-3 text-sm font-bold text-on-surface-variant hover:text-primary transition-colors flex items-center gap-2">
+<span class="material-symbols-outlined">arrow_back</span>
+                            Save as Draft
+                        </button>
+<div class="flex gap-4">
+<button class="px-8 py-3 bg-gradient-to-br from-primary to-primary-container text-on-primary rounded-lg font-bold shadow-lg shadow-primary/20 hover:scale-[1.02] transition-all flex items-center gap-2">
+                                Complete Onboarding
+                                <span class="material-symbols-outlined">check_circle</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Right Sidebar / Utility Panels -->
+<div class="col-span-12 lg:col-span-4 space-y-6">
+<!-- Assign Initial Manager Panel -->
+<div class="bg-surface-container-high p-6 rounded-xl border-l-4 border-primary">
+<h4 class="text-sm font-headline font-bold text-primary mb-4">Assign Initial Manager</h4>
+<p class="text-xs text-on-surface-variant mb-6">This Regional Manager will be responsible for the final verification and performance oversight of this agent.</p>
+<div class="space-y-4">
+<div class="relative group">
+<select class="w-full bg-white border border-outline-variant/30 px-4 py-3 text-sm rounded-lg appearance-none focus:ring-2 focus:ring-primary/20">
+<option>Select Manager</option>
+<option>Marcus Aurelius (East Coast)</option>
+<option>Helena Troy (Central)</option>
+<option>Siddhartha G. (West Coast)</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline pointer-events-none">expand_more</span>
+</div>
+<div class="bg-white/50 p-4 rounded-lg border border-white flex items-start gap-3">
+<img alt="Manager Preview" class="w-10 h-10 rounded-full object-cover grayscale" data-alt="Portrait of a middle-aged male manager with a kind expression, wearing professional attire in a bright, modern studio setting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCMxqUiKSfLcHB_7wgzVRaccerKTA2mLxbQKWPaSeh7RjjycSpp4FDKLre_17p3AE63SGpxEDdXQnTKhFSksFe46oB0h_3sqjUzeqqk0m4wcrbaMi2ZKyIQIOaHURrlBz1wWXNluoS13adHyz3GIIIw3R40HqLjjNmbKa95rsjS2KVaixQW1WpliUUXZPIPyjlLVPFzCGroSwC15zCdKV1maxw4TZqaAd3KDYuuePcoXVn9z5jcSR_h-BDdPK6BrbO9EdtwXKTh0Hv7"/>
+<div>
+<p class="text-[11px] font-bold">Marcus Aurelius</p>
+<p class="text-[10px] text-on-surface-variant">Regional Director, East</p>
+<div class="flex items-center gap-1 mt-1">
+<span class="w-2 h-2 rounded-full bg-tertiary-container"></span>
+<span class="text-[9px] font-medium text-on-tertiary-fixed-variant uppercase">Available</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Guidance Card -->
+<div class="bg-surface-container-low p-6 rounded-xl">
+<div class="flex items-center gap-2 mb-4">
+<span class="material-symbols-outlined text-primary text-xl">info</span>
+<h4 class="text-xs font-bold uppercase tracking-widest text-primary">Compliance Tip</h4>
+</div>
+<p class="text-xs leading-relaxed text-on-surface-variant italic">
+                            "Ensure the Business License number matches the uploaded PDF document exactly. Verification typically takes 24-48 business hours after submission."
+                        </p>
+<hr class="my-4 border-outline-variant/20"/>
+<div class="space-y-3">
+<div class="flex items-center gap-2 text-[10px] text-on-surface-variant font-medium">
+<span class="material-symbols-outlined text-xs text-primary" style="font-variation-settings: 'FILL' 1;">check</span>
+                                Real-time background check
+                            </div>
+<div class="flex items-center gap-2 text-[10px] text-on-surface-variant font-medium">
+<span class="material-symbols-outlined text-xs text-primary" style="font-variation-settings: 'FILL' 1;">check</span>
+                                Automated routing setup
+                            </div>
+</div>
+</div>
+<!-- Progress Stats -->
+<div class="bg-primary/5 p-6 rounded-xl flex items-center justify-between">
+<div>
+<p class="text-[10px] font-bold text-primary uppercase tracking-widest">Onboarding Score</p>
+<p class="text-2xl font-headline font-black text-primary">82%</p>
+</div>
+<div class="w-12 h-12 rounded-full border-4 border-primary/20 border-t-primary flex items-center justify-center text-[10px] font-bold text-primary">
+                            82
+                        </div>
+</div>
+</div>
+</div>
+</div>
+</main>
+</body></html>

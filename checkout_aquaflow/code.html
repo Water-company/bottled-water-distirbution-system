@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+    :root {
+        --primary-container: #0d47a1;
+        --tertiary-fixed-dim: #88d982;
+        --tertiary-container: #005914;
+        --secondary-fixed-dim: #bac9d3;
+        --surface-container-high: #e8e7f0;
+        --on-tertiary-container: #7ecf79;
+        --inverse-on-surface: #f0f0f8;
+        --on-secondary-container: #56656e;
+        --surface: #faf8ff;
+        --on-primary-container: #a1bbff;
+        --secondary-container: #d3e2ed;
+        --outline-variant: #c3c6d4;
+        --surface-tint: #2b5bb5;
+        --primary: #003178;
+        --on-primary-fixed-variant: #00429c;
+        --inverse-surface: #2e3036;
+        --on-secondary: #ffffff;
+        --tertiary: #003f0b;
+        --primary-fixed: #d9e2ff;
+        --surface-container-highest: #e2e2ea;
+        --on-secondary-fixed: #0f1d25;
+        --on-primary-fixed: #001945;
+        --on-tertiary-fixed-variant: #005312;
+        --surface-container-low: #f3f3fb;
+        --outline: #737783;
+        --surface-variant: #e2e2ea;
+        --surface-container: #ededf5;
+        --on-tertiary-fixed: #002204;
+        --inverse-primary: #b0c6ff;
+        --primary-fixed-dim: #b0c6ff;
+        --background: #faf8ff;
+        --on-primary: #ffffff;
+        --surface-bright: #faf8ff;
+        --secondary: #526069;
+        --on-tertiary: #ffffff;
+        --error-container: #ffdad6;
+        --surface-dim: #d9d9e1;
+        --surface-container-lowest: #ffffff;
+        --on-surface: #1a1b21;
+        --on-error: #ffffff;
+        --tertiary-fixed: #a3f69c;
+        --on-error-container: #93000a;
+        --error: #ba1a1a;
+        --on-surface-variant: #434652;
+        --on-background: #1a1b21;
+        --secondary-fixed: #d6e5ef;
+        --on-secondary-fixed-variant: #3b4951;
+    }
+
+    * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+    }
+
+    body {
+        font-family: 'Inter', sans-serif;
+        background-color: var(--surface);
+        color: var(--on-surface);
+    }
+
+    .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    }
+
+    .navbar {
+        position: fixed;
+        top: 0;
+        width: 100%;
+        z-index: 50;
+        background-color: rgba(255, 255, 255, 0.8);
+        backdrop-filter: blur(12px);
+        box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .navbar {
+            background-color: rgba(2, 6, 23, 0.8);
+            box-shadow: none;
+        }
+    }
+
+    .navbar-inner {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 1.5rem;
+        max-width: 80rem;
+        margin: 0 auto;
+    }
+
+    .brand {
+        font-size: 1.25rem;
+        font-weight: 700;
+        letter-spacing: -0.025em;
+        color: #1e3a8a;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .brand { color: #eff6ff; }
+    }
+
+    .nav-links {
+        display: none;
+        gap: 2rem;
+        align-items: center;
+        font-family: 'Inter', sans-serif;
+        font-size: 0.875rem;
+    }
+
+    @media (min-width: 768px) {
+        .nav-links { display: flex; }
+    }
+
+    .nav-link {
+        color: #64748b;
+        text-decoration: none;
+        transition: color 0.15s;
+    }
+
+    .nav-link:hover { color: #2563eb; }
+
+    @media (prefers-color-scheme: dark) {
+        .nav-link { color: #94a3b8; }
+        .nav-link:hover { color: #93c5fd; }
+    }
+
+    .nav-link.active {
+        color: #1d4ed8;
+        font-weight: 600;
+        border-bottom: 2px solid #1d4ed8;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .nav-link.active {
+            color: #93c5fd;
+            border-color: #93c5fd;
+        }
+    }
+
+    .nav-icons {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+
+    .nav-icon {
+        color: #1e3a8a;
+        cursor: pointer;
+        transition: transform 0.15s;
+        user-select: none;
+    }
+
+    .nav-icon:active { transform: scale(0.95); }
+
+    @media (prefers-color-scheme: dark) {
+        .nav-icon { color: #60a5fa; }
+    }
+
+    .nav-divider {
+        background-color: #f1f5f9;
+        height: 1px;
+        width: 100%;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .nav-divider { background-color: #1e293b; }
+    }
+
+    .main-container {
+        max-width: 80rem;
+        margin: 0 auto;
+        padding: 6rem 1.5rem 8rem;
+    }
+
+    .layout-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 2.5rem;
+    }
+
+    @media (min-width: 1024px) {
+        .layout-grid {
+            display: grid;
+            grid-template-columns: repeat(12, minmax(0, 1fr));
+        }
+    }
+
+    .left-col {
+        display: flex;
+        flex-direction: column;
+        gap: 2.5rem;
+    }
+
+    @media (min-width: 1024px) {
+        .left-col { grid-column: span 7 / span 7; }
+    }
+
+    .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1.5rem;
+    }
+
+    .section-title {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--primary);
+        letter-spacing: -0.025em;
+        margin-bottom: 1.5rem;
+    }
+
+    .section-header .section-title {
+        margin-bottom: 0;
+    }
+
+    .section-action {
+        color: var(--primary-container);
+        font-size: 0.875rem;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .card {
+        background-color: var(--surface-container-lowest);
+        border-radius: 0.75rem;
+        padding: 1.5rem;
+        display: flex;
+        align-items: flex-start;
+        gap: 1rem;
+        transition: all 0.15s;
+        box-shadow: 0 0 0 1px rgba(115, 119, 131, 0.05);
+    }
+
+    .card:hover { background-color: var(--surface-container-low); }
+
+    .card-icon {
+        background-color: rgba(13, 71, 161, 0.1);
+        padding: 0.75rem;
+        border-radius: 9999px;
+        color: var(--primary-container);
+        display: flex;
+    }
+
+    .card-content { flex: 1; }
+
+    .card-title {
+        font-weight: 700;
+        color: var(--on-surface);
+    }
+
+    .card-subtitle {
+        color: var(--on-surface-variant);
+        font-size: 0.875rem;
+        margin-top: 0.25rem;
+    }
+
+    .badge {
+        margin-top: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: var(--tertiary-container);
+        font-weight: 500;
+        font-size: 0.875rem;
+        background-color: rgba(0, 89, 20, 0.1);
+        width: fit-content;
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+    }
+
+    .order-items {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .order-item {
+        background-color: var(--surface-container-lowest);
+        border-radius: 0.75rem;
+        padding: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 1.25rem;
+        box-shadow: 0 0 0 1px rgba(115, 119, 131, 0.05);
+    }
+
+    .item-img-wrapper {
+        width: 5rem;
+        height: 5rem;
+        border-radius: 0.5rem;
+        overflow: hidden;
+        background-color: var(--surface-container-low);
+        flex-shrink: 0;
+    }
+
+    .item-img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+    }
+
+    .item-price-row {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin-top: 0.5rem;
+    }
+
+    .item-price {
+        font-weight: 700;
+        color: var(--primary);
+    }
+
+    .qty-control {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        background-color: var(--surface-container);
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.5rem;
+    }
+
+    .qty-btn {
+        font-size: 0.875rem;
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: inherit;
+    }
+
+    .qty-btn:hover { color: var(--primary); }
+
+    .qty-val {
+        font-size: 0.875rem;
+        font-weight: 700;
+        width: 1rem;
+        text-align: center;
+    }
+
+    .payment-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+
+    @media (min-width: 768px) {
+        .payment-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    .payment-card {
+        border-radius: 0.75rem;
+        padding: 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        cursor: pointer;
+    }
+
+    .payment-card.active {
+        background-color: rgba(13, 71, 161, 0.05);
+        box-shadow: 0 0 0 2px var(--primary-container);
+    }
+
+    .payment-card.inactive {
+        background-color: var(--surface-container-lowest);
+        box-shadow: 0 0 0 1px rgba(115, 119, 131, 0.1);
+    }
+
+    .payment-card.inactive:hover { background-color: var(--surface-container-low); }
+
+    .payment-info {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+
+    .payment-icon-wrapper {
+        background-color: #fff;
+        padding: 0.5rem;
+        border-radius: 0.25rem;
+        box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+        display: flex;
+    }
+
+    .payment-icon-wrapper .material-symbols-outlined.blue { color: #2563eb; }
+    .payment-icon-wrapper .material-symbols-outlined.gray { color: var(--on-surface-variant); }
+
+    .payment-title { font-weight: 700; }
+
+    .payment-card.active .payment-title { color: var(--primary); }
+    .payment-card.inactive .payment-title { color: var(--on-surface-variant); }
+
+    .payment-subtitle {
+        font-size: 0.625rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+    }
+
+    .payment-card.active .payment-subtitle { color: rgba(13, 71, 161, 0.7); }
+    .payment-card.inactive .payment-subtitle { color: rgba(67, 70, 82, 0.7); }
+
+    .payment-check { color: var(--primary-container); }
+    
+    .payment-uncheck {
+        width: 1.5rem;
+        height: 1.5rem;
+        border: 2px solid rgba(115, 119, 131, 0.2);
+        border-radius: 9999px;
+    }
+
+    .right-col { }
+
+    @media (min-width: 1024px) {
+        .right-col { grid-column: span 5 / span 5; }
+    }
+
+    .summary-card {
+        background-color: var(--surface-container-low);
+        border-radius: 1.5rem;
+        padding: 2rem;
+        position: sticky;
+        top: 7rem;
+        box-shadow: 0 25px 50px -12px rgba(0, 49, 120, 0.05);
+    }
+
+    .summary-title {
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: var(--primary);
+        margin-bottom: 2rem;
+    }
+
+    .summary-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .summary-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .summary-label { color: var(--on-surface-variant); }
+    .summary-val { font-weight: 500; color: var(--on-surface); }
+
+    .summary-divider {
+        height: 1px;
+        background-color: rgba(195, 198, 212, 0.3);
+        margin: 1.5rem 0;
+    }
+
+    .total-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+    }
+
+    .total-label {
+        font-size: 0.875rem;
+        font-weight: 700;
+        color: var(--primary);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .total-sub {
+        font-size: 0.75rem;
+        color: var(--on-surface-variant);
+    }
+
+    .total-val {
+        font-size: 1.875rem;
+        font-weight: 800;
+        color: var(--primary);
+    }
+
+    .action-area {
+        margin-top: 2.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .btn-primary {
+        width: 100%;
+        height: 3.5rem;
+        background: linear-gradient(to bottom right, var(--primary), var(--primary-container));
+        color: var(--on-primary);
+        font-weight: 700;
+        border-radius: 0.75rem;
+        font-size: 1.125rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.75rem;
+        border: none;
+        cursor: pointer;
+        transition: all 0.15s;
+        box-shadow: 0 10px 15px -3px rgba(0, 49, 120, 0.2);
+    }
+
+    .btn-primary:active { transform: scale(0.95); }
+
+    .terms {
+        text-align: center;
+        font-size: 0.75rem;
+        color: var(--on-surface-variant);
+        padding: 0 1rem;
+    }
+
+    .terms-link {
+        text-decoration: underline;
+        color: var(--primary-container);
+    }
+
+    .security-badge {
+        margin-top: 2rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+        background-color: rgba(255, 255, 255, 0.5);
+        padding: 0.75rem 0;
+        border-radius: 1rem;
+        border: 1px solid white;
+    }
+
+    .security-icon {
+        color: var(--tertiary-container);
+    }
+
+    .security-text {
+        font-size: 0.625rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--on-surface-variant);
+    }
+
+    .bottom-nav {
+        display: flex;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        justify-content: space-around;
+        align-items: center;
+        padding: 0.5rem 1rem 1.5rem;
+        background-color: rgba(255, 255, 255, 0.8);
+        backdrop-filter: blur(24px);
+        border-top-left-radius: 1.5rem;
+        border-top-right-radius: 1.5rem;
+        z-index: 50;
+        box-shadow: 0 -8px 30px rgba(0, 49, 120, 0.08);
+    }
+
+    @media (min-width: 768px) {
+        .bottom-nav { display: none; }
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .bottom-nav { background-color: rgba(15, 23, 42, 0.8); }
+    }
+
+    .bottom-nav-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #94a3b8;
+        padding: 0.5rem 1.25rem;
+        border-radius: 1rem;
+        transition: all 0.2s ease-out;
+        cursor: pointer;
+    }
+
+    .bottom-nav-item:active { transform: scale(0.9); }
+    .bottom-nav-item:hover { background-color: #eff6ff; }
+
+    @media (prefers-color-scheme: dark) {
+        .bottom-nav-item { color: #64748b; }
+        .bottom-nav-item:hover { background-color: #1e293b; }
+    }
+
+    .bottom-nav-item.active {
+        background-color: #dbeafe;
+        color: #1e3a8a;
+        transform: scale(1.05);
+    }
+
+    .bottom-nav-item.active:active { transform: scale(0.9); }
+
+    @media (prefers-color-scheme: dark) {
+        .bottom-nav-item.active {
+            background-color: rgba(30, 58, 138, 0.4);
+            color: #dbeafe;
+        }
+    }
+
+    .bottom-nav-text {
+        font-size: 0.625rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-top: 0.25rem;
+    }
+</style>
+</head>
+<body>
+<!-- TopNavBar -->
+<nav class="navbar">
+<div class="navbar-inner">
+<div class="brand">AquaFlow</div>
+<div class="nav-links">
+<a class="nav-link" href="#">Shop</a>
+<a class="nav-link" href="#">Orders</a>
+<a class="nav-link" href="#">Track</a>
+<a class="nav-link active" href="#">Checkout</a>
+</div>
+<div class="nav-icons">
+<span class="material-symbols-outlined nav-icon">shopping_cart</span>
+<span class="material-symbols-outlined nav-icon">account_circle</span>
+</div>
+</div>
+<div class="nav-divider"></div>
+</nav>
+<main class="main-container">
+<div class="layout-grid">
+<!-- Left Column: Checkout Details -->
+<div class="left-col">
+<!-- Section 1: Delivery Address -->
+<section>
+<div class="section-header">
+<h2 class="section-title">Delivery Details</h2>
+<span class="section-action">Change Address</span>
+</div>
+<div class="card">
+<div class="card-icon">
+<span class="material-symbols-outlined">location_on</span>
+</div>
+<div class="card-content">
+<h3 class="card-title">Home - Bole, Addis Ababa</h3>
+<p class="card-subtitle">Woreda 03, House No. 1245, Near Friendship Mall</p>
+<div class="badge">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1; font-size: 1.125rem;">schedule</span>
+<span>Estimated arrival: 30-45 mins</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Section 2: Cart Summary -->
+<section>
+<h2 class="section-title">Your Order</h2>
+<div class="order-items">
+<!-- Item 1 -->
+<div class="order-item">
+<div class="item-img-wrapper">
+<img class="item-img" data-alt="high-end minimalist blue glass water bottle Arki brand on a clean white professional background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAA6xdICX8voDAjT0upd1CFRxQNgI9-du8FHy1N1Ym6Xby0vd3-wu9BVYFGYRX8jS4V9U6uo_4fwnIGHzzmp-qA05VtyONFc3dLdO-11DC1fShyG2bNpesQxuo9sxfG3O7vAIIPFgY8OSO-Cqf-SLlczqY6vN_uod18n_ycuWcEVMXqYdkMRBGUSJ3T9fNVGYQ1J5tsgnX0ISZG4C6i8L6JyTJCSTezcqCdow_g8fB1MLpeqM9zckrrN22Gf-Tx39OEkatXC3tfzaS1"/>
+</div>
+<div class="card-content">
+<h3 class="card-title">Arki Natural Mineral Water</h3>
+<p class="card-subtitle">Case of 12 x 500ml</p>
+<div class="item-price-row">
+<span class="item-price">ETB 240.00</span>
+<div class="qty-control">
+<button class="material-symbols-outlined qty-btn">remove</button>
+<span class="qty-val">2</span>
+<button class="material-symbols-outlined qty-btn">add</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Item 2 -->
+<div class="order-item">
+<div class="item-img-wrapper">
+<img class="item-img" data-alt="Yes Water brand plastic bottle with clear blue label and mountain graphic high-quality product photography" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCtxCB_aJuXdOQYf45O0T6BfWki_R3KQX9Ias904-CEUo0oSozl9QADp-unXWTPGlQhnwSaRqptIvm51bN6BW2W9XY5-sZT2YyqzSxnuUhn51hjbs6pf8tMCee_6pzHuRv14mPhtwJB6kd6eLYfevetCeLaP0auKRNNY1d3L0rAML6T-5TBDrPTpXr-qJc4tfcvKT0kALk8n8AivI0trQEA7OGyUAFXbCyQpjJXmFp4ibyD-W1AqIqs4b7votq6x7v35zGX7rPROQAv"/>
+</div>
+<div class="card-content">
+<h3 class="card-title">Yes Water Spring Water</h3>
+<p class="card-subtitle">20L Reusable Dispenser Bottle</p>
+<div class="item-price-row">
+<span class="item-price">ETB 180.00</span>
+<div class="qty-control">
+<button class="material-symbols-outlined qty-btn">remove</button>
+<span class="qty-val">1</span>
+<button class="material-symbols-outlined qty-btn">add</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Section 3: Payment Method -->
+<section>
+<h2 class="section-title">Payment Method</h2>
+<div class="payment-grid">
+<!-- Chapa (Selected) -->
+<div class="payment-card active">
+<div class="payment-info">
+<div class="payment-icon-wrapper">
+<span class="material-symbols-outlined blue" style="font-variation-settings: 'FILL' 1;">payments</span>
+</div>
+<div>
+<p class="payment-title">Chapa Payment</p>
+<p class="payment-subtitle">Instant Activation</p>
+</div>
+</div>
+<span class="material-symbols-outlined payment-check" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+</div>
+<!-- Cash on Delivery -->
+<div class="payment-card inactive">
+<div class="payment-info">
+<div class="payment-icon-wrapper">
+<span class="material-symbols-outlined gray">local_atm</span>
+</div>
+<div>
+<p class="payment-title">Cash on Delivery</p>
+<p class="payment-subtitle">Pay at door</p>
+</div>
+</div>
+<div class="payment-uncheck"></div>
+</div>
+</div>
+</section>
+</div>
+<!-- Right Column: Summary Card -->
+<div class="right-col">
+<div class="summary-card">
+<h2 class="summary-title">Price Breakdown</h2>
+<div class="summary-rows">
+<div class="summary-row">
+<span class="summary-label">Subtotal</span>
+<span class="summary-val">ETB 660.00</span>
+</div>
+<div class="summary-row">
+<span class="summary-label">Delivery Fee</span>
+<span class="summary-val">ETB 50.00</span>
+</div>
+<div class="summary-row">
+<span class="summary-label">Service Tax (15%)</span>
+<span class="summary-val">ETB 99.00</span>
+</div>
+</div>
+<div class="summary-divider"></div>
+<div class="total-row">
+<div>
+<span class="total-label">Total Amount</span>
+<p class="total-sub">Including all local taxes</p>
+</div>
+<span class="total-val">ETB 809.00</span>
+</div>
+<div class="action-area">
+<button class="btn-primary">
+                        Confirm Order
+                        <span class="material-symbols-outlined">arrow_forward</span>
+</button>
+<p class="terms">
+                        By placing an order, you agree to AquaFlow's 
+                        <a class="terms-link" href="#">Terms of Service</a> and 
+                        <a class="terms-link" href="#">Privacy Policy</a>.
+                    </p>
+</div>
+<!-- Security Badge -->
+<div class="security-badge">
+<span class="material-symbols-outlined security-icon" style="font-variation-settings: 'FILL' 1;">verified_user</span>
+<div class="security-text">
+                        Secured by Enterprise Grade Encryption
+                    </div>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- BottomNavBar (Mobile Only) -->
+<nav class="bottom-nav">
+<div class="bottom-nav-item">
+<span class="material-symbols-outlined">water_drop</span>
+<span class="bottom-nav-text">Shop</span>
+</div>
+<div class="bottom-nav-item">
+<span class="material-symbols-outlined">receipt_long</span>
+<span class="bottom-nav-text">Orders</span>
+</div>
+<div class="bottom-nav-item">
+<span class="material-symbols-outlined">local_shipping</span>
+<span class="bottom-nav-text">Track</span>
+</div>
+<div class="bottom-nav-item active">
+<span class="material-symbols-outlined">person</span>
+<span class="bottom-nav-text">Profile</span>
+</div>
+</nav>
+</body></html>

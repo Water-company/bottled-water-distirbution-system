@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>AquaFlow Pro - Delivery Confirmation</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        :root {
+            --error: #ba1a1a;
+            --error-container: #ffdad6;
+            --on-tertiary: #ffffff;
+            --on-error: #ffffff;
+            --on-surface-variant: #434652;
+            --surface-variant: #e2e2ea;
+            --surface-dim: #d9d9e1;
+            --secondary-container: #d3e2ed;
+            --tertiary-container: #005914;
+            --on-error-container: #93000a;
+            --primary-fixed-dim: #b0c6ff;
+            --on-tertiary-fixed: #002204;
+            --outline-variant: #c3c6d4;
+            --on-secondary-container: #56656e;
+            --primary-container: #0d47a1;
+            --surface-bright: #faf8ff;
+            --tertiary: #003f0b;
+            --outline: #737783;
+            --inverse-on-surface: #f0f0f8;
+            --primary: #003178;
+            --secondary-fixed: #d6e5ef;
+            --on-tertiary-fixed-variant: #005312;
+            --inverse-primary: #b0c6ff;
+            --surface-tint: #2b5bb5;
+            --surface-container-highest: #e2e2ea;
+            --on-background: #1a1b21;
+            --on-secondary-fixed: #0f1d25;
+            --tertiary-fixed: #a3f69c;
+            --surface-container-high: #e8e7f0;
+            --inverse-surface: #2e3036;
+            --surface: #faf8ff;
+            --tertiary-fixed-dim: #88d982;
+            --surface-container-lowest: #ffffff;
+            --secondary: #526069;
+            --on-secondary-fixed-variant: #3b4951;
+            --on-primary-fixed-variant: #00429c;
+            --on-primary-container: #a1bbff;
+            --on-primary: #ffffff;
+            --surface-container-low: #f3f3fb;
+            --on-surface: #1a1b21;
+            --on-primary-fixed: #001945;
+            --background: #faf8ff;
+            --secondary-fixed-dim: #bac9d3;
+            --primary-fixed: #d9e2ff;
+            --on-secondary: #ffffff;
+            --surface-container: #ededf5;
+            --on-tertiary-container: #7ecf79;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--surface);
+            font-family: 'Inter', sans-serif;
+            color: var(--on-surface);
+            -webkit-font-smoothing: antialiased;
+            overflow-x: hidden;
+            min-height: max(884px, 100dvh);
+        }
+
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+
+        /* TopNavBar */
+        .header {
+            position: fixed;
+            top: 0;
+            width: 100%;
+            z-index: 50;
+            background: rgba(250, 248, 255, 0.8);
+            backdrop-filter: blur(12px);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 24px;
+            box-shadow: 0px 12px 32px rgba(0, 49, 120, 0.06);
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .back-btn {
+            background: none;
+            border: none;
+            padding: 8px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .back-btn:active {
+            transform: scale(0.95);
+        }
+
+        .back-btn .material-symbols-outlined {
+            color: var(--primary);
+        }
+
+        .header-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            background: linear-gradient(to right, #003178, #0D47A1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .header-icon {
+            color: var(--on-surface-variant);
+        }
+
+        /* Main Content */
+        .main-content {
+            padding-top: 80px;
+            padding-bottom: 128px;
+            padding-left: 16px;
+            padding-right: 16px;
+            max-width: 28rem;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        /* Order Context Header */
+        .order-header {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .order-subtitle-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .order-subtitle {
+            font-size: 0.875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: rgba(0, 49, 120, 0.6);
+        }
+
+        .order-title {
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: var(--primary);
+            letter-spacing: -0.025em;
+        }
+
+        /* Map Snippet */
+        .map-section {
+            position: relative;
+            height: 11rem;
+            width: 100%;
+            border-radius: 1rem;
+            overflow: hidden;
+            background-color: var(--surface-container-low);
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+        }
+
+        .map-img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            filter: grayscale(20%);
+        }
+
+        .map-overlay {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(to top, rgba(243, 243, 251, 0.8), transparent);
+        }
+
+        .map-bottom-content {
+            position: absolute;
+            bottom: 16px;
+            left: 16px;
+            right: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+        }
+
+        .map-info {
+            background-color: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(12px);
+            padding: 12px;
+            border-radius: 0.75rem;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+        }
+
+        .map-info-label {
+            font-size: 10px;
+            font-weight: 700;
+            color: rgba(0, 49, 120, 0.6);
+            text-transform: uppercase;
+        }
+
+        .map-info-address {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--on-surface);
+        }
+
+        .map-marker {
+            position: relative;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        @keyframes ripple {
+            0% { transform: scale(0.8); opacity: 1; }
+            100% { transform: scale(2.5); opacity: 0; }
+        }
+
+        .ripple-effect {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background: rgba(13, 71, 161, 0.3);
+            border-radius: 50%;
+            animation: ripple 2s infinite;
+        }
+
+        .marker-dot {
+            width: 16px;
+            height: 16px;
+            background-color: var(--primary);
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            position: relative;
+            z-index: 10;
+        }
+
+        /* Order Summary Card */
+        .summary-card {
+            background-color: var(--surface-container-lowest);
+            border-radius: 1.5rem;
+            padding: 24px;
+            box-shadow: 0px 12px 32px rgba(0, 49, 120, 0.04);
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .summary-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .summary-title {
+            font-weight: 700;
+            font-size: 1.125rem;
+            color: var(--primary);
+        }
+
+        .summary-badge {
+            background-color: var(--secondary-container);
+            color: var(--on-secondary-container);
+            padding: 4px 12px;
+            border-radius: 9999px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .summary-items {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .summary-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px;
+            background-color: var(--surface-container-low);
+            border-radius: 1rem;
+        }
+
+        .item-info {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .item-icon-wrapper {
+            width: 48px;
+            height: 48px;
+            background-color: rgba(13, 71, 161, 0.1);
+            border-radius: 0.75rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .item-icon {
+            color: var(--primary-container);
+        }
+
+        .item-name {
+            font-size: 0.875rem;
+            font-weight: 700;
+            color: var(--on-surface);
+        }
+
+        .item-desc {
+            font-size: 0.75rem;
+            color: var(--on-surface-variant);
+        }
+
+        .item-qty {
+            font-size: 1.25rem;
+            font-weight: 800;
+            color: var(--primary);
+        }
+
+        /* Driver Controls */
+        .controls-section {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 24px;
+            background-color: var(--surface-container-low);
+            border-radius: 1rem;
+        }
+
+        .toggle-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .toggle-icon {
+            color: var(--on-surface-variant);
+        }
+
+        .toggle-label-text {
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+
+        .toggle-label {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .toggle-input {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border-width: 0;
+        }
+
+        .toggle-bg {
+            width: 44px;
+            height: 24px;
+            background-color: var(--outline-variant);
+            border-radius: 9999px;
+            position: relative;
+            transition: background-color 0.2s;
+        }
+
+        .toggle-input:checked + .toggle-bg {
+            background-color: var(--primary);
+        }
+
+        .toggle-bg::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            background-color: white;
+            border: 1px solid #d1d5db;
+            border-radius: 50%;
+            height: 20px;
+            width: 20px;
+            transition: transform 0.2s;
+        }
+
+        .toggle-input:checked + .toggle-bg::after {
+            transform: translateX(100%);
+            border-color: white;
+        }
+
+        .scan-btn {
+            position: relative;
+            width: 100%;
+            height: 80px;
+            background: linear-gradient(to right, var(--primary), var(--primary-container));
+            border-radius: 1rem;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            overflow: hidden;
+            transition: transform 0.2s;
+            border: none;
+            cursor: pointer;
+        }
+
+        .scan-btn:active {
+            transform: scale(0.98);
+        }
+
+        .scan-btn-hover {
+            position: absolute;
+            inset: 0;
+            background-color: rgba(255, 255, 255, 0.1);
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .scan-btn:hover .scan-btn-hover {
+            opacity: 1;
+        }
+
+        .scan-btn-content {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            color: white;
+            height: 100%;
+        }
+
+        .scan-btn-icon {
+            font-size: 1.875rem;
+        }
+
+        .scan-btn-text {
+            font-size: 1.125rem;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+        }
+
+        /* Success Modal Overlay */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 24px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .modal-backdrop {
+            position: absolute;
+            inset: 0;
+            background-color: rgba(0, 49, 120, 0.4);
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-content {
+            position: relative;
+            background-color: var(--surface-container-lowest);
+            width: 100%;
+            max-width: 24rem;
+            border-radius: 2.5rem;
+            padding: 32px;
+            text-align: center;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            transform: scale(0.95);
+            transition: transform 0.3s;
+        }
+
+        .modal-overlay.active {
+            pointer-events: auto;
+            opacity: 1;
+        }
+
+        .modal-overlay.active .modal-content {
+            transform: scale(1);
+        }
+
+        .modal-icon-wrapper {
+            margin: 0 auto 24px;
+            width: 80px;
+            height: 80px;
+            background-color: var(--tertiary-container);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+        }
+
+        .modal-icon {
+            color: var(--on-tertiary-fixed);
+            font-size: 2.25rem;
+        }
+
+        .modal-title {
+            font-size: 1.5rem;
+            font-weight: 900;
+            color: var(--primary);
+            margin-bottom: 8px;
+        }
+
+        .modal-text {
+            color: var(--on-surface-variant);
+            font-size: 0.875rem;
+            margin-bottom: 32px;
+        }
+
+        .modal-btn {
+            width: 100%;
+            padding: 16px 0;
+            background-color: var(--primary);
+            color: white;
+            font-weight: 700;
+            border-radius: 1rem;
+            border: none;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .modal-btn:active {
+            transform: scale(0.95);
+        }
+
+        /* BottomNavBar */
+        .bottom-nav {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: space-around;
+            align-items: flex-end;
+            padding: 8px 16px 24px;
+            background-color: rgba(250, 248, 255, 0.8);
+            backdrop-filter: blur(24px);
+            z-index: 50;
+            border-top-left-radius: 1.5rem;
+            border-top-right-radius: 1.5rem;
+            box-shadow: 0px -8px 24px rgba(0, 49, 120, 0.08);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .bottom-nav {
+                background-color: rgba(2, 6, 23, 0.8);
+            }
+        }
+
+        .nav-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--on-surface-variant);
+            padding: 8px;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .nav-item:hover {
+            color: var(--primary);
+        }
+
+        .nav-item-active {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: #0D47A1;
+            color: white;
+            border-radius: 1rem;
+            padding: 12px;
+            transform: scale(1.1) translateY(-8px);
+            transition: transform 0.2s;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            text-decoration: none;
+        }
+
+        .nav-item-active:active {
+            transform: scale(0.9) translateY(-8px);
+        }
+
+        .nav-label {
+            font-family: 'Inter', sans-serif;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+<!-- TopNavBar -->
+<header class="header">
+<div class="header-left">
+<button class="back-btn">
+<span class="material-symbols-outlined">arrow_back</span>
+</button>
+<h1 class="header-title">AquaFlow Pro</h1>
+</div>
+<div class="header-right">
+<span class="material-symbols-outlined header-icon">notifications</span>
+<span class="material-symbols-outlined header-icon">account_circle</span>
+</div>
+</header>
+<main class="main-content">
+<!-- Order Context Header -->
+<section class="order-header">
+<div class="order-subtitle-wrapper">
+<span class="order-subtitle">Current Delivery</span>
+</div>
+<h2 class="order-title">Order #AF-92834</h2>
+</section>
+<!-- Map Snippet (Asymmetric Layout) -->
+<section class="map-section">
+<img class="map-img" data-alt="A clean, high-contrast digital map interface showing a delivery location marker in a modern urban district. The map uses a minimalist color palette of soft blues and greys, aligning with a premium corporate aesthetic. The lighting is bright and clear, representing a daytime professional setting with professional cartography styling." data-location="San Francisco" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAu4u3pYJY_klKQd_nYESxZOpXhnbRpzdrzsTXnbYXN50BshTtu4P_H9aluVrU2jNoJ0zT8u686BfVa01a6BdF3SoRCeZTpyDLJlnVfKCPWvJ0TUpgj2EUQA37zAQNslkUgwzZfbKwORvFMCB9WPmiBowtxmnhlsMq06xDt7cw9tUEtOG_AuzVNULEOBl4AnV3n9FoNHUTzQJ7eCKRELHhP1L0jsNhpaQYAe52zGWJdjHrjF42SOJNfCNBhtF1g8gz6emn5oPUWa--x"/>
+<div class="map-overlay"></div>
+<div class="map-bottom-content">
+<div class="map-info">
+<p class="map-info-label">Destination</p>
+<p class="map-info-address">482 Water St, Suite 102</p>
+</div>
+<div class="map-marker">
+<div class="ripple-effect"></div>
+<div class="marker-dot"></div>
+</div>
+</div>
+</section>
+<!-- Order Summary Card -->
+<section class="summary-card">
+<div class="summary-header">
+<span class="summary-title">Summary</span>
+<span class="summary-badge">Premium Service</span>
+</div>
+<div class="summary-items">
+<div class="summary-item">
+<div class="item-info">
+<div class="item-icon-wrapper">
+<span class="material-symbols-outlined item-icon" style="font-variation-settings: 'FILL' 1;">water_drop</span>
+</div>
+<div>
+<p class="item-name">20L Spring Water</p>
+<p class="item-desc">Standard BPA-free Crate</p>
+</div>
+</div>
+<span class="item-qty">x5</span>
+</div>
+<div class="summary-item">
+<div class="item-info">
+<div class="item-icon-wrapper">
+<span class="material-symbols-outlined item-icon">reorder</span>
+</div>
+<div>
+<p class="item-name">Empty Returns</p>
+<p class="item-desc">Scheduled Pickup</p>
+</div>
+</div>
+<span class="item-qty">x4</span>
+</div>
+</div>
+</section>
+<!-- Driver Controls -->
+<section class="controls-section">
+<!-- Toggle Component -->
+<div class="toggle-container">
+<div class="toggle-info">
+<span class="material-symbols-outlined toggle-icon">person_off</span>
+<span class="toggle-label-text">Customer Not Available</span>
+</div>
+<label class="toggle-label">
+<input class="toggle-input" id="availabilityToggle" type="checkbox"/>
+<div class="toggle-bg"></div>
+</label>
+</div>
+<!-- Main CTA - Scan QR -->
+<button class="scan-btn" id="scanBtn">
+<div class="scan-btn-hover"></div>
+<div class="scan-btn-content">
+<span class="material-symbols-outlined scan-btn-icon">qr_code_scanner</span>
+<span class="scan-btn-text">Scan QR Code</span>
+</div>
+</button>
+</section>
+</main>
+<!-- Success Modal Overlay (Hidden by Default) -->
+<div class="modal-overlay" id="successModal">
+<div class="modal-backdrop"></div>
+<div class="modal-content" id="modalContent">
+<div class="modal-icon-wrapper">
+<span class="material-symbols-outlined modal-icon" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+</div>
+<h3 class="modal-title">Delivery Success</h3>
+<p class="modal-text">Order #AF-92834 has been confirmed and logged. Great work!</p>
+<button class="modal-btn" onclick="closeModal()">
+                Back to Dashboard
+            </button>
+</div>
+</div>
+<!-- BottomNavBar -->
+<nav class="bottom-nav">
+<a class="nav-item" href="#">
+<span class="material-symbols-outlined">list_alt</span>
+<span class="nav-label">Tasks</span>
+</a>
+<a class="nav-item-active" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">qr_code_scanner</span>
+<span class="nav-label">Scanner</span>
+</a>
+<a class="nav-item" href="#">
+<span class="material-symbols-outlined">water_drop</span>
+<span class="nav-label">Inventory</span>
+</a>
+<a class="nav-item" href="#">
+<span class="material-symbols-outlined">person</span>
+<span class="nav-label">Profile</span>
+</a>
+</nav>
+<script>
+        const scanBtn = document.getElementById('scanBtn');
+        const successModal = document.getElementById('successModal');
+
+        scanBtn.addEventListener('click', () => {
+            successModal.classList.add('active');
+        });
+
+        function closeModal() {
+            successModal.classList.remove('active');
+        }
+
+        // Simple haptic-like feedback for toggle
+        const toggle = document.getElementById('availabilityToggle');
+        toggle.addEventListener('change', function() {
+            if (this.checked) {
+                console.log("Customer unavailable status flagged.");
+            }
+        });
+    </script>
+</body></html>

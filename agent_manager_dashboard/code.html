@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>AquaFlow Pro - Agent Manager Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        :root {
+            --surface-container-low: #f3f3fb;
+            --surface-container: #ededf5;
+            --surface-container-high: #e8e7f0;
+            --surface-container-highest: #e2e2ea;
+            --surface-container-lowest: #ffffff;
+            --surface: #faf8ff;
+            --on-surface: #1a1b21;
+            --on-surface-variant: #434652;
+            --primary: #003178;
+            --primary-container: #0d47a1;
+            --on-primary: #ffffff;
+            --primary-fixed: #d9e2ff;
+            --secondary: #526069;
+            --secondary-container: #d3e2ed;
+            --tertiary-container: #005914;
+            --tertiary-fixed: #a3f69c;
+            --error: #ba1a1a;
+            --error-container: #ffdad6;
+            --outline: #737783;
+            --outline-variant: #c3c6d4;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--surface);
+            color: var(--on-surface);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+
+        .glass-header {
+            background-color: rgba(250, 248, 255, 0.8);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+
+        a { text-decoration: none; }
+        button { border: none; background: none; cursor: pointer; font-family: inherit; }
+        input { font-family: inherit; }
+
+        /* Sidebar */
+        .sidebar {
+            height: 100vh;
+            width: 16rem;
+            position: fixed;
+            left: 0;
+            top: 0;
+            background-color: var(--surface-container-low);
+            display: none;
+            flex-direction: column;
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+            z-index: 40;
+        }
+
+        @media (min-width: 768px) {
+            .sidebar { display: flex; }
+        }
+
+        .sidebar-header {
+            padding-left: 1.5rem;
+            padding-right: 1.5rem;
+            margin-bottom: 2.5rem;
+        }
+
+        .sidebar-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            background: linear-gradient(to right, var(--primary), var(--primary-container));
+            -webkit-background-clip: text;
+            color: transparent;
+        }
+
+        .sidebar-subtitle {
+            font-size: 0.625rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--on-surface-variant);
+            margin-top: 0.25rem;
+        }
+
+        .sidebar-nav {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .nav-item {
+            margin-left: 1rem;
+            margin-right: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            color: var(--on-surface-variant);
+            border-top-right-radius: 9999px;
+            border-bottom-right-radius: 9999px;
+            transition: all 0.3s;
+        }
+
+        .nav-item:hover {
+            background-color: rgba(255, 255, 255, 0.5);
+        }
+
+        .nav-item.active {
+            background-color: var(--surface-container-lowest);
+            color: var(--primary);
+            font-weight: 600;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+        }
+
+        .nav-item .text-sm { font-size: 0.875rem; }
+
+        .sidebar-footer {
+            padding-left: 1rem;
+            padding-right: 1rem;
+            margin-top: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        /* Main Canvas */
+        .main-content {
+            min-height: 100vh;
+            padding-bottom: 6rem;
+        }
+
+        @media (min-width: 768px) {
+            .main-content {
+                margin-left: 16rem;
+                padding-bottom: 2rem;
+            }
+        }
+
+        /* Header */
+        .top-header {
+            position: fixed;
+            top: 0;
+            right: 0;
+            left: 0;
+            z-index: 30;
+            padding: 1rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        @media (min-width: 768px) {
+            .top-header { left: 16rem; }
+        }
+
+        .search-container {
+            position: relative;
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 0.75rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--outline);
+        }
+
+        .search-input {
+            padding: 0.5rem 1rem 0.5rem 2.5rem;
+            background-color: rgba(226, 226, 234, 0.5);
+            border: none;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            width: 16rem;
+            transition: all 0.2s;
+            outline: none;
+        }
+
+        .search-input:focus {
+            box-shadow: 0 0 0 2px rgba(0, 49, 120, 0.2);
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .notification-btn {
+            padding: 0.5rem;
+            color: var(--on-surface-variant);
+            border-radius: 9999px;
+            position: relative;
+            transition: background-color 0.2s;
+        }
+
+        .notification-btn:hover {
+            background-color: var(--surface-container);
+        }
+
+        .notification-badge {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            width: 0.5rem;
+            height: 0.5rem;
+            background-color: var(--error);
+            border-radius: 9999px;
+        }
+
+        .user-profile {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding-left: 1rem;
+            border-left: 1px solid rgba(195, 198, 212, 0.2);
+        }
+
+        .user-info {
+            text-align: right;
+            display: none;
+        }
+
+        @media (min-width: 640px) {
+            .user-info { display: block; }
+        }
+
+        .user-name {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--on-surface);
+        }
+
+        .user-role {
+            font-size: 0.625rem;
+            color: var(--on-surface-variant);
+        }
+
+        .user-avatar {
+            width: 2.5rem;
+            height: 2.5rem;
+            border-radius: 9999px;
+            object-fit: cover;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+        }
+
+        /* Content Area */
+        .content-container {
+            padding-top: 6rem;
+            padding-left: 1.5rem;
+            padding-right: 1.5rem;
+            max-width: 80rem;
+            margin-left: auto;
+            margin-right: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        /* Grid Layouts */
+        .grid-4-cols {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
+        }
+
+        @media (min-width: 1024px) {
+            .grid-4-cols { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        }
+
+        .col-span-3 {
+            grid-column: span 1 / span 1;
+        }
+
+        @media (min-width: 1024px) {
+            .col-span-3 { grid-column: span 3 / span 3; }
+        }
+
+        .grid-3-cols {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
+        }
+
+        @media (min-width: 640px) {
+            .grid-3-cols { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        }
+
+        /* Cards */
+        .stat-card {
+            background-color: var(--surface-container-lowest);
+            padding: 1.5rem;
+            border-radius: 0.75rem;
+            box-shadow: 0px 12px 32px rgba(0, 49, 120, 0.06);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .stat-card.error-card {
+            background-color: rgba(255, 218, 214, 0.2);
+            border: 1px solid rgba(186, 26, 26, 0.05);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .icon-container {
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+        }
+
+        .icon-primary { background-color: rgba(0, 49, 120, 0.1); color: var(--primary); }
+        .icon-secondary { background-color: var(--secondary-container); color: var(--primary); }
+        .icon-error { background-color: rgba(186, 26, 26, 0.1); color: var(--error); }
+
+        .badge-positive {
+            font-size: 0.625rem;
+            font-weight: 700;
+            color: var(--tertiary-container);
+            background-color: var(--tertiary-fixed);
+            padding: 0.125rem 0.5rem;
+            border-radius: 9999px;
+            text-transform: uppercase;
+            letter-spacing: -0.05em;
+        }
+
+        .stat-value {
+            font-size: 1.875rem;
+            font-weight: 800;
+            color: var(--on-surface);
+            letter-spacing: -0.025em;
+            margin-top: 1rem;
+        }
+
+        .stat-value.error-text { color: var(--error); }
+
+        .stat-label {
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--on-surface-variant);
+            margin-top: 0.25rem;
+        }
+
+        .stat-label.error-text { color: var(--error); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; }
+
+        /* Map Preview */
+        .map-container {
+            background-color: var(--surface-container-low);
+            border-radius: 0.75rem;
+            overflow: hidden;
+            position: relative;
+            min-height: 300px;
+            box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.06);
+        }
+
+        @media (min-width: 1024px) {
+            .map-container { grid-row: span 2 / span 2; }
+        }
+
+        .map-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0.8;
+            mix-blend-mode: multiply;
+        }
+
+        .map-gradient {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(to top, rgba(0, 49, 120, 0.4), transparent);
+            pointer-events: none;
+        }
+
+        .map-overlay {
+            position: absolute;
+            top: 1rem;
+            left: 1rem;
+            right: 1rem;
+            background-color: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(12px);
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+
+        .map-overlay-title {
+            font-size: 0.625rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--primary);
+        }
+
+        .status-dots { display: flex; gap: 0.25rem; }
+        .status-dot { width: 0.375rem; height: 0.375rem; border-radius: 9999px; background-color: var(--tertiary-container); }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+        .animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+
+        .expand-map-btn {
+            position: absolute;
+            bottom: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: var(--primary);
+            color: white;
+            font-size: 0.625rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            padding: 0.5rem 1rem;
+            border-radius: 9999px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* Drivers Grid */
+        .drivers-container {
+            background-color: var(--surface-container-lowest);
+            padding: 1.5rem;
+            border-radius: 0.75rem;
+            box-shadow: 0px 12px 32px rgba(0, 49, 120, 0.06);
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            margin-bottom: 1.5rem;
+        }
+
+        .section-title { font-size: 0.875rem; font-weight: 700; color: var(--on-surface); }
+        .section-subtitle { font-size: 0.625rem; font-weight: 500; color: var(--on-surface-variant); }
+        .view-all-btn { font-size: 0.625rem; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: 0.1em; }
+        .view-all-btn:hover { text-decoration: underline; }
+
+        .driver-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1rem;
+        }
+
+        @media (min-width: 768px) {
+            .driver-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+
+        .driver-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            transition: background-color 0.2s;
+        }
+
+        .driver-card:hover { background-color: var(--surface-container-low); }
+
+        .driver-info { display: flex; align-items: center; gap: 0.75rem; }
+        .driver-avatar { width: 2.5rem; height: 2.5rem; border-radius: 0.5rem; object-fit: cover; }
+        .driver-name { font-size: 0.75rem; font-weight: 700; color: var(--on-surface); }
+        
+        .driver-status { display: flex; align-items: center; gap: 0.25rem; }
+        .driver-status-dot { width: 0.5rem; height: 0.5rem; border-radius: 9999px; }
+        .dot-active { background-color: var(--tertiary-container); }
+        .dot-standby { background-color: var(--secondary); }
+        .driver-status-text { font-size: 0.625rem; color: var(--on-surface-variant); text-transform: uppercase; font-weight: 700; letter-spacing: -0.05em; }
+
+        .driver-stats { text-align: right; }
+        .driver-rating { font-size: 0.75rem; font-weight: 700; color: var(--on-surface); }
+        .driver-drops { font-size: 0.625rem; color: var(--on-surface-variant); }
+
+        /* Orders and Inventory */
+        .layout-12-cols {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2rem;
+            align-items: flex-start;
+        }
+
+        @media (min-width: 1024px) {
+            .layout-12-cols { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+        }
+
+        .col-span-8 { grid-column: span 1 / span 1; display: flex; flex-direction: column; gap: 1rem; }
+        @media (min-width: 1024px) { .col-span-8 { grid-column: span 8 / span 8; } }
+
+        .col-span-4 { grid-column: span 1 / span 1; display: flex; flex-direction: column; gap: 1.5rem; }
+        @media (min-width: 1024px) { .col-span-4 { grid-column: span 4 / span 4; } }
+
+        .orders-header { display: flex; align-items: center; justify-content: space-between; }
+        .orders-title { font-size: 1.125rem; font-weight: 700; color: var(--on-surface); display: flex; align-items: center; gap: 0.5rem; }
+        .orders-badge { background-color: var(--primary); color: white; font-size: 0.625rem; padding: 0.125rem 0.5rem; border-radius: 9999px; }
+        
+        .filter-actions { display: flex; gap: 0.5rem; }
+        .filter-btn { font-size: 0.625rem; font-weight: 700; color: var(--on-surface-variant); background-color: var(--surface-container-highest); padding: 0.375rem 0.75rem; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.1em; }
+
+        .orders-list { display: flex; flex-direction: column; gap: 0.75rem; }
+
+        .order-card {
+            background-color: var(--surface-container-lowest);
+            padding: 1.25rem;
+            border-radius: 0.75rem;
+            box-shadow: 0px 12px 32px rgba(0, 49, 120, 0.06);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+        }
+
+        @media (min-width: 640px) {
+            .order-card { flex-direction: row; }
+        }
+
+        .order-card.priority { border-left: 4px solid var(--primary); }
+
+        .order-info-group { display: flex; align-items: center; gap: 1rem; width: 100%; }
+        @media (min-width: 640px) { .order-info-group { width: auto; } }
+
+        .order-icon { width: 3rem; height: 3rem; border-radius: 0.5rem; display: flex; align-items: center; justify-content: center; }
+        .order-icon-primary { background-color: var(--primary-fixed); color: var(--primary); }
+        .order-icon-secondary { background-color: var(--secondary-container); color: var(--secondary); }
+
+        .order-details-title { font-size: 0.875rem; font-weight: 700; color: var(--on-surface); }
+        .order-details-desc { font-size: 0.75rem; color: var(--on-surface-variant); }
+        .text-primary-semibold { color: var(--primary); font-weight: 600; }
+
+        .order-actions-group { display: flex; align-items: center; gap: 1.5rem; width: 100%; justify-content: space-between; }
+        @media (min-width: 640px) { .order-actions-group { width: auto; justify-content: flex-end; } }
+
+        .order-time { text-align: right; }
+        .time-label { font-size: 0.625rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--on-surface-variant); }
+        .time-value { font-size: 0.75rem; font-weight: 700; color: var(--on-surface); }
+
+        .btn-primary {
+            flex: 1;
+            background: linear-gradient(to right, var(--primary), var(--primary-container));
+            color: white;
+            padding: 0.625rem 1.5rem;
+            border-radius: 0.5rem;
+            font-size: 0.75rem;
+            font-weight: 700;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            transition: transform 0.1s;
+        }
+        @media (min-width: 640px) { .btn-primary { flex: none; } }
+        .btn-primary:active { transform: scale(0.95); }
+
+        .btn-outline {
+            flex: 1;
+            border: 2px solid rgba(195, 198, 212, 0.3);
+            color: var(--primary);
+            padding: 0.5rem 1.5rem;
+            border-radius: 0.5rem;
+            font-size: 0.75rem;
+            font-weight: 700;
+            transition: background-color 0.2s;
+        }
+        @media (min-width: 640px) { .btn-outline { flex: none; } }
+        .btn-outline:hover { background-color: rgba(0, 49, 120, 0.05); }
+
+        /* Inventory */
+        .inventory-card {
+            background-color: var(--surface-container-lowest);
+            padding: 1.5rem;
+            border-radius: 1rem;
+            box-shadow: 0px 12px 32px rgba(0, 49, 120, 0.06);
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        .inventory-item { display: flex; flex-direction: column; gap: 0.75rem; }
+        
+        .inv-header { display: flex; justify-content: space-between; align-items: flex-end; }
+        .inv-label { font-size: 0.625rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--on-surface-variant); }
+        .inv-title { font-size: 0.875rem; font-weight: 700; color: var(--on-surface); }
+        .inv-status { font-size: 0.75rem; font-weight: 700; }
+        .status-high { color: var(--tertiary-container); }
+        .status-med { color: var(--on-surface); }
+        .status-low { color: var(--error); }
+
+        .progress-bar-bg { height: 0.5rem; width: 100%; background-color: var(--surface-container-highest); border-radius: 9999px; overflow: hidden; }
+        .progress-bar-fill { height: 100%; border-radius: 9999px; }
+        .fill-high { background-color: var(--tertiary-container); width: 82%; }
+        .fill-med { background-color: var(--primary-container); width: 45%; }
+        .fill-low { background-color: var(--error); width: 12%; }
+
+        .inv-footer { display: flex; justify-content: space-between; font-size: 0.625rem; font-weight: 700; color: var(--on-surface-variant); text-transform: uppercase; }
+        .footer-error { color: var(--error); }
+        .text-underline { text-decoration: underline; }
+
+        .btn-audit {
+            width: 100%;
+            padding: 1rem;
+            background-color: var(--surface-container);
+            color: var(--primary);
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            border-radius: 0.75rem;
+            transition: background-color 0.2s;
+        }
+        .btn-audit:hover { background-color: var(--surface-container-high); }
+
+        /* Mobile Nav */
+        .mobile-nav {
+            display: flex;
+            justify-content: space-around;
+            align-items: flex-end;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            padding: 0.5rem 1rem 1.5rem 1rem;
+            z-index: 50;
+            border-top-left-radius: 1.5rem;
+            border-top-right-radius: 1.5rem;
+            box-shadow: 0px -8px 24px rgba(0, 49, 120, 0.08);
+        }
+
+        @media (min-width: 768px) {
+            .mobile-nav { display: none; }
+        }
+
+        .nav-fab {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: var(--primary-container);
+            color: white;
+            border-radius: 1rem;
+            padding: 0.75rem;
+            transform: scale(1.1) translateY(-0.5rem);
+            transition: transform 0.2s;
+        }
+
+        .nav-icon-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--on-surface-variant);
+            padding: 0.5rem;
+            transition: transform 0.2s;
+        }
+        .nav-icon-btn:active { transform: scale(0.9); }
+        
+        .nav-label { font-size: 0.5rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 0.25rem; }
+    </style>
+</head>
+<body>
+<!-- Sidebar Navigation -->
+<aside class="sidebar">
+<div class="sidebar-header">
+<h1 class="sidebar-title">Manager Portal</h1>
+<p class="sidebar-subtitle">Operations Hub</p>
+</div>
+<nav class="sidebar-nav">
+<a class="nav-item active" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">dashboard</span>
+<span class="text-sm">Dashboard</span>
+</a>
+<a class="nav-item" href="#">
+<span class="material-symbols-outlined">inventory_2</span>
+<span class="text-sm">Inventory</span>
+</a>
+<a class="nav-item" href="#">
+<span class="material-symbols-outlined">local_shipping</span>
+<span class="text-sm">Drivers</span>
+</a>
+<a class="nav-item" href="#">
+<span class="material-symbols-outlined">map</span>
+<span class="text-sm">Routes</span>
+</a>
+<a class="nav-item" href="#">
+<span class="material-symbols-outlined">assignment</span>
+<span class="text-sm">Assignments</span>
+</a>
+</nav>
+<div class="sidebar-footer">
+<a class="nav-item" href="#" style="margin-left:0; margin-right:0;">
+<span class="material-symbols-outlined">settings</span>
+<span class="text-sm">Settings</span>
+</a>
+<a class="nav-item" href="#" style="margin-left:0; margin-right:0;">
+<span class="material-symbols-outlined">help</span>
+<span class="text-sm">Support</span>
+</a>
+</div>
+</aside>
+<!-- Main Canvas -->
+<main class="main-content">
+<!-- Top Navigation -->
+<header class="top-header glass-header">
+<div class="search-container">
+<span class="material-symbols-outlined search-icon">search</span>
+<input class="search-input" placeholder="Search orders, drivers..." type="text"/>
+</div>
+<div class="header-actions">
+<button class="notification-btn">
+<span class="material-symbols-outlined">notifications</span>
+<span class="notification-badge"></span>
+</button>
+<div class="user-profile">
+<div class="user-info">
+<p class="user-name">Alex Rivera</p>
+<p class="user-role">Senior Agent</p>
+</div>
+<img class="user-avatar" data-alt="professional male corporate manager headshot with neutral background and confident expression" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAhFbZwaN8HSIdO1wiilBitrI7oImlE1Qbd3jSLOTRgDAa_gxGN6fdZFe1urrog-nQyBp0clBH_9XrRrjSfCxAM8HwoCz5fb61KOXE-QQXY7IIaiNh-goa_IENLZ6FMVdgd8jtHDK4OaoUtGZtXfVepcpj6SiYrE0gZT-3fnMVdkQAXznE0dq6AcaLqKCAZ2HEN44cI9xg24YCGRCaXoJXyfuQNRdg2o8ofBhxomVF-nd1kq6Boqkn2Jb1Qpr0GGVu0b-g1L-o3eHtP"/>
+</div>
+</div>
+</header>
+<!-- Content Area -->
+<div class="content-container">
+<!-- Bento Grid: Quick Stats & Performance -->
+<section class="grid-4-cols">
+<!-- Quick Stats -->
+<div class="col-span-3 grid-3-cols">
+<div class="stat-card">
+<div class="card-header">
+<span class="icon-container icon-primary material-symbols-outlined">local_shipping</span>
+<span class="badge-positive">+12%</span>
+</div>
+<div>
+<p class="stat-value">142</p>
+<p class="stat-label">Deliveries Today</p>
+</div>
+</div>
+<div class="stat-card">
+<div class="card-header">
+<span class="icon-container icon-secondary material-symbols-outlined">person_pin_circle</span>
+</div>
+<div>
+<p class="stat-value">28</p>
+<p class="stat-label">Active Drivers</p>
+</div>
+</div>
+<div class="stat-card error-card">
+<div class="card-header">
+<span class="icon-container icon-error material-symbols-outlined">warning</span>
+</div>
+<div>
+<p class="stat-value error-text">04</p>
+<p class="stat-label error-text">Stock Alerts</p>
+</div>
+</div>
+</div>
+<!-- Live Map Preview -->
+<div class="map-container">
+<img class="map-image" data-alt="stylized dark blue map of a city with glowing navigation nodes and route lines" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDudW7QXZB3HtLKDz3KW-A1lzwFg7zQb010xjtbD7SsjGL01LD0HkBQzIHH1q1TPytC0XkoIRcZMFzopyT0zNiepODZwcXzGJM_QzJArnLzVozb_QIeY1AJ9uL1v02Ho3ptiNcDjY83Xoe_MRcD3LJ0CUkgO3-faBoFCMaDWZKesJN7qisRyLprCgRcCggSMnStretXxbt242oQ_hTHHG7xPvx2kbAHdHzS8VJcrgEonzWST2Ooph3AkTG1CtjesE32zbfyXq64qW_g"/>
+<div class="map-gradient"></div>
+<div class="map-overlay">
+<p class="map-overlay-title">Real-time Traffic</p>
+<div class="status-dots">
+<span class="status-dot animate-pulse"></span>
+<span class="status-dot"></span>
+</div>
+</div>
+<button class="expand-map-btn">
+<span class="material-symbols-outlined" style="font-size: 0.875rem;">fullscreen</span> Expand Map
+                </button>
+</div>
+<!-- Driver Performance Grid (Small) -->
+<div class="col-span-3 drivers-container">
+<div class="section-header">
+<div>
+<h3 class="section-title">Top Performing Drivers</h3>
+<p class="section-subtitle">Daily efficiency ratings</p>
+</div>
+<button class="view-all-btn">View Fleet</button>
+</div>
+<div class="driver-grid">
+<div class="driver-card">
+<div class="driver-info">
+<img class="driver-avatar" data-alt="headshot of a friendly delivery driver wearing a blue uniform cap" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA0dWg4bG1gc9tO9Tj4bw8mwFjBjBpNERtE3uYLE0lgPdEqDK0bfP90QvF84lZwP69PdOwPwNhsjkRR1qfOoaRfry2umflhjZnnrkdnDhwmq19Lwr-KlRxKDDR-MATLrnN2ej-k6KXa_u465tXxza-WF9m7KYfYg-pHCJF6pVIsveOFhNW9F2nmKfOYeHH6VD5f4Elt1BpG6Q2J4yx8XFil0Jn1kXkDycXTG3YJaYAp39UgVlqSxpwpvJjmLTRBfoSGW2LaIY8a_NCa"/>
+<div>
+<p class="driver-name">Marcus Chen</p>
+<div class="driver-status">
+<span class="driver-status-dot dot-active"></span>
+<p class="driver-status-text">On Delivery</p>
+</div>
+</div>
+</div>
+<div class="driver-stats">
+<p class="driver-rating">4.9 ★</p>
+<p class="driver-drops">22 Drops</p>
+</div>
+</div>
+<div class="driver-card">
+<div class="driver-info">
+<img class="driver-avatar" data-alt="headshot of a smiling female driver in professional delivery attire" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA_7k1vTc8UiVh44nqyl5_o46_NUIgdY_jInpgV5BD0jV2c-GnULzlaILjBcCr308iD4g5SIJuVELFgUq0e92DkAz0I1YDJ2OOt5-8Uv-ROM5LMACTRb6L2IA2nv1A_M_OOpEVJWWofB6I5aCXejo30w7S7-MkjYrceDyA3KbcJZLtQ3SuAn_9bQQaJSQeO3x6lL1mK65qX-yHxHZ_QjpErrv0zuDYl_fUA-OJYYQN0N6xwYhSm_JDjaFKTyGu75YcLSqfoitJaKrcQ"/>
+<div>
+<p class="driver-name">Sarah Jenkins</p>
+<div class="driver-status">
+<span class="driver-status-dot dot-standby"></span>
+<p class="driver-status-text">Standby</p>
+</div>
+</div>
+</div>
+<div class="driver-stats">
+<p class="driver-rating">4.8 ★</p>
+<p class="driver-drops">18 Drops</p>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Order Assignment & Inventory Row -->
+<section class="layout-12-cols">
+<!-- Pending Orders (Priority List) -->
+<div class="col-span-8">
+<div class="orders-header">
+<h2 class="orders-title">
+                        Pending Orders <span class="orders-badge">12 New</span>
+</h2>
+<div class="filter-actions">
+<button class="filter-btn">Filter</button>
+<button class="filter-btn">Sort</button>
+</div>
+</div>
+<div class="orders-list">
+<!-- Order Card -->
+<div class="order-card priority">
+<div class="order-info-group">
+<div class="order-icon order-icon-primary">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">water_drop</span>
+</div>
+<div>
+<h4 class="order-details-title">#ORD-8821 — Lakeside Residences</h4>
+<p class="order-details-desc">20x 20L Premium Springs · <span class="text-primary-semibold">Priority Delivery</span></p>
+</div>
+</div>
+<div class="order-actions-group">
+<div class="order-time">
+<p class="time-label">Est. Time</p>
+<p class="time-value">14 mins</p>
+</div>
+<button class="btn-primary">Quick Assign</button>
+</div>
+</div>
+<!-- Order Card -->
+<div class="order-card">
+<div class="order-info-group">
+<div class="order-icon order-icon-secondary">
+<span class="material-symbols-outlined">water_full</span>
+</div>
+<div>
+<h4 class="order-details-title">#ORD-8824 — Central Tech Park</h4>
+<p class="order-details-desc">50x 0.5L Mineral Cases · Scheduled</p>
+</div>
+</div>
+<div class="order-actions-group">
+<div class="order-time">
+<p class="time-label">Est. Time</p>
+<p class="time-value">45 mins</p>
+</div>
+<button class="btn-outline">Assign Driver</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Inventory Overview (Vertical Bento) -->
+<div class="col-span-4">
+<h2 class="orders-title">Warehouse Stock</h2>
+<div class="inventory-card">
+<!-- 0.5L Item -->
+<div class="inventory-item">
+<div class="inv-header">
+<div>
+<p class="inv-label">Bottle Size</p>
+<p class="inv-title">0.5L Daily Sport</p>
+</div>
+<p class="inv-status status-high">82% Stocked</p>
+</div>
+<div class="progress-bar-bg">
+<div class="progress-bar-fill fill-high"></div>
+</div>
+<div class="inv-footer">
+<span>4,200 UNITS</span>
+<span>REPLENISH: WED</span>
+</div>
+</div>
+<!-- 5L Item -->
+<div class="inventory-item">
+<div class="inv-header">
+<div>
+<p class="inv-label">Bottle Size</p>
+<p class="inv-title">5L Family Pack</p>
+</div>
+<p class="inv-status status-med">45% Stocked</p>
+</div>
+<div class="progress-bar-bg">
+<div class="progress-bar-fill fill-med"></div>
+</div>
+<div class="inv-footer">
+<span>1,120 UNITS</span>
+<span>REPLENISH: TOMORROW</span>
+</div>
+</div>
+<!-- 20L Item -->
+<div class="inventory-item">
+<div class="inv-header">
+<div>
+<p class="inv-label">Bottle Size</p>
+<p class="inv-title">20L Office Pro</p>
+</div>
+<p class="inv-status status-low">12% Stocked</p>
+</div>
+<div class="progress-bar-bg">
+<div class="progress-bar-fill fill-low"></div>
+</div>
+<div class="inv-footer footer-error">
+<span>180 UNITS</span>
+<span class="text-underline">ORDER NOW</span>
+</div>
+</div>
+<button class="btn-audit">Full Inventory Audit</button>
+</div>
+</div>
+</section>
+</div>
+</main>
+<!-- Bottom Navigation (Mobile Only) -->
+<nav class="mobile-nav glass-header">
+<a class="nav-fab" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">list_alt</span>
+<span class="nav-label">Tasks</span>
+</a>
+<a class="nav-icon-btn" href="#">
+<span class="material-symbols-outlined">qr_code_scanner</span>
+<span class="nav-label">Scanner</span>
+</a>
+<a class="nav-icon-btn" href="#">
+<span class="material-symbols-outlined">water_drop</span>
+<span class="nav-label">Stock</span>
+</a>
+<a class="nav-icon-btn" href="#">
+<span class="material-symbols-outlined">person</span>
+<span class="nav-label">Profile</span>
+</a>
+</nav>
+</body></html>

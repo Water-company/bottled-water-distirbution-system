@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>AquaFlow | Customer Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary-fixed-dim": "#b0c6ff",
+                        "secondary-fixed-dim": "#bac9d3",
+                        "secondary-container": "#d3e2ed",
+                        "outline": "#737783",
+                        "on-secondary-container": "#56656e",
+                        "on-primary": "#ffffff",
+                        "error": "#ba1a1a",
+                        "on-tertiary-container": "#7ecf79",
+                        "on-secondary-fixed": "#0f1d25",
+                        "error-container": "#ffdad6",
+                        "surface-container-lowest": "#ffffff",
+                        "on-error-container": "#93000a",
+                        "on-surface-variant": "#434652",
+                        "surface-dim": "#d9d9e1",
+                        "primary": "#003178",
+                        "tertiary-container": "#005914",
+                        "on-surface": "#1a1b21",
+                        "on-primary-fixed-variant": "#00429c",
+                        "inverse-primary": "#b0c6ff",
+                        "surface-container": "#ededf5",
+                        "on-primary-container": "#a1bbff",
+                        "background": "#faf8ff",
+                        "outline-variant": "#c3c6d4",
+                        "inverse-on-surface": "#f0f0f8",
+                        "surface-container-low": "#f3f3fb",
+                        "secondary-fixed": "#d6e5ef",
+                        "on-tertiary-fixed": "#002204",
+                        "tertiary-fixed-dim": "#88d982",
+                        "on-tertiary": "#ffffff",
+                        "on-secondary": "#ffffff",
+                        "on-primary-fixed": "#001945",
+                        "surface-container-high": "#e8e7f0",
+                        "surface-tint": "#2b5bb5",
+                        "secondary": "#526069",
+                        "on-secondary-fixed-variant": "#3b4951",
+                        "inverse-surface": "#2e3036",
+                        "tertiary": "#003f0b",
+                        "primary-fixed": "#d9e2ff",
+                        "on-background": "#1a1b21",
+                        "surface-variant": "#e2e2ea",
+                        "surface-container-highest": "#e2e2ea",
+                        "surface": "#faf8ff",
+                        "primary-container": "#0d47a1",
+                        "surface-bright": "#faf8ff",
+                        "tertiary-fixed": "#a3f69c",
+                        "on-tertiary-fixed-variant": "#005312",
+                        "on-error": "#ffffff"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.5rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "fontFamily": {
+                        "headline": ["Inter"],
+                        "display": ["Inter"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; background-color: #faf8ff; color: #1a1b21; }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; vertical-align: middle; }
+        .tonal-shift { transition: background-color 0.3s ease; }
+        .glass-nav { background: rgba(250, 248, 255, 0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+        .primary-gradient { background: linear-gradient(135deg, #003178 0%, #0d47a1 100%); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* Floating logic for metrics */
+        .metric-card { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+        .metric-card:hover { transform: translateY(-4px); box-shadow: 0px 12px 32px rgba(0, 49, 120, 0.06); }
+        
+        /* Table spacing hack for the "No Divider" rule */
+        .spacing-table { border-collapse: separate; border-spacing: 0 1.1rem; }
+    </style>
+</head>
+<body class="bg-surface text-on-surface selection:bg-primary-fixed selection:text-on-primary-fixed-variant">
+<!-- Top Navigation Bar -->
+<header class="glass-nav fixed top-0 left-0 right-0 z-50 h-16 flex items-center justify-between px-8 border-b border-slate-100/50">
+<div class="flex items-center gap-8">
+<h1 class="text-lg font-black tracking-tight text-primary uppercase">AquaFlow</h1>
+<div class="hidden md:flex relative group">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline">search</span>
+<input class="bg-surface-container-highest border-none rounded-full pl-10 pr-4 py-2 text-sm w-64 focus:ring-2 focus:ring-primary/20 transition-all" placeholder="Search orders or products..." type="text"/>
+</div>
+</div>
+<nav class="flex items-center gap-6">
+<button class="text-outline hover:text-primary transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="text-outline hover:text-primary transition-colors">
+<span class="material-symbols-outlined">apps</span>
+</button>
+<div class="flex items-center gap-3 pl-4 border-l border-outline-variant/20">
+<div class="text-right hidden sm:block">
+<p class="text-xs font-bold text-on-surface">Alex Rivers</p>
+<p class="text-[10px] text-outline">Platinum Member</p>
+</div>
+<img alt="User Profile" class="w-10 h-10 rounded-full object-cover border-2 border-primary-fixed" data-alt="A professional headshot of a person with a friendly expression, captured with high-end portrait lighting in a bright, modern studio setting. The visual style is clean and polished, featuring soft depth of field that keeps the focus on the subject's face. The overall aesthetic is professional and high-fidelity, consistent with a premium corporate dashboard environment." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCj8zozKnUX1gBm0ZkUo8nlGZHJh0bS4T6izsIZqi8VnTw6qIGFR2CV604qtKuf-ZwPSAgWhUMN59mSDFztyGZm7kXDo884wvfc6tvcprhYxGhTxyH2hGdNVhzzcReRhe_66zPTY2yB6_mC__gZJAImzESrwgDCViXxhy6dlfn4n_7wyoKuzwAipgaQVGcPcdha2jLgglot6CWbK2IBib8iewo2zp7eNFlM39xU9BZw7kHuFQBi5NUaKjwEeRiNjRtVsW0gN_R0ceHt"/>
+</div>
+</nav>
+</header>
+<main class="pt-24 pb-12 px-4 md:px-8 max-w-7xl mx-auto space-y-8">
+<!-- Summary Section / Metrics -->
+<section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+<div class="metric-card bg-surface-container-lowest p-6 rounded-xl border border-outline-variant/10">
+<p class="text-xs font-bold text-outline uppercase tracking-widest mb-1">Total Orders</p>
+<div class="flex items-baseline gap-2">
+<span class="text-3xl font-black text-on-surface">128</span>
+<span class="text-tertiary text-xs font-bold">+12%</span>
+</div>
+</div>
+<div class="metric-card bg-surface-container-lowest p-6 rounded-xl border border-outline-variant/10">
+<p class="text-xs font-bold text-outline uppercase tracking-widest mb-1">Active Deliveries</p>
+<div class="flex items-baseline gap-2">
+<span class="text-3xl font-black text-primary">02</span>
+<span class="flex h-2 w-2 rounded-full bg-tertiary-fixed-dim animate-pulse"></span>
+</div>
+</div>
+<div class="metric-card bg-surface-container-lowest p-6 rounded-xl border border-outline-variant/10">
+<p class="text-xs font-bold text-outline uppercase tracking-widest mb-1">Account Balance</p>
+<div class="flex items-baseline gap-2">
+<span class="text-3xl font-black text-on-surface">$245.50</span>
+<span class="text-xs text-outline font-medium">Credits</span>
+</div>
+</div>
+<div class="metric-card bg-primary p-6 rounded-xl shadow-lg shadow-primary/10 text-white relative overflow-hidden">
+<div class="relative z-10">
+<p class="text-xs font-bold text-on-primary-container uppercase tracking-widest mb-1">Loyalty Points</p>
+<div class="flex items-baseline gap-2">
+<span class="text-3xl font-black">4,250</span>
+<span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">star</span>
+</div>
+</div>
+<div class="absolute -right-4 -bottom-4 opacity-10">
+<span class="material-symbols-outlined text-8xl">water_drop</span>
+</div>
+</div>
+</section>
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+<!-- Main Content Left Column -->
+<div class="lg:col-span-2 space-y-8">
+<!-- Active Order Tracking Widget -->
+<div class="bg-surface-container-low p-8 rounded-xl relative overflow-hidden">
+<div class="flex justify-between items-start mb-8">
+<div>
+<h2 class="text-xl font-bold text-on-surface tracking-tight">Active Delivery #ORD-9921</h2>
+<p class="text-sm text-on-surface-variant mt-1">Expected Delivery: Today, 2:30 PM - 4:00 PM</p>
+</div>
+<span class="px-3 py-1 bg-tertiary-container text-on-tertiary-fixed text-[10px] font-black uppercase tracking-tighter rounded-full">In Transit</span>
+</div>
+<div class="relative pt-1">
+<div class="flex mb-4 items-center justify-between">
+<div class="flex-1 text-center">
+<span class="material-symbols-outlined text-primary mb-1">order_approve</span>
+<p class="text-[10px] font-bold text-on-surface">Confirmed</p>
+</div>
+<div class="w-1/4 h-1 bg-primary rounded-full mx-2"></div>
+<div class="flex-1 text-center">
+<span class="material-symbols-outlined text-primary mb-1">inventory_2</span>
+<p class="text-[10px] font-bold text-on-surface">Dispatched</p>
+</div>
+<div class="w-1/4 h-1 bg-primary rounded-full mx-2"></div>
+<div class="flex-1 text-center opacity-40">
+<span class="material-symbols-outlined text-outline mb-1">local_shipping</span>
+<p class="text-[10px] font-bold text-outline">Near You</p>
+</div>
+<div class="w-1/4 h-1 bg-outline-variant/30 rounded-full mx-2"></div>
+<div class="flex-1 text-center opacity-40">
+<span class="material-symbols-outlined text-outline mb-1">home</span>
+<p class="text-[10px] font-bold text-outline">Delivered</p>
+</div>
+</div>
+<div class="overflow-hidden h-1.5 mb-4 text-xs flex rounded-full bg-outline-variant/20">
+<div class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-primary transition-all duration-1000" style="width:58%"></div>
+</div>
+</div>
+</div>
+<!-- Recent Orders Table -->
+<div class="space-y-4">
+<div class="flex items-center justify-between px-2">
+<h2 class="text-xl font-bold text-on-surface tracking-tight">Recent Orders</h2>
+<button class="text-primary text-sm font-semibold hover:underline">View All History</button>
+</div>
+<div class="overflow-x-auto no-scrollbar">
+<table class="w-full spacing-table text-left">
+<thead>
+<tr class="text-[10px] font-black text-outline uppercase tracking-widest">
+<th class="px-6 py-2">Order ID</th>
+<th class="px-6 py-2">Date</th>
+<th class="px-6 py-2">Product</th>
+<th class="px-6 py-2">Qty</th>
+<th class="px-6 py-2">Amount</th>
+<th class="px-6 py-2">Status</th>
+</tr>
+</thead>
+<tbody>
+<tr class="bg-surface-container-lowest group hover:bg-white tonal-shift cursor-pointer rounded-xl">
+<td class="px-6 py-5 font-bold text-primary rounded-l-xl">#ORD-9912</td>
+<td class="px-6 py-5 text-sm text-on-surface-variant">Oct 24, 2023</td>
+<td class="px-6 py-5 text-sm font-medium">20L Spring Water</td>
+<td class="px-6 py-5 text-sm">4x</td>
+<td class="px-6 py-5 text-sm font-bold">$48.00</td>
+<td class="px-6 py-5 rounded-r-xl">
+<span class="px-3 py-1 bg-tertiary-container text-on-tertiary-fixed text-[10px] font-bold uppercase rounded-full">Delivered</span>
+</td>
+</tr>
+<tr class="bg-surface-container-lowest group hover:bg-white tonal-shift cursor-pointer rounded-xl">
+<td class="px-6 py-5 font-bold text-primary rounded-l-xl">#ORD-9884</td>
+<td class="px-6 py-5 text-sm text-on-surface-variant">Oct 12, 2023</td>
+<td class="px-6 py-5 text-sm font-medium">AquaSafe 1.5L Case</td>
+<td class="px-6 py-5 text-sm">2x</td>
+<td class="px-6 py-5 text-sm font-bold">$32.50</td>
+<td class="px-6 py-5 rounded-r-xl">
+<span class="px-3 py-1 bg-tertiary-container text-on-tertiary-fixed text-[10px] font-bold uppercase rounded-full">Delivered</span>
+</td>
+</tr>
+<tr class="bg-surface-container-lowest group hover:bg-white tonal-shift cursor-pointer rounded-xl">
+<td class="px-6 py-5 font-bold text-primary rounded-l-xl">#ORD-9872</td>
+<td class="px-6 py-5 text-sm text-on-surface-variant">Oct 05, 2023</td>
+<td class="px-6 py-5 text-sm font-medium">PureSpring Alkaline</td>
+<td class="px-6 py-5 text-sm">1x</td>
+<td class="px-6 py-5 text-sm font-bold">$15.00</td>
+<td class="px-6 py-5 rounded-r-xl">
+<span class="px-3 py-1 bg-error-container text-on-error-container text-[10px] font-bold uppercase rounded-full">Canceled</span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<!-- Sidebar / Right Column -->
+<div class="space-y-8">
+<!-- Quick Actions -->
+<div class="space-y-4">
+<h3 class="text-sm font-black text-outline uppercase tracking-widest px-2">Quick Actions</h3>
+<div class="grid grid-cols-1 gap-3">
+<button class="primary-gradient text-white w-full h-14 rounded-xl flex items-center justify-between px-6 group transition-all active:scale-95 shadow-md shadow-primary/20">
+<span class="font-bold">New Order</span>
+<span class="material-symbols-outlined group-hover:translate-x-1 transition-transform">add_shopping_cart</span>
+</button>
+<button class="bg-secondary-container text-on-secondary-container w-full h-14 rounded-xl flex items-center justify-between px-6 group hover:bg-secondary-fixed transition-all active:scale-95">
+<span class="font-bold">Repeat Last Order</span>
+<span class="material-symbols-outlined group-hover:rotate-180 transition-transform">replay</span>
+</button>
+<button class="bg-surface-container-lowest border border-outline-variant/30 text-on-surface w-full h-14 rounded-xl flex items-center justify-between px-6 group hover:border-primary transition-all active:scale-95">
+<span class="font-bold text-sm">Contact Support</span>
+<span class="material-symbols-outlined">support_agent</span>
+</button>
+</div>
+</div>
+<!-- Favorite Products Grid -->
+<div class="space-y-4">
+<div class="flex items-center justify-between px-2">
+<h3 class="text-sm font-black text-outline uppercase tracking-widest">Favorites</h3>
+<button class="text-xs text-primary font-bold">Edit</button>
+</div>
+<div class="grid grid-cols-1 gap-4">
+<!-- Fav 1 -->
+<div class="bg-surface-container-lowest p-4 rounded-xl border border-outline-variant/10 flex items-center gap-4 group">
+<div class="w-16 h-16 rounded-lg bg-surface-container-high flex-shrink-0 flex items-center justify-center overflow-hidden">
+<img alt="One Water Bottle" class="w-10 h-14 object-contain" data-alt="A premium 20-liter water jug from the One Water brand, standing vertically on a clean, reflective white surface. The bottle has a minimalist label with deep navy blue branding. The lighting is crisp and commercial-grade, emphasizing the purity of the water inside. The overall aesthetic is high-end, professional, and consistent with the Fluid design system." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCuU86Y8dNAI-IIvP4BhLGE5OCjsubEZ7BkAmt2X7qG2RiTumVlrCdlIC-28IVlYEp1G8XbqKLPKW1EusadCksFEof5OqWmluhUmJ8HwMsbbpsefYmRF3LW9HuxiJ0cSIVJL2-4hDltYCWEs-ve7Q4A04ljRJ00g8_HU-TYI7g6I1ty3JEd9JWQNWeJCjAkdP4lTWJEYu-cG0TbA2GpVpZuyvfFzyAJpHbS9xLNU6GV4URrhTpjKTbX2v2mb_HmfKta8h7_PFLzsdWn"/>
+</div>
+<div class="flex-1 min-w-0">
+<p class="text-sm font-bold text-on-surface truncate">One Water Premium</p>
+<p class="text-[10px] text-outline">20L BPA-Free Jug</p>
+<p class="text-xs font-black text-primary mt-1">$12.00</p>
+</div>
+<button class="h-10 w-10 rounded-full bg-primary-fixed text-on-primary-fixed-variant flex items-center justify-center hover:bg-primary hover:text-white transition-all active:scale-90">
+<span class="material-symbols-outlined text-sm">add</span>
+</button>
+</div>
+<!-- Fav 2 -->
+<div class="bg-surface-container-lowest p-4 rounded-xl border border-outline-variant/10 flex items-center gap-4 group">
+<div class="w-16 h-16 rounded-lg bg-surface-container-high flex-shrink-0 flex items-center justify-center overflow-hidden">
+<img alt="AquaSafe Bottle" class="w-10 h-14 object-contain" data-alt="A case of AquaSafe 1.5-liter water bottles arranged neatly on a modern, light-filled kitchen counter. The bottles feature clean, translucent labels with professional green and blue typography. The background is a soft-focus modern interior that emphasizes a healthy, hydrated lifestyle. The visual style is premium and high-fidelity with soft, ambient daylighting." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAgCqqs5BEalgkTzjUsxYBRnkV9et8ktUq4JpEkUY893vuxn-1-LDRgARsVcMb_n5d3owvxHBQs-3aaiCYzgSMjFzhOdIewfBB3D5LKgyJ7QkQqplOzmIMWZZ_1RDuuCfRqVTZxM0FTJZUZmfHNK6jTeIV0KH6mhiwkycQX1DfwMCRDF624mpwRbCQY6VG_EPSXWQFmB8lPaJca9-Fy6STn0cmnlIsmRVq0hQNDYhj0yQB7I4i5XTZaIDEqYge2W-TLC4RbjRTrCt3-"/>
+</div>
+<div class="flex-1 min-w-0">
+<p class="text-sm font-bold text-on-surface truncate">AquaSafe Daily</p>
+<p class="text-[10px] text-outline">Case of 12 x 1.5L</p>
+<p class="text-xs font-black text-primary mt-1">$18.50</p>
+</div>
+<button class="h-10 w-10 rounded-full bg-primary-fixed text-on-primary-fixed-variant flex items-center justify-center hover:bg-primary hover:text-white transition-all active:scale-90">
+<span class="material-symbols-outlined text-sm">add</span>
+</button>
+</div>
+<!-- Fav 3 -->
+<div class="bg-surface-container-lowest p-4 rounded-xl border border-outline-variant/10 flex items-center gap-4 group">
+<div class="w-16 h-16 rounded-lg bg-surface-container-high flex-shrink-0 flex items-center justify-center overflow-hidden">
+<img alt="PureSpring Bottle" class="w-10 h-14 object-contain" data-alt="A sleek glass bottle of PureSpring Alkaline water positioned against a minimalist, textured gray background. The bottle is elegant with a modern, slim profile and metallic accents on the cap. Lighting is sophisticated, utilizing rim light to highlight the bottle's silhouette. The aesthetic is ultra-premium and fits an executive dashboard's luxury visual identity." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAFZ8oERhcyVv7AFW_DCorSQ2mzJXfU1lPfkTL_lxVLgghMIzeRbDF_AUWREjfbP4qZOR-seT-_QCYKBuL2SbQ8ZjGniKV_0E0S33Y7kUPGPjNqoU352MVGozXX540kglbg_wEg2h041-sUybuk0_JLzTbl9xCrtYuuTDcVi-V8NKGXj_OhfBHojdTE2IxQ3pHcMOYq_TsNK_HJgmbdta92cmVkbL7Xo-uwcIMRWMcFzzH6UpWiPm8XsCPmxCGDO9YEOaRcqpecVQnD"/>
+</div>
+<div class="flex-1 min-w-0">
+<p class="text-sm font-bold text-on-surface truncate">PureSpring Alkaline</p>
+<p class="text-[10px] text-outline">500ml Glass (6pk)</p>
+<p class="text-xs font-black text-primary mt-1">$22.00</p>
+</div>
+<button class="h-10 w-10 rounded-full bg-primary-fixed text-on-primary-fixed-variant flex items-center justify-center hover:bg-primary hover:text-white transition-all active:scale-90">
+<span class="material-symbols-outlined text-sm">add</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Bottom Navigation (Mobile Only) -->
+<footer class="md:hidden glass-nav fixed bottom-0 left-0 right-0 h-16 border-t border-outline-variant/10 flex items-center justify-around px-4 z-50">
+<button class="flex flex-col items-center gap-1 text-primary">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">grid_view</span>
+<span class="text-[10px] font-bold">Home</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-outline hover:text-primary">
+<span class="material-symbols-outlined">shopping_bag</span>
+<span class="text-[10px] font-bold">Orders</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-outline hover:text-primary">
+<span class="material-symbols-outlined">favorite</span>
+<span class="text-[10px] font-bold">Saved</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-outline hover:text-primary">
+<span class="material-symbols-outlined">person</span>
+<span class="text-[10px] font-bold">Account</span>
+</button>
+</footer>
+<script>
+        // Simple interactivity for demonstration
+        document.querySelectorAll('button').forEach(btn => {
+            btn.addEventListener('mousedown', () => btn.classList.add('scale-95'));
+            btn.addEventListener('mouseup', () => btn.classList.remove('scale-95'));
+            btn.addEventListener('mouseleave', () => btn.classList.remove('scale-95'));
+        });
+
+        // Search bar focus effect
+        const searchInput = document.querySelector('input[type="text"]');
+        if(searchInput) {
+            searchInput.addEventListener('focus', () => {
+                searchInput.parentElement.classList.add('scale-105');
+                searchInput.parentElement.classList.add('shadow-lg');
+            });
+            searchInput.addEventListener('blur', () => {
+                searchInput.parentElement.classList.remove('scale-105');
+                searchInput.parentElement.classList.remove('shadow-lg');
+            });
+        }
+    </script>
+</body></html>

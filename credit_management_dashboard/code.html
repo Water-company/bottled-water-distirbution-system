@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Credit Management - Fluid Distribution</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-primary-fixed": "#001945",
+                      "surface-container-low": "#f3f3fb",
+                      "surface-variant": "#e2e2ea",
+                      "on-secondary-container": "#56656e",
+                      "background": "#faf8ff",
+                      "inverse-on-surface": "#f0f0f8",
+                      "secondary-fixed": "#d6e5ef",
+                      "outline-variant": "#c3c6d4",
+                      "error-container": "#ffdad6",
+                      "on-surface": "#1a1b21",
+                      "on-secondary": "#ffffff",
+                      "surface-bright": "#faf8ff",
+                      "primary-fixed": "#d9e2ff",
+                      "on-error-container": "#93000a",
+                      "tertiary-fixed-dim": "#88d982",
+                      "outline": "#737783",
+                      "on-primary-fixed-variant": "#00429c",
+                      "on-primary-container": "#a1bbff",
+                      "surface-container": "#ededf5",
+                      "secondary-fixed-dim": "#bac9d3",
+                      "tertiary": "#003f0b",
+                      "surface-dim": "#d9d9e1",
+                      "surface-container-lowest": "#ffffff",
+                      "surface-container-highest": "#e2e2ea",
+                      "tertiary-fixed": "#a3f69c",
+                      "primary": "#003178",
+                      "on-tertiary-fixed-variant": "#005312",
+                      "on-primary": "#ffffff",
+                      "on-secondary-fixed-variant": "#3b4951",
+                      "error": "#ba1a1a",
+                      "on-tertiary-fixed": "#002204",
+                      "on-secondary-fixed": "#0f1d25",
+                      "on-tertiary-container": "#7ecf79",
+                      "surface": "#faf8ff",
+                      "on-tertiary": "#ffffff",
+                      "on-error": "#ffffff",
+                      "surface-container-high": "#e8e7f0",
+                      "secondary": "#526069",
+                      "primary-fixed-dim": "#b0c6ff",
+                      "primary-container": "#0d47a1",
+                      "secondary-container": "#d3e2ed",
+                      "tertiary-container": "#005914",
+                      "inverse-surface": "#2e3036",
+                      "on-background": "#1a1b21",
+                      "on-surface-variant": "#434652",
+                      "surface-tint": "#2b5bb5",
+                      "inverse-primary": "#b0c6ff"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {},
+              "fontFamily": {
+                      "headline": [
+                              "Inter"
+                      ],
+                      "display": [
+                              "Inter"
+                      ],
+                      "body": [
+                              "Inter"
+                      ],
+                      "label": [
+                              "Inter"
+                      ]
+              },
+              "fontSize": {}
+      },
+          },
+        }
+      </script>
+<style>
+        body { font-family: 'Inter', sans-serif; }
+        .glass-panel {
+            background: rgba(250, 248, 255, 0.8);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+        .primary-gradient {
+            background: linear-gradient(135deg, #003178 0%, #0d47a1 100%);
+        }
+        .table-row-hover:hover {
+            background-color: #ededf5; /* surface-container */
+        }
+        /* Hide scrollbar for clean look in tables if needed */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+      </style>
+</head>
+<body class="bg-surface text-on-surface h-screen flex overflow-hidden">
+<!-- SideNavBar -->
+<nav class="bg-surface shadow-[0px_12px_32px_rgba(0,49,120,0.06)] h-screen w-72 flex flex-col sticky left-0 top-0 hidden md:flex py-6 px-4 z-40 relative">
+<div class="mb-10 px-4">
+<h1 class="text-headline-sm font-display font-bold text-primary tracking-tight">H2O Admin</h1>
+<p class="text-body-sm text-on-surface-variant mt-1">Water Systems Control</p>
+</div>
+<div class="flex-1 space-y-2">
+<!-- Inactive -->
+<a class="flex items-center gap-3 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest px-4 py-3 rounded-lg transition-colors font-body text-body-md tracking-normal" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">inventory_2</span>
+                Inventory
+            </a>
+<!-- Inactive -->
+<a class="flex items-center gap-3 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest px-4 py-3 rounded-lg transition-colors font-body text-body-md tracking-normal" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">local_shipping</span>
+                Logistics
+            </a>
+<!-- Active: Credit Management relates closely to Finance -->
+<a class="flex items-center gap-3 bg-primary-container text-on-primary-container rounded-lg px-4 py-3 scale-[1.05] transition-transform font-body text-body-md tracking-normal" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">payments</span>
+                Finance
+            </a>
+</div>
+<div class="mt-auto space-y-2 pt-6 border-t border-outline-variant/20">
+<button class="w-full primary-gradient text-on-primary rounded-lg py-3 px-4 font-bold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity">
+<span class="material-symbols-outlined">description</span>
+                Generate Report
+            </button>
+<div class="pt-4 space-y-1">
+<a class="flex items-center gap-3 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest px-4 py-2 rounded-lg transition-colors text-sm" href="#">
+<span class="material-symbols-outlined text-xl">settings</span>
+                    Settings
+                </a>
+<a class="flex items-center gap-3 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest px-4 py-2 rounded-lg transition-colors text-sm" href="#">
+<span class="material-symbols-outlined text-xl">help</span>
+                    Support
+                </a>
+</div>
+<div class="mt-6 flex items-center gap-3 px-4 py-2">
+<img alt="Admin User Profile" class="w-10 h-10 rounded-full" data-alt="Professional headshot of a male admin user with a subtle smile, wearing a dark blazer over a light shirt. High key lighting, clean modern office background slightly blurred. AquaFlow aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCNNz385kKEjz-TSkwgY9lldZHlN65zQaWbiyDU-m-GHQLDTtLoOET4RxjxVnm3MS_56VmC3a_Z_VINsQhk6c0INqQU-8H2T1yuK9yq8iEvUmPHi_0GgzLSt6n-5P9bHo4zTWfTz6qd82tZYjR2G0W_qvSy6Ke10JPzEZGtxy45pkXeZtUMCM9iveqDy6BnGapdsQHznVwqu0BhxqtOTCMt9jTcZlvk7T7LTUrC3NQ1hLdqPunMIIKsP-ALiiwqs5Rhqr6Zqe7m0GBJ"/>
+<div>
+<p class="text-sm font-semibold">Admin User</p>
+<p class="text-xs text-on-surface-variant">System Admin</p>
+</div>
+</div>
+</div>
+</nav>
+<!-- Main Content Area -->
+<div class="flex-1 flex flex-col h-screen overflow-hidden">
+<!-- TopNavBar -->
+<header class="w-full sticky top-0 z-50 bg-surface/80 backdrop-blur-md px-8 py-4 flex justify-between items-center no-border-b">
+<div class="flex items-center gap-6">
+<!-- Mobile Menu Button (hidden on md) -->
+<button class="md:hidden text-primary p-2 hover:bg-surface-container-highest rounded-full transition-colors">
+<span class="material-symbols-outlined">menu</span>
+</button>
+<div class="text-xl font-black text-on-primary-fixed tracking-tight">Fluid Distribution</div>
+<!-- Search bar on left -->
+<div class="hidden md:flex ml-8 relative group">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant group-focus-within:text-primary transition-colors">search</span>
+<input class="bg-surface-container-highest border-0 border-b-2 border-transparent focus:border-primary focus:ring-0 pl-10 pr-4 py-2 rounded-t-md w-64 text-sm transition-all duration-300 focus:bg-surface-container-low outline-none" placeholder="Search agents..." type="text"/>
+</div>
+</div>
+<nav class="hidden lg:flex items-center gap-8">
+<a class="text-on-surface-variant hover:text-primary transition-colors font-headline text-headline-sm text-sm" href="#">Dashboard</a>
+<a class="text-on-surface-variant hover:text-primary transition-colors font-headline text-headline-sm text-sm" href="#">Analytics</a>
+<!-- Active Top Nav fallback if applicable, but contextually this is likely under Dashboard/Reports. Assuming Dashboard active for generic view -->
+<a class="text-primary border-b-2 border-primary pb-1 font-bold font-headline text-headline-sm text-sm" href="#">Reports</a>
+</nav>
+<div class="flex items-center gap-2">
+<button class="text-on-surface-variant hover:bg-surface-container-low hover:text-primary rounded-full p-2 transition-all duration-300 ease-in-out">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="text-on-surface-variant hover:bg-surface-container-low hover:text-primary rounded-full p-2 transition-all duration-300 ease-in-out">
+<span class="material-symbols-outlined">apps</span>
+</button>
+<img alt="User Avatar" class="w-8 h-8 rounded-full ml-4 hidden md:block" data-alt="Professional headshot of a male admin user with a subtle smile, wearing a dark blazer over a light shirt. High key lighting, clean modern office background slightly blurred. AquaFlow aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBKh-GM2JKy2wT4TWpfurLh_iZT0KWNiv_8FhUa_V7HTxkYTOtpKFohUkx6JxhTyTuduoQWCw9WMjy6koQrAeU-fKpTqRfDoS-emrtA3I_hs6T3V-QZGRqJtYjUFxbudFMuG7ds8iXDOEMn5hB92XiqZIlBTooU5IwylBWFsXi-oVAWsw6P8G_SjeTe6r1qmhs_0NnLLcJTPYeLYsIfVep8cA3VXDoQGuO8v3HPwqjMqyriwlyWDLZ8M5OWjIDCU9XoF1oQdxffHXM2"/>
+</div>
+</header>
+<!-- Canvas -->
+<main class="flex-1 overflow-y-auto p-4 md:p-8 bg-surface">
+<div class="max-w-7xl mx-auto space-y-8">
+<!-- Page Header -->
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-4">
+<div>
+<h2 class="text-headline-lg font-bold text-on-surface tracking-tight">Credit Management</h2>
+<p class="text-body-md text-on-surface-variant mt-1">Monitor and manage agent credit lines.</p>
+</div>
+<div class="flex gap-3">
+<button class="flex items-center gap-2 px-4 py-2 rounded-lg border border-outline-variant/20 text-primary font-medium hover:bg-surface-container-low transition-colors">
+<span class="material-symbols-outlined text-sm">filter_list</span>
+                            Filter
+                        </button>
+<button class="primary-gradient text-on-primary px-5 py-2 rounded-lg font-medium shadow-[0px_12px_32px_rgba(0,49,120,0.06)] hover:opacity-90 transition-opacity flex items-center gap-2">
+<span class="material-symbols-outlined text-sm">add</span>
+                            New Agent
+                        </button>
+</div>
+</div>
+<!-- Bento Grid Summary -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<!-- Total Credit Issued -->
+<div class="bg-surface-container-lowest rounded-xl p-6 shadow-sm border border-outline-variant/10">
+<div class="flex items-center justify-between mb-4">
+<h3 class="text-sm font-semibold text-on-surface-variant uppercase tracking-wide">Total Issued</h3>
+<span class="material-symbols-outlined text-primary bg-primary-fixed p-2 rounded-full">account_balance</span>
+</div>
+<p class="text-3xl font-display font-bold text-on-surface">$2.4M</p>
+<p class="text-sm text-tertiary-container mt-2 flex items-center gap-1">
+<span class="material-symbols-outlined text-xs">trending_up</span>
+                            +5.2% this month
+                        </p>
+</div>
+<!-- Total Utilized -->
+<div class="bg-surface-container-lowest rounded-xl p-6 shadow-sm border border-outline-variant/10">
+<div class="flex items-center justify-between mb-4">
+<h3 class="text-sm font-semibold text-on-surface-variant uppercase tracking-wide">Total Utilized</h3>
+<span class="material-symbols-outlined text-secondary bg-secondary-fixed p-2 rounded-full">credit_score</span>
+</div>
+<p class="text-3xl font-display font-bold text-on-surface">$1.8M</p>
+<div class="w-full bg-surface-container-highest rounded-full h-1.5 mt-4">
+<div class="bg-secondary h-1.5 rounded-full" style="width: 75%"></div>
+</div>
+</div>
+<!-- Agents Near Limit -->
+<div class="bg-surface-container-lowest rounded-xl p-6 shadow-sm border border-outline-variant/10 relative overflow-hidden group cursor-pointer hover:bg-surface-container-low transition-colors">
+<div class="flex items-center justify-between mb-4">
+<h3 class="text-sm font-semibold text-on-surface-variant uppercase tracking-wide">Near Limit</h3>
+<span class="material-symbols-outlined text-error bg-error-container p-2 rounded-full">warning</span>
+</div>
+<p class="text-3xl font-display font-bold text-error">12</p>
+<p class="text-sm text-on-surface-variant mt-2">Agents &gt; 90% utilization</p>
+<span class="material-symbols-outlined absolute -bottom-4 -right-4 text-8xl text-error/5 group-hover:scale-110 transition-transform">warning</span>
+</div>
+</div>
+<!-- Agent Credit Table Section -->
+<div class="bg-surface-container-lowest rounded-xl shadow-sm border border-outline-variant/10 overflow-hidden">
+<div class="px-6 py-5 border-b border-surface-container-highest flex justify-between items-center bg-surface-container-low/50">
+<h3 class="font-headline font-semibold text-lg text-on-surface">Agent Credit Overview</h3>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">search</span>
+<input class="bg-surface-container-lowest border border-outline-variant/20 focus:border-primary focus:ring-0 pl-9 pr-3 py-1.5 rounded-md text-sm outline-none w-48 transition-all" placeholder="Find agent..." type="text"/>
+</div>
+</div>
+<div class="overflow-x-auto no-scrollbar">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-surface-container-lowest">
+<th class="py-4 px-6 text-xs font-semibold text-on-surface-variant uppercase tracking-wider border-b border-surface-container-highest">Agent</th>
+<th class="py-4 px-6 text-xs font-semibold text-on-surface-variant uppercase tracking-wider border-b border-surface-container-highest text-right">Total Credit</th>
+<th class="py-4 px-6 text-xs font-semibold text-on-surface-variant uppercase tracking-wider border-b border-surface-container-highest text-right">Used Credit</th>
+<th class="py-4 px-6 text-xs font-semibold text-on-surface-variant uppercase tracking-wider border-b border-surface-container-highest text-right">Available</th>
+<th class="py-4 px-6 text-xs font-semibold text-on-surface-variant uppercase tracking-wider border-b border-surface-container-highest text-center">Status</th>
+<th class="py-4 px-6 text-xs font-semibold text-on-surface-variant uppercase tracking-wider border-b border-surface-container-highest text-right">Action</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-surface-container-highest">
+<!-- Row 1 -->
+<tr class="table-row-hover transition-colors group">
+<td class="py-4 px-6">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-primary-fixed text-primary font-bold flex items-center justify-center text-xs">DA</div>
+<div>
+<p class="font-medium text-on-surface text-sm">Distributor Alpha</p>
+<p class="text-xs text-on-surface-variant">ID: AG-1029</p>
+</div>
+</div>
+</td>
+<td class="py-4 px-6 text-right font-medium text-sm">$150,000</td>
+<td class="py-4 px-6 text-right text-sm">
+<div class="flex flex-col items-end">
+<span>$45,000</span>
+<span class="text-xs text-on-surface-variant">30%</span>
+</div>
+</td>
+<td class="py-4 px-6 text-right font-medium text-sm text-tertiary-container">$105,000</td>
+<td class="py-4 px-6 text-center">
+<span class="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-tertiary-fixed-dim/30 text-tertiary uppercase tracking-wide">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span> Good
+                                        </span>
+</td>
+<td class="py-4 px-6 text-right">
+<button class="text-primary hover:bg-primary-fixed/50 px-3 py-1.5 rounded-md text-sm font-medium transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 flex items-center gap-1 ml-auto">
+                                            Adjust Limit <span class="material-symbols-outlined text-sm">edit</span>
+</button>
+</td>
+</tr>
+<!-- Row 2 (Warning State) -->
+<tr class="table-row-hover transition-colors group">
+<td class="py-4 px-6">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-secondary-fixed text-secondary font-bold flex items-center justify-center text-xs">BW</div>
+<div>
+<p class="font-medium text-on-surface text-sm">Blue Water Logistics</p>
+<p class="text-xs text-on-surface-variant">ID: AG-1033</p>
+</div>
+</div>
+</td>
+<td class="py-4 px-6 text-right font-medium text-sm">$80,000</td>
+<td class="py-4 px-6 text-right text-sm">
+<div class="flex flex-col items-end">
+<span class="text-error">$76,000</span>
+<span class="text-xs text-error">95%</span>
+</div>
+</td>
+<td class="py-4 px-6 text-right font-medium text-sm text-error">$4,000</td>
+<td class="py-4 px-6 text-center">
+<span class="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-error-container text-error uppercase tracking-wide">
+<span class="w-1.5 h-1.5 rounded-full bg-error"></span> Near Limit
+                                        </span>
+</td>
+<td class="py-4 px-6 text-right">
+<button class="text-primary hover:bg-primary-fixed/50 px-3 py-1.5 rounded-md text-sm font-medium transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 flex items-center gap-1 ml-auto">
+                                            Adjust Limit <span class="material-symbols-outlined text-sm">edit</span>
+</button>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="table-row-hover transition-colors group">
+<td class="py-4 px-6">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-primary-fixed text-primary font-bold flex items-center justify-center text-xs">O2</div>
+<div>
+<p class="font-medium text-on-surface text-sm">Oasis Supply Co.</p>
+<p class="text-xs text-on-surface-variant">ID: AG-2041</p>
+</div>
+</div>
+</td>
+<td class="py-4 px-6 text-right font-medium text-sm">$200,000</td>
+<td class="py-4 px-6 text-right text-sm">
+<div class="flex flex-col items-end">
+<span>$120,000</span>
+<span class="text-xs text-on-surface-variant">60%</span>
+</div>
+</td>
+<td class="py-4 px-6 text-right font-medium text-sm text-tertiary-container">$80,000</td>
+<td class="py-4 px-6 text-center">
+<span class="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-tertiary-fixed-dim/30 text-tertiary uppercase tracking-wide">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span> Good
+                                        </span>
+</td>
+<td class="py-4 px-6 text-right">
+<button class="text-primary hover:bg-primary-fixed/50 px-3 py-1.5 rounded-md text-sm font-medium transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 flex items-center gap-1 ml-auto">
+                                            Adjust Limit <span class="material-symbols-outlined text-sm">edit</span>
+</button>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="table-row-hover transition-colors group">
+<td class="py-4 px-6">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-primary-fixed text-primary font-bold flex items-center justify-center text-xs">P</div>
+<div>
+<p class="font-medium text-on-surface text-sm">PureFlow Partners</p>
+<p class="text-xs text-on-surface-variant">ID: AG-3012</p>
+</div>
+</div>
+</td>
+<td class="py-4 px-6 text-right font-medium text-sm">$50,000</td>
+<td class="py-4 px-6 text-right text-sm">
+<div class="flex flex-col items-end">
+<span>$10,000</span>
+<span class="text-xs text-on-surface-variant">20%</span>
+</div>
+</td>
+<td class="py-4 px-6 text-right font-medium text-sm text-tertiary-container">$40,000</td>
+<td class="py-4 px-6 text-center">
+<span class="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-tertiary-fixed-dim/30 text-tertiary uppercase tracking-wide">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span> Good
+                                        </span>
+</td>
+<td class="py-4 px-6 text-right">
+<button class="text-primary hover:bg-primary-fixed/50 px-3 py-1.5 rounded-md text-sm font-medium transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 flex items-center gap-1 ml-auto">
+                                            Adjust Limit <span class="material-symbols-outlined text-sm">edit</span>
+</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="p-4 border-t border-surface-container-highest flex items-center justify-between text-sm text-on-surface-variant bg-surface-container-lowest">
+<p>Showing 1 to 4 of 48 entries</p>
+<div class="flex gap-1">
+<button class="px-2 py-1 rounded hover:bg-surface-container-low disabled:opacity-50" disabled="">Prev</button>
+<button class="px-2 py-1 rounded bg-primary text-on-primary font-medium">1</button>
+<button class="px-2 py-1 rounded hover:bg-surface-container-low">2</button>
+<button class="px-2 py-1 rounded hover:bg-surface-container-low">3</button>
+<button class="px-2 py-1 rounded hover:bg-surface-container-low">Next</button>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>
