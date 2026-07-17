@@ -15,6 +15,19 @@
             <form method="post" action="{% url 'accounts:create_company' %}" enctype="multipart/form-data">
                 {% csrf_token %}
                 <input type="hidden" name="next" value="{% url 'accounts:system_companies' %}">
+                {% if company_form.errors %}
+                    <div class="alert alert-danger">
+                        <div class="fw-semibold mb-2">Please fix the highlighted company registration details.</div>
+                        {% for error in company_form.non_field_errors %}
+                            <div>{{ error }}</div>
+                        {% endfor %}
+                        {% for field in company_form %}
+                            {% for error in field.errors %}
+                                <div>{{ field.label }}: {{ error }}</div>
+                            {% endfor %}
+                        {% endfor %}
+                    </div>
+                {% endif %}
                 <div class="small fw-semibold text-uppercase text-secondary mb-2">Company Details</div>
                 <div class="mb-3">
                     <label class="form-label">{{ company_form.name.label }}</label>
@@ -55,6 +68,38 @@
                 <div class="mb-3">
                     <label class="form-label">{{ company_form.efda_license_number.label }}</label>
                     {{ company_form.efda_license_number }}
+                </div>
+                <div class="content-card border p-3 mb-3 bg-light-subtle">
+                    <div class="small fw-semibold text-uppercase text-secondary mb-2">Premium Customer Program</div>
+                    <label class="form-label d-block">{{ company_form.premium_feature_enabled.label }}</label>
+                    <div class="d-flex flex-wrap gap-3 mb-2">
+                        {% for choice in company_form.premium_feature_enabled %}
+                            <label class="form-check form-check-inline mb-0">
+                                {{ choice.tag }}
+                                <span class="ms-1">{{ choice.choice_label }}</span>
+                            </label>
+                        {% endfor %}
+                    </div>
+                    <div class="small text-secondary mb-3">If you choose No, premium settings are skipped for now and can be activated later from company settings.</div>
+                    <div id="system-companies-premium-fields" {% if not company_form.premium_feature_enabled.value or company_form.premium_feature_enabled.value == "false" %}hidden{% endif %}>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">{{ company_form.premium_streak_threshold.label }}</label>
+                                {{ company_form.premium_streak_threshold }}
+                                {% for error in company_form.premium_streak_threshold.errors %}
+                                    <div class="text-danger small mt-1">{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">{{ company_form.premium_discount_percent.label }}</label>
+                                {{ company_form.premium_discount_percent }}
+                                {% for error in company_form.premium_discount_percent.errors %}
+                                    <div class="text-danger small mt-1">{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="small text-secondary mt-2">Example: 5 consecutive purchases unlock a 15% discount on the next purchase.</div>
+                    </div>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">{{ company_form.registration_document.label }}</label>
@@ -189,4 +234,21 @@
         </div>
     </div>
 </section>
+<script>
+    (() => {
+        const premiumFields = document.getElementById("system-companies-premium-fields");
+        const premiumRadios = document.querySelectorAll('input[name="premium_feature_enabled"]');
+        if (!premiumFields || !premiumRadios.length) {
+            return;
+        }
+
+        const syncPremiumFields = () => {
+            const selected = Array.from(premiumRadios).find((radio) => radio.checked);
+            premiumFields.hidden = !selected || selected.value !== "true";
+        };
+
+        premiumRadios.forEach((radio) => radio.addEventListener("change", syncPremiumFields));
+        syncPremiumFields();
+    })();
+</script>
 {% endblock %}

@@ -40,7 +40,47 @@
             {% endif %}
         </div>
     </div>
-    <div class="col-lg-8">
+    <div class="col-lg-4">
+        <div class="content-card p-4 h-100">
+            <h2 class="h4 mb-3">Agent Credit Policy</h2>
+            <form method="post" action="{% url 'accounts:update_company_credit_policy' %}">
+                {% csrf_token %}
+                {% if credit_policy_form.non_field_errors %}
+                    <div class="alert alert-danger py-2">
+                        {{ credit_policy_form.non_field_errors|join:", " }}
+                    </div>
+                {% endif %}
+                <div class="form-check mb-3">
+                    {{ credit_policy_form.allow_agent_credit }}
+                    <label class="form-check-label" for="{{ credit_policy_form.allow_agent_credit.id_for_label }}">
+                        {{ credit_policy_form.allow_agent_credit.label }}
+                    </label>
+                    {% if credit_policy_form.allow_agent_credit.errors %}
+                        <div class="text-danger small mt-1">{{ credit_policy_form.allow_agent_credit.errors|join:", " }}</div>
+                    {% endif %}
+                </div>
+                <div class="mb-3" data-credit-duration-wrapper>
+                    <label class="form-label" for="{{ credit_policy_form.maximum_credit_duration_days.id_for_label }}">
+                        {{ credit_policy_form.maximum_credit_duration_days.label }}
+                    </label>
+                    {{ credit_policy_form.maximum_credit_duration_days }}
+                    <div class="small text-secondary mt-1">Enter a positive number of days such as 7, 14, or 30.</div>
+                    {% if credit_policy_form.maximum_credit_duration_days.errors %}
+                        <div class="text-danger small mt-1">{{ credit_policy_form.maximum_credit_duration_days.errors|join:", " }}</div>
+                    {% endif %}
+                </div>
+                <div class="small text-secondary mb-3">
+                    {% if company.allow_agent_credit %}
+                        Agents may buy inventory on credit for up to {{ company.maximum_credit_duration_days }} day(s).
+                    {% else %}
+                        Agents must always pay in full before inventory is released.
+                    {% endif %}
+                </div>
+                <button class="btn btn-outline-primary w-100">Save Credit Policy</button>
+            </form>
+        </div>
+    </div>
+    <div class="col-lg-4">
         <div class="content-card p-4 h-100">
             <h2 class="h4 mb-3">Production Batches</h2>
             {% if company_batches %}
@@ -84,6 +124,13 @@
 
 <section class="content-card p-4 mb-4">
     <h2 class="h4 mb-3">Pending Agent Stock Requests</h2>
+    <p class="small text-secondary">
+        {% if company.allow_agent_credit %}
+            Agents may request partial or full credit, but approved terms cannot exceed {{ company.maximum_credit_duration_days }} day(s).
+        {% else %}
+            Credit is disabled, so agents must pay in full before inventory is released.
+        {% endif %}
+    </p>
     {% if pending_batch_sales %}
         {% for sale in pending_batch_sales %}
             <div class="border rounded p-3 mb-3">
@@ -150,7 +197,12 @@
                             {{ sale.batch.product.name }} | Requested {{ sale.quantity_requested }} | Approved {{ sale.quantity_approved }} | Received {{ sale.quantity_received|default:0 }}
                         </div>
                     </div>
-                    <span class="badge text-bg-light">{{ sale.get_status_display }}</span>
+                    <div class="d-flex flex-wrap gap-2">
+                        <span class="badge text-bg-light">{{ sale.get_status_display }}</span>
+                        {% if sale.agent.overdue_status == "inactive" %}
+                            <span class="badge text-bg-danger">Branch inactive</span>
+                        {% endif %}
+                    </div>
                 </div>
                 <div class="small text-secondary mb-3">
                     Outstanding {{ sale.outstanding_balance }}
@@ -218,6 +270,16 @@ document.addEventListener("DOMContentLoaded", function () {
         return year + "-" + month + "-" + day;
     }
 
+    const creditToggle = document.getElementById("{{ credit_policy_form.allow_agent_credit.id_for_label }}");
+    const creditDurationWrapper = document.querySelector("[data-credit-duration-wrapper]");
+
+    function syncCreditDurationVisibility() {
+        if (!creditToggle || !creditDurationWrapper) {
+            return;
+        }
+        creditDurationWrapper.style.display = creditToggle.checked ? "" : "none";
+    }
+
     document.querySelectorAll("[data-approval-form]").forEach(function (form) {
         const paymentType = form.dataset.paymentType;
         const todayValue = form.dataset.today;
@@ -245,6 +307,11 @@ document.addEventListener("DOMContentLoaded", function () {
         input.addEventListener("input", updateEstimate);
         updateEstimate();
     });
+
+    if (creditToggle) {
+        creditToggle.addEventListener("change", syncCreditDurationVisibility);
+        syncCreditDurationVisibility();
+    }
 });
 </script>
 
@@ -310,6 +377,7 @@ document.addEventListener("DOMContentLoaded", function () {
             <thead>
                 <tr>
                     <th>Agent</th>
+                    <th>Overdue Status</th>
                     <th>Product</th>
                     <th>Available</th>
                     <th>Reorder Level</th>
@@ -320,6 +388,13 @@ document.addEventListener("DOMContentLoaded", function () {
                 {% for stock in stock_rows %}
                     <tr>
                         <td>{{ stock.agent.name }}</td>
+                        <td>
+                            {% if stock.agent.overdue_status == "inactive" %}
+                                <span class="badge text-bg-danger">Inactive</span>
+                            {% else %}
+                                <span class="badge text-bg-success">Active</span>
+                            {% endif %}
+                        </td>
                         <td>{{ stock.product.name }}</td>
                         <td>{{ stock.available_quantity }}</td>
                         <td>{{ stock.reorder_level }}</td>
@@ -332,7 +407,7 @@ document.addEventListener("DOMContentLoaded", function () {
                         </td>
                     </tr>
                 {% empty %}
-                    <tr><td colspan="5" class="text-center text-secondary py-4">No stock records yet.</td></tr>
+                    <tr><td colspan="6" class="text-center text-secondary py-4">No stock records yet.</td></tr>
                 {% endfor %}
             </tbody>
         </table>

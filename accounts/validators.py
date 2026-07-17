@@ -9,6 +9,10 @@ except ImportError:  # pragma: no cover - dependency is declared in requirements
 
 
 ETHIOPIAN_PHONE_PATTERN = re.compile(r"^(?:\+251|251|0)?9\d{8}$")
+USERNAME_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{1,148}[a-z0-9])?$")
+ETHIOPIAN_BUSINESS_LICENSE_PATTERN = re.compile(r"^(?=.{8,30}$)(?=.*\d)[A-Z0-9/-]+$")
+EFDA_REGISTRATION_PATTERN = re.compile(r"^(?=.{6,30}$)(?=.*\d)[A-Z0-9/-]+$")
+TIN_PATTERN = re.compile(r"^\d{10}$")
 
 
 def normalize_ethiopian_phone_number(value, *, required=True):
@@ -36,6 +40,76 @@ def normalize_ethiopian_phone_number(value, *, required=True):
 
 def validate_ethiopian_phone_number(value):
     normalize_ethiopian_phone_number(value)
+
+
+def normalize_username(value, *, required=True):
+    raw_value = (value or "").strip().replace(" ", "_").lower()
+    if not raw_value:
+        if required:
+            raise ValidationError("Enter a username.")
+        return ""
+
+    if not USERNAME_PATTERN.match(raw_value):
+        raise ValidationError(
+            "Username must be 3-150 characters and may contain only lowercase letters, numbers, dots, hyphens, and underscores."
+        )
+    return raw_value
+
+
+def validate_username(value):
+    normalize_username(value)
+
+
+def normalize_business_license_number(value, *, required=True):
+    raw_value = (value or "").strip().upper().replace(" ", "")
+    if not raw_value:
+        if required:
+            raise ValidationError("Enter a business license number.")
+        return ""
+
+    if not ETHIOPIAN_BUSINESS_LICENSE_PATTERN.match(raw_value):
+        raise ValidationError(
+            "Enter a valid Ethiopian business license number using letters, numbers, slashes, or hyphens."
+        )
+    return raw_value
+
+
+def validate_ethiopian_business_license_number(value):
+    normalize_business_license_number(value)
+
+
+def normalize_efda_registration_number(value, *, required=True):
+    raw_value = (value or "").strip().upper().replace(" ", "")
+    if not raw_value:
+        if required:
+            raise ValidationError("Enter an EFDA registration number.")
+        return ""
+
+    if not EFDA_REGISTRATION_PATTERN.match(raw_value):
+        raise ValidationError(
+            "Enter a valid EFDA registration number using letters, numbers, slashes, or hyphens."
+        )
+    return raw_value
+
+
+def validate_efda_registration_number(value):
+    normalize_efda_registration_number(value)
+
+
+def normalize_tin_number(value, *, required=True):
+    raw_value = "".join(ch for ch in (value or "").strip() if ch.isdigit())
+    if not raw_value:
+        if required:
+            raise ValidationError("Enter a TIN.")
+        return ""
+
+    if not TIN_PATTERN.match(raw_value):
+        raise ValidationError("Enter a valid 10-digit Ethiopian TIN.")
+    return raw_value
+
+
+def validate_tin_number(value):
+    normalize_tin_number(value)
 
 
 def validate_file_size(max_mb):

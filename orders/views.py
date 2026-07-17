@@ -23,18 +23,20 @@ from catalog.models import haversine_km
 from core.mixins import CustomerRequiredMixin
 from core.policies import get_cart_pricing_summary
 from orders.forms import CheckoutForm, DeliveryFeedbackForm, RefundRequestForm
-from orders.models import Order, OrderStatus, RefundRequestType
+from orders.models import Complaint, Order, OrderStatus
 from orders.services import (
     cancel_order,
     create_order_request_from_cart,
     expire_order_request_if_needed,
     get_agent_delivery_options,
+    get_delivery_route_snapshot,
     initialize_chapa_payment,
     refresh_delivery_confirmation,
     reorder_order_to_cart,
     restore_rejected_order_to_cart,
     request_order_refund,
     skip_delivery_feedback,
+    submit_complaint_appeal,
     submit_delivery_feedback,
     verify_chapa_payment,
 )
@@ -66,20 +68,190 @@ def estimate_eta_minutes(lat1, lon1, lat2, lon2):
     return eta_minutes, round(distance_km, 2)
 
 
+def _iso_or_empty(value):
+    return value.isoformat() if value else ""
+
+
+def _first_present(*values):
+    for value in values:
+        if value:
+            return value
+    return None
+
+
+def build_tracking_workflow(order, live_tracking):
+    confirmation = getattr(order, "confirmation", None)
+    status_code = "pending"
+    status_label = "Pending"
+    if order.status == OrderStatus.DELIVERED:
+        status_code = "delivered"
+        status_label = "Delivered"
+    elif confirmation and confirmation.verified_at:
+        status_code = "otp_verified"
+        status_label = "OTP Verified"
+    elif confirmation and confirmation.scanned_at:
+        status_code = "qr_code_scanned"
+        status_label = "QR Code Scanned"
+    elif order.status == OrderStatus.ARRIVED:
+        status_code = "driver_arrived"
+        status_label = "Driver Arrived"
+    elif order.status == OrderStatus.OUT_FOR_DELIVERY and live_tracking and live_tracking.is_active and not live_tracking.is_paused:
+        status_code = "live_tracking_active"
+        status_label = "Live Tracking Active"
+    elif order.status == OrderStatus.OUT_FOR_DELIVERY:
+        status_code = "out_for_delivery"
+        status_label = "Out for Delivery"
+    elif order.status in {OrderStatus.DRIVER_ASSIGNED, OrderStatus.DRIVER_ACCEPTED, OrderStatus.PICKED_UP}:
+        status_code = "driver_assigned"
+        status_label = "Driver Assigned"
+    elif order.status == OrderStatus.PAID:
+        status_code = "preparing_order"
+        status_label = "Preparing Order"
+    elif order.status == OrderStatus.PAYMENT_PENDING:
+        status_code = "accepted"
+        status_label = "Accepted"
+
+    timeline_definition = [
+        {
+            "code": "pending",
+            "label": "Pending",
+            "description": "The order request has been created and is waiting for agent review.",
+            "timestamp": order.created_at,
+        },
+        {
+            "code": "accepted",
+            "label": "Accepted",
+            "description": "The agent accepted the order and payment can proceed.",
+            "timestamp": order.accepted_at,
+        },
+        {
+            "code": "paid",
+            "label": "Paid",
+            "description": "Customer payment has been received successfully.",
+            "timestamp": order.paid_at,
+        },
+        {
+            "code": "preparing_order",
+            "label": "Preparing Order",
+            "description": "The warehouse is preparing the bottled water for dispatch.",
+            "timestamp": _first_present(
+                order.paid_at,
+                order.driver_assigned_at,
+                order.driver_accepted_at,
+                order.picked_up_at,
+                order.out_for_delivery_at,
+                order.arrived_at,
+                order.delivered_at,
+            ),
+        },
+        {
+            "code": "driver_assigned",
+            "label": "Driver Assigned",
+            "description": "A driver has been assigned to this delivery.",
+            "timestamp": _first_present(
+                order.driver_assigned_at,
+                order.driver_accepted_at,
+                order.picked_up_at,
+                order.out_for_delivery_at,
+                order.arrived_at,
+                order.delivered_at,
+            ),
+        },
+        {
+            "code": "out_for_delivery",
+            "label": "Out for Delivery",
+            "description": "The order has left the warehouse and is on the way.",
+            "timestamp": _first_present(order.out_for_delivery_at, order.arrived_at, order.delivered_at),
+        },
+        {
+            "code": "live_tracking_active",
+            "label": "Live Tracking Active",
+            "description": "The driver's device is actively sharing GPS updates.",
+            "timestamp": _first_present(
+                getattr(live_tracking, "started_at", None),
+                getattr(live_tracking, "recorded_at", None),
+                order.out_for_delivery_at,
+                order.arrived_at,
+                order.delivered_at,
+            ),
+        },
+        {
+            "code": "driver_arrived",
+            "label": "Driver Arrived",
+            "description": "The driver is within the configured arrival radius.",
+            "timestamp": _first_present(order.arrived_at, order.delivered_at),
+        },
+        {
+            "code": "qr_code_scanned",
+            "label": "QR Code Scanned",
+            "description": "The customer's delivery QR code has been scanned.",
+            "timestamp": getattr(confirmation, "scanned_at", None),
+        },
+        {
+            "code": "otp_verified",
+            "label": "OTP Verified",
+            "description": "The customer's OTP has been validated successfully.",
+            "timestamp": getattr(confirmation, "verified_at", None),
+        },
+        {
+            "code": "delivered",
+            "label": "Delivered",
+            "description": "The order handoff and verification are complete.",
+            "timestamp": order.delivered_at,
+        },
+    ]
+    current_index = next(
+        (index for index, item in enumerate(timeline_definition) if item["code"] == status_code),
+        0,
+    )
+    workflow_timeline = []
+    for index, item in enumerate(timeline_definition):
+        workflow_timeline.append(
+            {
+                "code": item["code"],
+                "label": item["label"],
+                "description": item["description"],
+                "complete": bool(item["timestamp"]) or index < current_index,
+                "current": item["code"] == status_code,
+                "timestamp": _iso_or_empty(item["timestamp"]),
+            }
+        )
+    return {
+        "statusCode": status_code,
+        "statusLabel": status_label,
+        "timeline": workflow_timeline,
+    }
+
+
 def build_order_tracking_payload(order):
     expire_order_request_if_needed(order)
     order.refresh_from_db()
     driver_user = getattr(order.assigned_driver, "user", None)
     driver_location = getattr(driver_user, "driver_location", None)
+    live_tracking = getattr(order, "live_tracking", None)
+    tracking_refresh_seconds = getattr(settings, "LIVE_TRACKING_CUSTOMER_POLL_SECONDS", 5)
+    arrival_threshold_meters = getattr(settings, "DELIVERY_ARRIVAL_THRESHOLD_METERS", 30)
+    driver_latitude = _float_or_none(getattr(live_tracking, "latitude", None))
+    driver_longitude = _float_or_none(getattr(live_tracking, "longitude", None))
+    last_recorded_at = getattr(live_tracking, "recorded_at", None)
+    workflow = build_tracking_workflow(order, live_tracking)
+
+    if driver_latitude is None or driver_longitude is None:
+        driver_latitude = _float_or_none(getattr(driver_location, "latitude", None))
+        driver_longitude = _float_or_none(getattr(driver_location, "longitude", None))
+        last_recorded_at = last_recorded_at or getattr(driver_location, "last_ping_at", None)
+
     payload = {
         "orderNumber": order.order_number,
         "statusCode": order.status,
-        "statusLabel": order.get_status_display(),
+        "statusLabel": workflow["statusLabel"],
+        "workflowStatusCode": workflow["statusCode"],
+        "systemStatusLabel": order.get_status_display(),
         "selectedAgentName": order.selected_agent.name if order.selected_agent_id else "",
         "rejectionReason": order.rejection_reason,
         "canPay": order.can_make_payment,
         "paymentUrl": reverse("orders:payment", kwargs={"order_number": order.order_number}),
-        "agentResponseDeadline": order.agent_response_deadline.isoformat() if order.agent_response_deadline else "",
+        "agentResponseDeadline": _iso_or_empty(order.agent_response_deadline),
         "customer": {
             "name": order.customer.full_name,
             "address": order.delivery_address,
@@ -88,6 +260,17 @@ def build_order_tracking_payload(order):
         },
         "agent": None,
         "driver": None,
+        "trackingRefreshSeconds": tracking_refresh_seconds,
+        "arrivalThresholdMeters": arrival_threshold_meters,
+        "trackingActive": bool(live_tracking and live_tracking.is_active),
+        "trackingPaused": bool(live_tracking and live_tracking.is_paused),
+        "driverArrived": order.status == OrderStatus.ARRIVED,
+        "verificationReady": order.status in {OrderStatus.ARRIVED, OrderStatus.DELIVERED},
+        "lastRecordedAt": _iso_or_empty(last_recorded_at),
+        "distanceMeters": _float_or_none(getattr(live_tracking, "last_distance_meters", None)),
+        "routePoints": [],
+        "routeSource": "unavailable",
+        "workflowTimeline": workflow["timeline"],
     }
     if order.selected_agent_id:
         payload["agent"] = {
@@ -101,32 +284,66 @@ def build_order_tracking_payload(order):
         payload["driver"] = {
             "name": order.assigned_driver.user.full_name,
             "vehicleIdentifier": order.assigned_driver.vehicle_identifier,
-            "online": bool(driver_location and driver_location.is_online),
-            "lastPingAt": driver_location.last_ping_at.isoformat() if driver_location else "",
-            "latitude": _float_or_none(getattr(driver_location, "latitude", None)),
-            "longitude": _float_or_none(getattr(driver_location, "longitude", None)),
+            "phoneNumber": getattr(order.assigned_driver.user, "phone_number", ""),
+            "online": bool(
+                (live_tracking and live_tracking.is_active and not live_tracking.is_paused)
+                or (driver_location and driver_location.is_online)
+            ),
+            "lastPingAt": payload["lastRecordedAt"],
+            "latitude": driver_latitude,
+            "longitude": driver_longitude,
         }
     if getattr(order, "confirmation", None):
         payload["deliveryConfirmation"] = {
-            "expiresAt": order.confirmation.expires_at.isoformat() if order.confirmation.expires_at else "",
-            "scannedAt": order.confirmation.scanned_at.isoformat() if order.confirmation.scanned_at else "",
+            "expiresAt": _iso_or_empty(order.confirmation.expires_at),
+            "scannedAt": _iso_or_empty(order.confirmation.scanned_at),
+            "verifiedAt": _iso_or_empty(order.confirmation.verified_at),
         }
-    payload["etaMinutes"] = None
-    payload["distanceKm"] = None
+    payload["etaMinutes"] = getattr(live_tracking, "last_eta_minutes", None)
+    payload["distanceKm"] = round(payload["distanceMeters"] / 1000, 2) if payload["distanceMeters"] is not None else None
+    route_snapshot = None
     if payload["driver"] and payload["driver"]["latitude"] is not None and payload["driver"]["longitude"] is not None:
-        payload["etaMinutes"], payload["distanceKm"] = estimate_eta_minutes(
+        route_snapshot = get_delivery_route_snapshot(
             payload["driver"]["latitude"],
             payload["driver"]["longitude"],
             payload["customer"]["latitude"],
             payload["customer"]["longitude"],
         )
     elif payload["agent"]:
+        route_snapshot = get_delivery_route_snapshot(
+            payload["agent"]["latitude"],
+            payload["agent"]["longitude"],
+            payload["customer"]["latitude"],
+            payload["customer"]["longitude"],
+        )
+
+    if route_snapshot:
+        payload["routePoints"] = route_snapshot["route_points"]
+        payload["routeSource"] = route_snapshot["source"]
+        if route_snapshot["distance_meters"] is not None:
+            payload["distanceMeters"] = route_snapshot["distance_meters"]
+            payload["distanceKm"] = round(route_snapshot["distance_meters"] / 1000, 2)
+        if route_snapshot["eta_minutes"] is not None:
+            payload["etaMinutes"] = route_snapshot["eta_minutes"]
+
+    if payload["etaMinutes"] is None and payload["driver"] and payload["driver"]["latitude"] is not None and payload["driver"]["longitude"] is not None:
+        computed_eta, computed_distance_km = estimate_eta_minutes(
+            payload["driver"]["latitude"],
+            payload["driver"]["longitude"],
+            payload["customer"]["latitude"],
+            payload["customer"]["longitude"],
+        )
+        payload["etaMinutes"] = computed_eta
+        payload["distanceKm"] = payload["distanceKm"] if payload["distanceKm"] is not None else computed_distance_km
+        payload["distanceMeters"] = payload["distanceMeters"] if payload["distanceMeters"] is not None else round(computed_distance_km * 1000, 2)
+    elif payload["etaMinutes"] is None and payload["agent"]:
         payload["etaMinutes"], payload["distanceKm"] = estimate_eta_minutes(
             payload["agent"]["latitude"],
             payload["agent"]["longitude"],
             payload["customer"]["latitude"],
             payload["customer"]["longitude"],
         )
+        payload["distanceMeters"] = round(payload["distanceKm"] * 1000, 2) if payload["distanceKm"] is not None else None
     return payload
 
 
@@ -240,7 +457,18 @@ class OrderDetailView(LoginRequiredMixin, CustomerRequiredMixin, DetailView):
             "payment",
             "confirmation",
             "feedback",
-        ).prefetch_related("items__product", "status_history", "agent_requests__agent", "refund_requests")
+        ).prefetch_related(
+            "items__product",
+            "status_history",
+            "agent_requests__agent",
+            "refund_requests__evidences",
+            "refund_requests__status_history__changed_by",
+            "refund_requests__complaint__evidences",
+            "refund_requests__complaint__status_history__changed_by",
+            "complaints__evidences",
+            "complaints__linked_refund_request",
+            "complaints__status_history__changed_by",
+        )
 
     def get_context_data(self, **kwargs):
         expire_order_request_if_needed(self.object)
@@ -253,8 +481,14 @@ class OrderDetailView(LoginRequiredMixin, CustomerRequiredMixin, DetailView):
             kwargs={"order_number": self.object.order_number},
         )
         context["refund_form"] = RefundRequestForm()
-        context["existing_service_refund"] = self.object.refund_requests.filter(
-            request_type=RefundRequestType.SERVICE_ISSUE
+        context["existing_complaint"] = self.object.complaints.select_related(
+            "linked_refund_request",
+            "agent_responded_by",
+            "company_decided_by",
+            "system_decided_by",
+        ).prefetch_related(
+            "evidences",
+            "status_history__changed_by",
         ).first()
         context["feedback_form"] = DeliveryFeedbackForm()
         context["feedback_record"] = getattr(self.object, "feedback", None)
@@ -339,13 +573,20 @@ class OrderTrackingView(LoginRequiredMixin, CustomerRequiredMixin, DetailView):
             "selected_agent",
             "assigned_driver__user__driver_location",
             "confirmation",
+            "live_tracking",
         ).prefetch_related(
             "status_history"
         )
 
+    def dispatch(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        if self.object.status not in {OrderStatus.OUT_FOR_DELIVERY, OrderStatus.ARRIVED, OrderStatus.DELIVERED}:
+            messages.info(request, "Live tracking will be available once your order is out for delivery.")
+            return redirect("orders:detail", order_number=self.object.order_number)
+        return super().dispatch(request, *args, **kwargs)
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["tracking_steps"] = OrderDetailView.build_tracking_steps(self.object)
         context["tracking_map_payload"] = build_order_tracking_payload(self.object)
         context["tracking_map_data_url"] = reverse("orders:tracking_status_json", kwargs={"order_number": self.object.order_number})
         return context
@@ -354,9 +595,19 @@ class OrderTrackingView(LoginRequiredMixin, CustomerRequiredMixin, DetailView):
 class OrderTrackingStatusView(LoginRequiredMixin, CustomerRequiredMixin, View):
     def get(self, request, order_number):
         order = get_object_or_404(
-            request.user.orders.select_related("selected_agent", "assigned_driver__user__driver_location"),
+            request.user.orders.select_related(
+                "selected_agent",
+                "assigned_driver__user__driver_location",
+                "confirmation",
+                "live_tracking",
+            ),
             order_number=order_number,
         )
+        if order.status not in {OrderStatus.OUT_FOR_DELIVERY, OrderStatus.ARRIVED, OrderStatus.DELIVERED}:
+            return JsonResponse(
+                {"detail": "Live tracking is not available until the order is out for delivery."},
+                status=400,
+            )
         return JsonResponse(build_order_tracking_payload(order), encoder=DjangoJSONEncoder)
 
 
@@ -431,21 +682,37 @@ class RefundRequestCreateView(LoginRequiredMixin, CustomerRequiredMixin, View):
         )
         form = RefundRequestForm(request.POST, request.FILES)
         if not form.is_valid():
-            messages.error(request, "Please enter a clear reason for the refund request.")
+            messages.error(request, "Please choose a complaint category and provide a clear explanation.")
             return redirect("orders:detail", order_number=order.order_number)
 
         try:
             request_order_refund(
-                order,
-                request.user,
-                form.cleaned_data["reason"],
-                payout_method=form.cleaned_data["payout_method"],
-                photos=form.cleaned_data.get("photos", []),
+                order=order,
+                requested_by=request.user,
+                category=form.cleaned_data["category"],
+                description=form.cleaned_data["description"],
+                evidence_files=form.cleaned_data.get("evidence_files", []),
             )
-            messages.success(request, "Your refund request was submitted for review.")
+            messages.success(request, "Your complaint was submitted and is now pending review.")
         except ValidationError as exc:
-            messages.error(request, exc.messages[0] if exc.messages else "Unable to submit a refund request.")
+            messages.error(request, exc.messages[0] if exc.messages else "Unable to submit your complaint.")
         return redirect("orders:detail", order_number=order.order_number)
+
+
+class ComplaintAppealCreateView(LoginRequiredMixin, CustomerRequiredMixin, View):
+    def post(self, request, pk):
+        complaint = get_object_or_404(
+            Complaint.objects.select_related("order__customer"),
+            pk=pk,
+            order__customer=request.user,
+        )
+        appeal_reason = (request.POST.get("appeal_reason") or "").strip()
+        try:
+            submit_complaint_appeal(complaint, request.user, appeal_reason)
+            messages.success(request, "Your appeal has been submitted for independent system review.")
+        except ValidationError as exc:
+            messages.error(request, exc.messages[0] if exc.messages else "Unable to submit your appeal.")
+        return redirect("orders:detail", order_number=complaint.order.order_number)
 
 
 class ReorderOrderView(LoginRequiredMixin, CustomerRequiredMixin, View):

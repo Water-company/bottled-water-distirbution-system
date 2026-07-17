@@ -5,6 +5,13 @@
     <span class="eyebrow">Inventory System</span>
     <h1 class="display-6 fw-semibold mt-2 mb-2">{{ agent.name }}</h1>
     <p class="text-secondary mb-3">Track stock levels, update reorder thresholds, log manual adjustments, and review the inventory audit trail.</p>
+    <div class="mb-3">
+        {% if agent.overdue_status == "inactive" %}
+            <span class="badge text-bg-danger">Overdue Status: Inactive</span>
+        {% else %}
+            <span class="badge text-bg-success">Overdue Status: Active</span>
+        {% endif %}
+    </div>
     <div class="d-flex flex-wrap gap-2">
         <a href="{% url 'accounts:agent_dashboard' %}" class="btn btn-outline-dark">Back to Dashboard</a>
         <a href="{% url 'accounts:agent_drivers' %}" class="btn btn-outline-primary">Manage Drivers</a>
@@ -18,6 +25,7 @@
     <div class="col-md-6 col-xl-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Transactions</div><div class="display-6 fw-semibold">{{ inventory_metrics.transaction_count }}</div></div></div>
     <div class="col-md-6 col-xl-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Open Batch Balance</div><div class="display-6 fw-semibold">{{ credit_summary.outstanding_balance }}</div></div></div>
     <div class="col-md-6 col-xl-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Credit Limit</div><div class="display-6 fw-semibold">{{ credit_summary.credit_limit }}</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Overdue Status</div><div class="display-6 fw-semibold {% if credit_summary.overdue_status == 'inactive' %}text-danger{% else %}text-success{% endif %}">{{ credit_summary.overdue_status|title }}</div></div></div>
 </section>
 
 <section class="row g-4 mb-4">
@@ -69,11 +77,16 @@
     </div>
     <div class="col-lg-5">
         <div class="content-card p-4 mb-4">
-            <h2 class="h4 mb-2">Request Stock From Company</h2>
+            <h2 class="h4 mb-2">Restock Inventory</h2>
             <div class="small text-secondary mb-3">
-                Current balance: {{ credit_summary.outstanding_balance }} | Credit limit: {{ credit_summary.credit_limit }} | Standard credit period: {{ credit_summary.credit_period_days }} days
+                Current balance: {{ credit_summary.outstanding_balance }} | Credit limit: {{ credit_summary.credit_limit }} | Standard credit period: {{ credit_summary.credit_period_days }} days | Overdue status: {{ credit_summary.overdue_status|title }}
             </div>
             {% if available_company_batches %}
+                <div class="border rounded-3 p-3 bg-light mb-3">
+                    <div class="fw-semibold mb-2">Choose how to restock</div>
+                    <div class="small text-secondary mb-2">Pay now: complete payment through Chapa and release inventory after successful verification.</div>
+                    <div class="small text-secondary mb-0">Buy on credit: available only when the company allows credit. Debt, purchase date, due date, and active credit status are recorded automatically, and inventory is released immediately.</div>
+                </div>
                 <div class="border rounded-3 p-3 bg-light mb-3">
                     <div class="fw-semibold mb-2">Available company batches</div>
                     <div class="small text-secondary mb-0">Choose from batches that already have sellable stock. Each one shows the product, batch code, remaining cases, and company price per case.</div>
@@ -86,6 +99,21 @@
                         {% endfor %}
                     </div>
                 </div>
+                <form method="post" action="{% url 'accounts:agent_inventory_purchase' %}">
+                    {% csrf_token %}
+                    {% for field in batch_purchase_form %}
+                        <div class="mb-3">
+                            <label class="form-label">{{ field.label }}</label>
+                            {{ field }}
+                            {% if field.help_text %}<div class="small text-secondary mt-1">{{ field.help_text }}</div>{% endif %}
+                            {% if field.errors %}<div class="text-danger small mt-1">{{ field.errors|join:", " }}</div>{% endif %}
+                        </div>
+                    {% endfor %}
+                    <button class="btn btn-primary w-100">Continue Restock Purchase</button>
+                </form>
+                <hr class="my-4">
+                <h3 class="h6 mb-2">Need manual approval instead?</h3>
+                <p class="small text-secondary">Use the older request workflow below when you want a company admin to review the stock release before it is finalized.</p>
                 <form method="post" action="{% url 'accounts:agent_batch_request_create' %}">
                     {% csrf_token %}
                     {% for field in batch_request_form %}
@@ -96,7 +124,7 @@
                             {% if field.errors %}<div class="text-danger small mt-1">{{ field.errors|join:", " }}</div>{% endif %}
                         </div>
                     {% endfor %}
-                    <button class="btn btn-primary w-100">Submit Stock Request</button>
+                    <button class="btn btn-outline-primary w-100">Submit Stock Request for Review</button>
                 </form>
             {% else %}
                 <div class="border rounded-3 p-3 bg-light">
@@ -181,6 +209,9 @@
                                         {% if sale.received_at %}
                                             <div class="small text-secondary">Received {{ sale.received_at|date:"Y-m-d H:i" }}</div>
                                         {% endif %}
+                                        {% if sale.collection_status == "awaiting_payment" %}
+                                            <div class="small text-warning">Awaiting Chapa payment verification</div>
+                                        {% endif %}
                                         {% if sale.cancellation_reason %}
                                             <div class="small text-danger">{{ sale.cancellation_reason }}</div>
                                         {% endif %}
@@ -196,7 +227,7 @@
                                         {% endif %}
                                     </td>
                                 </tr>
-                                {% if sale.status == "approved" %}
+                                {% if sale.can_confirm_receipt %}
                                     <tr>
                                         <td colspan="5">
                                             <form method="post" action="{% url 'accounts:agent_batch_sale_confirm_receipt' sale.pk %}" class="row g-2">

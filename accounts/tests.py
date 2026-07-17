@@ -1,4 +1,5 @@
 from decimal import Decimal
+from unittest.mock import Mock, patch
 
 from django.conf import settings
 from django.core import mail
@@ -15,6 +16,7 @@ from accounts.models import CustomerAddress, RegistrationOTP, User, UserRole
 from catalog.models import (
     Agent,
     AgentBatchSale,
+    AgentBatchSaleCheckout,
     AgentBatchSalePayment,
     AgentBatchSalePaymentStatus,
     AgentBatchSalePaymentType,
@@ -34,11 +36,22 @@ from catalog.services import (
     auto_confirm_stale_agent_batch_sales,
     cancel_agent_batch_sale,
     confirm_agent_batch_sale_receipt,
+    finalize_agent_batch_sale_checkout,
     get_agent_open_batch_balance,
+    initialize_agent_batch_sale_checkout,
     notify_overdue_agent_batch_sales,
+    sync_agent_overdue_status,
 )
 from core.models import Announcement, AuditLog, DriverLocation, Notification
-from orders.models import Order, OrderStatus, Payment, PaymentProvider, PaymentStatus, RefundRequestStatus
+from orders.models import (
+    ComplaintAgentResponseType,
+    ComplaintStatus,
+    Order,
+    OrderStatus,
+    Payment,
+    PaymentProvider,
+    PaymentStatus,
+)
 from orders.services import request_order_refund
 
 
@@ -413,6 +426,7 @@ class UploadValidationFormTests(TestCase):
                 "contact_email": "ops@aquacapital.example.com",
                 "contact_phone": "+251911000080",
                 "efda_license_number": "EFDA-2026-001",
+                "premium_feature_enabled": "false",
                 "admin_first_name": "Marta",
                 "admin_last_name": "Tesfaye",
                 "admin_email": "marta@aquacapital.example.com",
@@ -441,13 +455,13 @@ class UploadValidationFormTests(TestCase):
             content_type="text/plain",
         )
 
-        form = self.build_company_registration_form(registration_document=invalid_document)
-
-        self.assertFalse(form.is_valid())
-        self.assertIn(
-            "Unsupported file type. Allowed types: application/pdf, image/jpeg, image/png.",
-            form.errors["registration_document"],
-        )
+        with patch("accounts.validators.magic", Mock(from_buffer=Mock(return_value="text/plain"))):
+            form = self.build_company_registration_form(registration_document=invalid_document)
+            self.assertFalse(form.is_valid())
+            self.assertIn(
+                "Unsupported file type. Allowed types: application/pdf, image/jpeg, image/png.",
+                form.errors["registration_document"],
+            )
 
     def test_registration_document_accepts_valid_pdf_upload(self):
         valid_document = SimpleUploadedFile(
@@ -460,7 +474,44 @@ class UploadValidationFormTests(TestCase):
 
         self.assertTrue(form.is_valid(), form.errors)
 
+    def test_premium_program_requires_threshold_and_discount_when_enabled(self):
+        valid_document = SimpleUploadedFile(
+            "license.pdf",
+            b"%PDF-1.4 fake pdf",
+            content_type="application/pdf",
+        )
+        form = SystemCompanyRegistrationForm(
+            data={
+                "name": "Aqua Capital",
+                "description": "Regional bottler",
+                "location": "Adama",
+                "address": "Adama Industrial Zone",
+                "latitude": "8.540000",
+                "longitude": "39.270000",
+                "contact_email": "ops@aquacapital.example.com",
+                "contact_phone": "+251911000080",
+                "efda_license_number": "EFDA-2026-001",
+                "premium_feature_enabled": "true",
+                "admin_first_name": "Marta",
+                "admin_last_name": "Tesfaye",
+                "admin_email": "marta@aquacapital.example.com",
+                "admin_phone_number": "+251911000081",
+                "admin_password": "StrongPass123!",
+            },
+            files={"registration_document": valid_document},
+        )
 
+        self.assertFalse(form.is_valid())
+        self.assertIn("Enter the consecutive purchases required.", form.errors["premium_streak_threshold"])
+        self.assertIn("Enter the discount percentage.", form.errors["premium_discount_percent"])
+
+
+@override_settings(
+    STORAGES={
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    },
+)
 class AgentManagerPortalTests(TestCase):
     def setUp(self):
         self.agent_manager = User.objects.create_user(
@@ -472,6 +523,12 @@ class AgentManagerPortalTests(TestCase):
             role=UserRole.AGENT_MANAGER,
             is_active=True,
         )
+        self.company = Company.objects.create(
+            name="Blue Source",
+            description="Regional supplier",
+            location="Addis Ababa",
+            is_verified=True,
+        )
         self.company_admin = User.objects.create_user(
             email="company-owner@example.com",
             password="StrongPass123!",
@@ -480,14 +537,10 @@ class AgentManagerPortalTests(TestCase):
             phone_number="+251911000041",
             role=UserRole.COMPANY_ADMIN,
             is_active=True,
+            managed_company=self.company,
         )
-        self.company = Company.objects.create(
-            name="Blue Source",
-            description="Regional supplier",
-            location="Addis Ababa",
-            is_verified=True,
-            admin=self.company_admin,
-        )
+        self.company.admin = self.company_admin
+        self.company.save(update_fields=["admin", "updated_at"])
         self.agent = Agent.objects.create(
             company=self.company,
             name="Blue Source Bole Agent",
@@ -721,7 +774,7 @@ class AgentManagerPortalTests(TestCase):
         self.assertEqual(payload["drivers"][0]["name"], self.driver.user.full_name)
         self.assertEqual(payload["orders"][0]["customerName"], self.customer.full_name)
 
-    def test_agent_manager_can_approve_refund_from_agent_refund_queue(self):
+    def test_agent_manager_can_submit_response_from_agent_complaint_queue(self):
         order = Order.objects.create(
             customer=self.customer,
             company=self.company,
@@ -747,28 +800,24 @@ class AgentManagerPortalTests(TestCase):
             reference="CHAPA-AGENT-RFD-1",
             paid_at=timezone.now(),
         )
-        refund_request = request_order_refund(order, self.customer, "The water arrived leaking.")
+        complaint = request_order_refund(order, self.customer, "The water arrived leaking.")
 
         response = self.client.post(
-            reverse("accounts:agent_approve_refund", kwargs={"pk": refund_request.pk}),
+            reverse("accounts:agent_accept_complaint", kwargs={"pk": complaint.pk}),
             {
-                "approved_amount": str(order.total),
-                "resolution_note": "Approved after branch delivery review.",
+                "agent_response_note": "We confirmed handling issues during the final handoff.",
             },
         )
 
         self.assertRedirects(response, reverse("accounts:agent_refunds"))
-        refund_request.refresh_from_db()
+        complaint.refresh_from_db()
         order.payment.refresh_from_db()
-        self.assertEqual(refund_request.status, RefundRequestStatus.APPROVED)
+        self.assertEqual(complaint.status, ComplaintStatus.UNDER_COMPANY_REVIEW)
+        self.assertEqual(complaint.agent_response_type, ComplaintAgentResponseType.ACCEPT_RESPONSIBILITY)
+        self.assertEqual(complaint.agent_response_note, "We confirmed handling issues during the final handoff.")
+        self.assertEqual(complaint.agent_responded_by, self.agent_manager)
+        self.assertIsNotNone(complaint.agent_responded_at)
         self.assertEqual(order.payment.status, PaymentStatus.PAID)
-
-        response = self.client.post(reverse("accounts:agent_process_refund", kwargs={"pk": refund_request.pk}))
-        self.assertRedirects(response, reverse("accounts:agent_refunds"))
-        refund_request.refresh_from_db()
-        order.payment.refresh_from_db()
-        self.assertEqual(refund_request.status, RefundRequestStatus.PROCESSED)
-        self.assertEqual(order.payment.status, PaymentStatus.REFUNDED)
 
     def test_agent_manager_can_submit_batch_stock_request(self):
         response = self.client.post(
@@ -787,6 +836,202 @@ class AgentManagerPortalTests(TestCase):
         self.assertEqual(sale.status, AgentBatchSaleStatus.PENDING)
         self.assertEqual(sale.quantity_requested, 50)
         self.assertEqual(sale.payment_type, AgentBatchSalePaymentType.PARTIAL)
+
+    def test_agent_manager_can_buy_stock_on_credit_directly_from_inventory(self):
+        response = self.client.post(
+            reverse("accounts:agent_inventory_purchase"),
+            {
+                "batch": self.company_batch.pk,
+                "quantity_requested": 20,
+                "payment_type": AgentBatchSalePaymentType.CREDIT,
+                "requested_note": "Direct branch replenishment for hotel demand.",
+            },
+        )
+
+        self.assertRedirects(response, reverse("accounts:agent_inventory"))
+        sale = AgentBatchSale.objects.get(agent=self.agent, batch=self.company_batch, payment_type=AgentBatchSalePaymentType.CREDIT)
+        self.company_batch.refresh_from_db()
+        self.stock.refresh_from_db()
+
+        self.assertEqual(sale.status, AgentBatchSaleStatus.RECEIVED)
+        self.assertEqual(sale.quantity_requested, 20)
+        self.assertEqual(sale.quantity_received, 20)
+        self.assertEqual(sale.received_by, self.agent_manager)
+        self.assertEqual(sale.credit_terms_days, 14)
+        self.assertEqual(
+            sale.credit_due_date,
+            timezone.localtime(sale.received_at).date() + timezone.timedelta(days=14),
+        )
+        self.assertEqual(self.company_batch.unsold_cases_remaining, 380)
+        self.assertEqual(self.stock.available_quantity, 30)
+
+    @patch("catalog.services._chapa_request")
+    def test_agent_manager_pay_now_purchase_redirects_to_chapa_without_releasing_inventory_early(self, mock_chapa_request):
+        mock_chapa_request.return_value = {
+            "status": "success",
+            "data": {"checkout_url": "https://checkout.chapa.co/pay/direct-restock"},
+        }
+
+        response = self.client.post(
+            reverse("accounts:agent_inventory_purchase"),
+            {
+                "batch": self.company_batch.pk,
+                "quantity_requested": 12,
+                "payment_type": AgentBatchSalePaymentType.FULL,
+                "requested_note": "Immediate paid replenishment.",
+            },
+        )
+
+        self.assertRedirects(response, "https://checkout.chapa.co/pay/direct-restock", fetch_redirect_response=False)
+        sale = AgentBatchSale.objects.get(agent=self.agent, batch=self.company_batch, payment_type=AgentBatchSalePaymentType.FULL)
+        checkout = AgentBatchSaleCheckout.objects.get(sale=sale)
+        self.company_batch.refresh_from_db()
+        self.stock.refresh_from_db()
+
+        self.assertEqual(sale.status, AgentBatchSaleStatus.APPROVED)
+        self.assertEqual(sale.quantity_received, 0)
+        self.assertEqual(sale.outstanding_balance, Decimal("1020.00"))
+        self.assertEqual(checkout.checkout_url, "https://checkout.chapa.co/pay/direct-restock")
+        self.assertIn(f"tx_ref={checkout.tx_ref}", checkout.raw_payload["request"]["callback_url"])
+        self.assertIn(f"tx_ref={checkout.tx_ref}", checkout.raw_payload["request"]["return_url"])
+        self.assertEqual(self.company_batch.unsold_cases_remaining, 400)
+        self.assertEqual(self.stock.available_quantity, 10)
+
+    @patch("accounts.views.finalize_agent_batch_sale_checkout")
+    @patch("catalog.services._chapa_request")
+    def test_agent_inventory_payment_return_uses_latest_checkout_when_tx_ref_missing(
+        self,
+        mock_chapa_request,
+        finalize_mock,
+    ):
+        mock_chapa_request.return_value = {
+            "status": "success",
+            "data": {"checkout_url": "https://checkout.chapa.co/pay/direct-restock"},
+        }
+        sale, checkout = initialize_agent_batch_sale_checkout(
+            agent=self.agent,
+            batch=self.company_batch,
+            requested_by=self.agent_manager,
+            quantity_requested=6,
+            requested_note="Fallback tx ref test.",
+            callback_url="https://example.com/callback/",
+            return_url="https://example.com/return/",
+        )
+
+        response = self.client.get(reverse("accounts:agent_inventory_purchase_chapa_return"))
+
+        self.assertRedirects(response, reverse("accounts:agent_inventory"))
+        finalize_mock.assert_called_once_with(tx_ref=checkout.tx_ref, received_by=self.agent_manager)
+
+    @patch("catalog.services._chapa_request")
+    def test_finalize_agent_batch_sale_checkout_is_idempotent(self, mock_chapa_request):
+        mock_chapa_request.return_value = {
+            "status": "success",
+            "data": {"checkout_url": "https://checkout.chapa.co/pay/direct-restock"},
+        }
+        sale, checkout = initialize_agent_batch_sale_checkout(
+            agent=self.agent,
+            batch=self.company_batch,
+            requested_by=self.agent_manager,
+            quantity_requested=8,
+            requested_note="Chapa direct purchase.",
+            callback_url="https://example.com/callback/",
+            return_url="https://example.com/return/",
+        )
+
+        mock_chapa_request.return_value = {
+            "status": "success",
+            "data": {"status": "success", "tx_ref": checkout.tx_ref},
+        }
+        finalized_sale, finalized_checkout = finalize_agent_batch_sale_checkout(tx_ref=checkout.tx_ref, received_by=self.agent_manager)
+        second_sale, second_checkout = finalize_agent_batch_sale_checkout(tx_ref=checkout.tx_ref, received_by=self.agent_manager)
+
+        self.company_batch.refresh_from_db()
+        self.stock.refresh_from_db()
+        finalized_sale.refresh_from_db()
+        finalized_checkout.refresh_from_db()
+
+        self.assertEqual(finalized_sale.pk, second_sale.pk)
+        self.assertEqual(finalized_checkout.pk, second_checkout.pk)
+        self.assertEqual(finalized_sale.status, AgentBatchSaleStatus.RECEIVED)
+        self.assertEqual(finalized_sale.quantity_received, 8)
+        self.assertEqual(finalized_sale.outstanding_balance, Decimal("0.00"))
+        self.assertEqual(finalized_checkout.status, "paid")
+        self.assertEqual(AgentBatchSalePayment.objects.filter(sale=finalized_sale, status=AgentBatchSalePaymentStatus.CONFIRMED).count(), 1)
+        self.assertEqual(self.company_batch.unsold_cases_remaining, 392)
+        self.assertEqual(self.stock.available_quantity, 18)
+        self.assertEqual(
+            InventoryTransaction.objects.filter(
+                reference=f"BATCH-SALE-{finalized_sale.pk}",
+                transaction_type=InventoryTransactionType.RESTOCK,
+            ).count(),
+            1,
+        )
+
+    def test_agent_inventory_page_marks_branch_inactive_after_seven_days_overdue(self):
+        sale = AgentBatchSale.objects.create(
+            agent=self.agent,
+            batch=self.company_batch,
+            requested_by=self.agent_manager,
+            approved_by=self.company_admin,
+            quantity_requested=15,
+            quantity_approved=15,
+            quantity_received=15,
+            payment_type=AgentBatchSalePaymentType.CREDIT,
+            unit_price="85.00",
+            credit_terms_days=7,
+            credit_due_date=timezone.localdate() - timezone.timedelta(days=8),
+            status=AgentBatchSaleStatus.RECEIVED,
+            approved_at=timezone.now() - timezone.timedelta(days=12),
+            received_at=timezone.now() - timezone.timedelta(days=10),
+            received_by=self.agent_manager,
+        )
+
+        response = self.client.get(reverse("accounts:agent_inventory"))
+
+        self.assertEqual(response.status_code, 200)
+        sale.refresh_from_db()
+        self.agent.refresh_from_db()
+        self.assertEqual(sync_agent_overdue_status(self.agent), Agent.OVERDUE_STATUS_INACTIVE)
+        self.assertEqual(self.agent.overdue_status, Agent.OVERDUE_STATUS_INACTIVE)
+        self.assertContains(response, "Overdue Status: Inactive")
+        self.assertContains(response, "Overdue status: Inactive")
+
+    def test_agent_manager_cannot_request_new_stock_while_branch_is_inactive_for_overdue_credit(self):
+        AgentBatchSale.objects.create(
+            agent=self.agent,
+            batch=self.company_batch,
+            requested_by=self.agent_manager,
+            approved_by=self.company_admin,
+            quantity_requested=15,
+            quantity_approved=15,
+            quantity_received=15,
+            payment_type=AgentBatchSalePaymentType.CREDIT,
+            unit_price="85.00",
+            credit_terms_days=7,
+            credit_due_date=timezone.localdate() - timezone.timedelta(days=8),
+            status=AgentBatchSaleStatus.RECEIVED,
+            approved_at=timezone.now() - timezone.timedelta(days=12),
+            received_at=timezone.now() - timezone.timedelta(days=10),
+            received_by=self.agent_manager,
+        )
+
+        response = self.client.post(
+            reverse("accounts:agent_batch_request_create"),
+            {
+                "batch": self.company_batch.pk,
+                "quantity_requested": 10,
+                "payment_type": AgentBatchSalePaymentType.CREDIT,
+                "requested_upfront_amount": "0.00",
+                "requested_note": "Need emergency replenishment.",
+            },
+            follow=True,
+        )
+
+        self.agent.refresh_from_db()
+        self.assertEqual(self.agent.overdue_status, Agent.OVERDUE_STATUS_INACTIVE)
+        self.assertContains(response, "inactive for stock credit")
+        self.assertEqual(AgentBatchSale.objects.filter(agent=self.agent, batch=self.company_batch).count(), 1)
 
     def test_agent_manager_can_submit_payment_against_approved_batch_sale(self):
         sale = AgentBatchSale.objects.create(
@@ -898,18 +1143,15 @@ class AgentManagerPortalTests(TestCase):
 
         self.assertContains(response, "above the credit limit")
 
-
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    STORAGES={
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    },
+)
 class CompanyAdminPortalTests(TestCase):
     def setUp(self):
-        self.company_admin = User.objects.create_user(
-            email="company-admin@example.com",
-            password="StrongPass123!",
-            first_name="Company",
-            last_name="Admin",
-            phone_number="+251911000060",
-            role=UserRole.COMPANY_ADMIN,
-            is_active=True,
-        )
         self.agent_manager = User.objects.create_user(
             email="branch-manager@example.com",
             password="StrongPass123!",
@@ -924,10 +1166,19 @@ class CompanyAdminPortalTests(TestCase):
             description="Bulk bottled water supplier",
             location="Addis Ababa",
             is_verified=True,
-            admin=self.company_admin,
         )
-        self.company_admin.managed_company = self.company
-        self.company_admin.save(update_fields=["managed_company", "updated_at"])
+        self.company_admin = User.objects.create_user(
+            email="company-admin@example.com",
+            password="StrongPass123!",
+            first_name="Company",
+            last_name="Admin",
+            phone_number="+251911000060",
+            role=UserRole.COMPANY_ADMIN,
+            is_active=True,
+            managed_company=self.company,
+        )
+        self.company.admin = self.company_admin
+        self.company.save(update_fields=["admin", "updated_at"])
         self.agent = Agent.objects.create(
             company=self.company,
             name="Crystal Drop Bole",
@@ -1047,6 +1298,70 @@ class CompanyAdminPortalTests(TestCase):
         self.assertEqual(self.agent.location_name, "CMC")
         self.assertEqual(self.agent.phone_number, "+251911000064")
 
+    def test_company_admin_can_create_agent_with_brand_new_manager_account(self):
+        response = self.client.post(
+            reverse("accounts:create_agent"),
+            {
+                "manager_first_name": "Lidya",
+                "manager_last_name": "Tesfaye",
+                "manager_email": "lidya.agent@example.com",
+                "manager_phone_number": "+251911000070",
+                "manager_password1": "StrongPass123!",
+                "manager_password2": "StrongPass123!",
+                "name": "Crystal Drop Summit",
+                "description": "North-east branch for office clients",
+                "location_name": "Summit",
+                "address": "Summit Condominiums, Addis Ababa",
+                "latitude": "9.060000",
+                "longitude": "38.860000",
+                "service_radius_km": "16.00",
+                "phone_number": "+251911000071",
+                "is_active": "on",
+                "is_accepting_orders": "on",
+                "credit_limit": "7500.00",
+                "credit_period_days": 14,
+                "next": reverse("accounts:company_agents"),
+            },
+        )
+
+        self.assertRedirects(response, reverse("accounts:company_agents"))
+        manager = User.objects.get(email="lidya.agent@example.com")
+        agent = Agent.objects.get(name="Crystal Drop Summit")
+
+        self.assertEqual(manager.role, UserRole.AGENT_MANAGER)
+        self.assertEqual(agent.company, self.company)
+        self.assertEqual(agent.admin, manager)
+        self.assertTrue(AgentStock.objects.filter(agent=agent, product=self.product, available_quantity=0).exists())
+
+    def test_company_admin_cannot_reuse_existing_user_for_new_agent_account(self):
+        response = self.client.post(
+            reverse("accounts:create_agent"),
+            {
+                "manager_first_name": "Reuse",
+                "manager_last_name": "Blocked",
+                "manager_email": self.agent_manager.email,
+                "manager_phone_number": "+251911000072",
+                "manager_password1": "StrongPass123!",
+                "manager_password2": "StrongPass123!",
+                "name": "Crystal Drop Sarbet",
+                "description": "Attempted branch with reused account",
+                "location_name": "Sarbet",
+                "address": "Sarbet, Addis Ababa",
+                "latitude": "9.010000",
+                "longitude": "38.730000",
+                "service_radius_km": "12.00",
+                "phone_number": "+251911000073",
+                "is_active": "on",
+                "is_accepting_orders": "on",
+                "credit_limit": "0.00",
+                "credit_period_days": 7,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "An account with this email already exists.")
+        self.assertFalse(Agent.objects.filter(name="Crystal Drop Sarbet").exists())
+
     def test_company_inventory_page_shows_aggregated_stock(self):
         response = self.client.get(reverse("accounts:company_inventory"))
 
@@ -1054,6 +1369,47 @@ class CompanyAdminPortalTests(TestCase):
         self.assertContains(response, self.product.name)
         self.assertContains(response, self.agent.name)
         self.assertContains(response, "25")
+
+    def test_company_admin_can_update_credit_policy(self):
+        response = self.client.post(
+            reverse("accounts:update_company_credit_policy"),
+            {
+                "allow_agent_credit": "on",
+                "maximum_credit_duration_days": 30,
+            },
+        )
+
+        self.assertRedirects(response, reverse("accounts:company_inventory"))
+        self.company.refresh_from_db()
+        self.assertTrue(self.company.allow_agent_credit)
+        self.assertEqual(self.company.maximum_credit_duration_days, 30)
+
+    def test_company_inventory_page_shows_inactive_overdue_branch_status(self):
+        AgentBatchSale.objects.create(
+            agent=self.agent,
+            batch=self.company_batch,
+            requested_by=self.agent_manager,
+            approved_by=self.company_admin,
+            quantity_requested=18,
+            quantity_approved=18,
+            quantity_received=18,
+            payment_type=AgentBatchSalePaymentType.CREDIT,
+            unit_price="118.00",
+            credit_terms_days=7,
+            credit_due_date=timezone.localdate() - timezone.timedelta(days=8),
+            status=AgentBatchSaleStatus.RECEIVED,
+            approved_at=timezone.now() - timezone.timedelta(days=11),
+            received_at=timezone.now() - timezone.timedelta(days=9),
+            received_by=self.agent_manager,
+        )
+
+        response = self.client.get(reverse("accounts:company_inventory"))
+
+        self.assertEqual(response.status_code, 200)
+        self.agent.refresh_from_db()
+        self.assertEqual(self.agent.overdue_status, Agent.OVERDUE_STATUS_INACTIVE)
+        self.assertContains(response, "Inactive")
+        self.assertContains(response, self.agent.name)
 
     def test_company_dashboard_uses_company_admin_managed_company_assignment(self):
         primary_contact = User.objects.create_user(
@@ -1081,10 +1437,20 @@ class CompanyAdminPortalTests(TestCase):
             description="New bottler with no starter data yet",
             location="Bishoftu",
             is_verified=True,
-            admin=self.company_admin,
         )
-        self.company_admin.managed_company = empty_company
-        self.company_admin.save(update_fields=["managed_company", "updated_at"])
+        empty_company_admin = User.objects.create_user(
+            email="fresh-spring-admin@example.com",
+            password="StrongPass123!",
+            first_name="Fresh",
+            last_name="Spring",
+            phone_number="+251911000166",
+            role=UserRole.COMPANY_ADMIN,
+            is_active=True,
+            managed_company=empty_company,
+        )
+        empty_company.admin = empty_company_admin
+        empty_company.save(update_fields=["admin", "updated_at"])
+        self.client.force_login(empty_company_admin)
 
         response = self.client.post(reverse("accounts:company_product_seed_starter"))
 
@@ -1146,6 +1512,66 @@ class CompanyAdminPortalTests(TestCase):
         self.assertEqual(stock.available_quantity, 25)
         self.assertFalse(InventoryBatch.objects.filter(agent=self.agent, batch_number=self.company_batch.batch_number).exists())
         self.assertEqual(payment.status, AgentBatchSalePaymentStatus.CONFIRMED)
+
+    def test_company_inventory_credit_policy_blocks_credit_approval_when_disabled(self):
+        self.company.allow_agent_credit = False
+        self.company.save(update_fields=["allow_agent_credit", "updated_at"])
+        sale = AgentBatchSale.objects.create(
+            agent=self.agent,
+            batch=self.company_batch,
+            requested_by=self.agent_manager,
+            quantity_requested=12,
+            payment_type=AgentBatchSalePaymentType.CREDIT,
+            unit_price=self.company_batch.unit_price,
+        )
+
+        response = self.client.post(
+            reverse("accounts:company_batch_sale_approve", kwargs={"pk": sale.pk}),
+            {
+                "quantity_approved": 12,
+                "unit_price": "118.00",
+                "initial_payment_amount": "0.00",
+                "credit_terms_days": 7,
+                "decision_note": "Should fail because credit is disabled.",
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        sale.refresh_from_db()
+        self.assertEqual(sale.status, AgentBatchSaleStatus.PENDING)
+        self.assertContains(response, "Agents must pay in full before inventory is released.")
+
+    def test_company_inventory_credit_policy_enforces_maximum_credit_duration(self):
+        self.company.allow_agent_credit = True
+        self.company.maximum_credit_duration_days = 7
+        self.company.save(update_fields=["allow_agent_credit", "maximum_credit_duration_days", "updated_at"])
+        sale = AgentBatchSale.objects.create(
+            agent=self.agent,
+            batch=self.company_batch,
+            requested_by=self.agent_manager,
+            quantity_requested=18,
+            payment_type=AgentBatchSalePaymentType.PARTIAL,
+            requested_upfront_amount="800.00",
+            unit_price=self.company_batch.unit_price,
+        )
+
+        response = self.client.post(
+            reverse("accounts:company_batch_sale_approve", kwargs={"pk": sale.pk}),
+            {
+                "quantity_approved": 18,
+                "unit_price": "118.00",
+                "initial_payment_amount": "800.00",
+                "credit_terms_days": 10,
+                "decision_note": "Should fail because duration exceeds policy.",
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        sale.refresh_from_db()
+        self.assertEqual(sale.status, AgentBatchSaleStatus.PENDING)
+        self.assertContains(response, "Credit terms cannot exceed 7 day(s) for this company.")
 
     def test_company_admin_can_cancel_approved_batch_sale_without_stock_reversal(self):
         sale = AgentBatchSale.objects.create(
@@ -1392,6 +1818,12 @@ class DriverPortalTests(TestCase):
             role=UserRole.DRIVER,
             is_active=True,
         )
+        self.company = Company.objects.create(
+            name="Driver Flow Co",
+            description="Delivery operator",
+            location="Addis Ababa",
+            is_verified=True,
+        )
         self.company_admin = User.objects.create_user(
             email="driver-company-admin@example.com",
             password="StrongPass123!",
@@ -1400,14 +1832,10 @@ class DriverPortalTests(TestCase):
             phone_number="+251911000067",
             role=UserRole.COMPANY_ADMIN,
             is_active=True,
+            managed_company=self.company,
         )
-        self.company = Company.objects.create(
-            name="Driver Flow Co",
-            description="Delivery operator",
-            location="Addis Ababa",
-            is_verified=True,
-            admin=self.company_admin,
-        )
+        self.company.admin = self.company_admin
+        self.company.save(update_fields=["admin", "updated_at"])
         self.agent = Agent.objects.create(
             company=self.company,
             name="Driver Flow Bole",
@@ -1445,6 +1873,24 @@ class DriverPortalTests(TestCase):
         )
         self.client.force_login(self.driver_user)
 
+    def create_assigned_order(self, *, order_number="ORD-DRV-TRACK", status=OrderStatus.PICKED_UP):
+        return Order.objects.create(
+            customer=self.customer,
+            company=self.company,
+            selected_agent=self.agent,
+            assigned_driver=self.driver,
+            order_number=order_number,
+            status=status,
+            delivery_address="Kazanchis, Addis Ababa",
+            latitude="9.031000",
+            longitude="38.763000",
+            phone_number=self.customer.phone_number,
+            subtotal="60.00",
+            delivery_fee="10.00",
+            total="70.00",
+            paid_at=timezone.now(),
+        )
+
     def test_driver_can_update_availability_when_no_active_delivery(self):
         response = self.client.post(
             reverse("accounts:driver_availability"),
@@ -1455,24 +1901,95 @@ class DriverPortalTests(TestCase):
         self.driver.refresh_from_db()
         self.assertEqual(self.driver.availability_status, Driver.AvailabilityStatus.OFF_DUTY)
 
-    def test_driver_history_page_loads(self):
-        order = Order.objects.create(
-            customer=self.customer,
-            company=self.company,
-            selected_agent=self.agent,
-            assigned_driver=self.driver,
-            order_number="ORD-DRVHIST",
-            status=OrderStatus.DELIVERED,
-            delivery_address="CMC, Addis Ababa",
-            latitude="9.030000",
-            longitude="38.780000",
-            phone_number=self.customer.phone_number,
-            subtotal="60.00",
-            delivery_fee="10.00",
-            total="70.00",
-            paid_at=timezone.now(),
-            delivered_at=timezone.now(),
+    def test_driver_ajax_live_tracking_flow_starts_updates_pauses_and_resumes(self):
+        order = self.create_assigned_order()
+
+        start_response = self.client.post(
+            reverse("accounts:start_delivery", kwargs={"order_number": order.order_number}),
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
+
+        self.assertEqual(start_response.status_code, 200)
+        start_payload = start_response.json()
+        self.assertTrue(start_payload["ok"])
+        self.assertEqual(start_payload["status"], OrderStatus.OUT_FOR_DELIVERY)
+        self.assertTrue(start_payload["trackingActive"])
+        self.assertFalse(start_payload["trackingPaused"])
+
+        order.refresh_from_db()
+        self.assertEqual(order.status, OrderStatus.OUT_FOR_DELIVERY)
+        self.assertTrue(order.live_tracking.is_active)
+        self.assertFalse(order.live_tracking.is_paused)
+
+        update_response = self.client.post(
+            reverse("accounts:update_delivery_tracking", kwargs={"order_number": order.order_number}),
+            {
+                "order_id": order.id,
+                "driver_id": self.driver.id,
+                "latitude": "9.031200",
+                "longitude": "38.762900",
+                "recorded_at": timezone.now().isoformat(),
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+
+        self.assertEqual(update_response.status_code, 200)
+        update_payload = update_response.json()
+        self.assertTrue(update_payload["ok"])
+        self.assertEqual(update_payload["status"], OrderStatus.OUT_FOR_DELIVERY)
+        self.assertTrue(update_payload["trackingActive"])
+        self.assertFalse(update_payload["trackingPaused"])
+        self.assertIsNotNone(update_payload["distanceMeters"])
+        self.assertIn("recordedAt", update_payload)
+
+        order.refresh_from_db()
+        self.assertEqual(str(order.live_tracking.latitude), "9.031200")
+        self.assertEqual(str(order.live_tracking.longitude), "38.762900")
+        self.assertIsNotNone(order.live_tracking.recorded_at)
+
+        pause_response = self.client.post(
+            reverse("accounts:pause_delivery_tracking", kwargs={"order_number": order.order_number}),
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+
+        self.assertEqual(pause_response.status_code, 200)
+        pause_payload = pause_response.json()
+        self.assertTrue(pause_payload["ok"])
+        self.assertTrue(pause_payload["trackingPaused"])
+
+        blocked_update_response = self.client.post(
+            reverse("accounts:update_delivery_tracking", kwargs={"order_number": order.order_number}),
+            {
+                "order_id": order.id,
+                "driver_id": self.driver.id,
+                "latitude": "9.031250",
+                "longitude": "38.762850",
+                "recorded_at": timezone.now().isoformat(),
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+
+        self.assertEqual(blocked_update_response.status_code, 400)
+        self.assertIn("paused", blocked_update_response.json()["message"].lower())
+
+        resume_response = self.client.post(
+            reverse("accounts:resume_delivery_tracking", kwargs={"order_number": order.order_number}),
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+
+        self.assertEqual(resume_response.status_code, 200)
+        resume_payload = resume_response.json()
+        self.assertTrue(resume_payload["ok"])
+        self.assertFalse(resume_payload["trackingPaused"])
+        self.assertEqual(resume_payload["status"], OrderStatus.OUT_FOR_DELIVERY)
+
+    def test_driver_history_page_loads(self):
+        order = self.create_assigned_order(order_number="ORD-DRVHIST", status=OrderStatus.DELIVERED)
+        order.delivery_address = "CMC, Addis Ababa"
+        order.latitude = "9.030000"
+        order.longitude = "38.780000"
+        order.delivered_at = timezone.now()
+        order.save(update_fields=["delivery_address", "latitude", "longitude", "delivered_at", "updated_at"])
         order.items.create(
             product=self.product,
             product_name=self.product.name,
@@ -1534,6 +2051,12 @@ class SystemUserListQueryTests(TestCase):
             email = f"system-user-{idx}@example.com"
 
             if pattern == 0:
+                managed_company = Company.objects.create(
+                    name=f"Managed Company {idx}",
+                    description="Managed company for query testing",
+                    location="Adama",
+                    is_verified=True,
+                )
                 user = User.objects.create_user(
                     email=email,
                     password="StrongPass123!",
@@ -1542,16 +2065,10 @@ class SystemUserListQueryTests(TestCase):
                     phone_number=phone_number,
                     role=UserRole.COMPANY_ADMIN,
                     is_active=True,
+                    managed_company=managed_company,
                 )
-                managed_company = Company.objects.create(
-                    name=f"Managed Company {idx}",
-                    description="Managed company for query testing",
-                    location="Adama",
-                    is_verified=True,
-                    admin=user,
-                )
-                user.managed_company = managed_company
-                user.save(update_fields=["managed_company", "updated_at"])
+                managed_company.admin = user
+                managed_company.save(update_fields=["admin", "updated_at"])
             elif pattern == 1:
                 user = User.objects.create_user(
                     email=email,
@@ -1648,7 +2165,13 @@ class SystemUserListQueryTests(TestCase):
         self.assertEqual(queries_with_five_fixture_users, queries_with_fifty_fixture_users)
 
 
-@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    STORAGES={
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    },
+)
 class SystemAdminPortalTests(TestCase):
     def setUp(self):
         self.system_admin = User.objects.create_user(
@@ -1660,6 +2183,14 @@ class SystemAdminPortalTests(TestCase):
             role=UserRole.SYSTEM_ADMIN,
             is_active=True,
         )
+        self.company = Company.objects.create(
+            name="Blue Nile Water",
+            description="National supplier",
+            location="Addis Ababa",
+            verification_status="pending_efda",
+            is_verified=False,
+            submitted_to_efda_at=timezone.now(),
+        )
         self.company_admin = User.objects.create_user(
             email="company-admin-2@example.com",
             password="StrongPass123!",
@@ -1668,16 +2199,10 @@ class SystemAdminPortalTests(TestCase):
             phone_number="+251911000071",
             role=UserRole.COMPANY_ADMIN,
             is_active=True,
+            managed_company=self.company,
         )
-        self.company = Company.objects.create(
-            name="Blue Nile Water",
-            description="National supplier",
-            location="Addis Ababa",
-            admin=self.company_admin,
-            verification_status="pending_efda",
-            is_verified=False,
-            submitted_to_efda_at=timezone.now(),
-        )
+        self.company.admin = self.company_admin
+        self.company.save(update_fields=["admin", "updated_at"])
         self.agent_manager = User.objects.create_user(
             email="ops-manager@example.com",
             password="StrongPass123!",
@@ -1770,7 +2295,14 @@ class SystemAdminPortalTests(TestCase):
                 "contact_email": "ops@aquacapital.example.com",
                 "contact_phone": "+251911000080",
                 "efda_license_number": "EFDA-2026-001",
-                "registration_document": SimpleUploadedFile("license.pdf", b"fake-pdf", content_type="application/pdf"),
+                "premium_feature_enabled": "true",
+                "premium_streak_threshold": "5",
+                "premium_discount_percent": "15",
+                "registration_document": SimpleUploadedFile(
+                    "license.pdf",
+                    b"%PDF-1.4 fake pdf",
+                    content_type="application/pdf",
+                ),
                 "admin_first_name": "Marta",
                 "admin_last_name": "Tesfaye",
                 "admin_email": "marta@aquacapital.example.com",
@@ -1780,7 +2312,8 @@ class SystemAdminPortalTests(TestCase):
             },
         )
 
-        self.assertRedirects(response, reverse("accounts:system_companies"))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], reverse("accounts:system_companies"))
         company = Company.objects.get(name="Aqua Capital")
         self.assertEqual(company.verification_status, "pending_efda")
         self.assertTrue(bool(company.registration_document))
@@ -1788,7 +2321,93 @@ class SystemAdminPortalTests(TestCase):
         self.assertEqual(company.admin.email, "marta@aquacapital.example.com")
         self.assertFalse(company.admin.is_active)
         self.assertEqual(company.admin.managed_company, company)
+        self.assertTrue(company.premium_feature_enabled)
+        self.assertEqual(company.premium_streak_threshold, 5)
+        self.assertEqual(company.premium_discount_percent, Decimal("15"))
         self.assertTrue(AuditLog.objects.filter(action="company.created", entity_label="Aqua Capital").exists())
+
+    def test_company_registration_from_dashboard_returns_bound_errors_when_premium_fields_are_missing(self):
+        response = self.client.post(
+            reverse("accounts:create_company"),
+            {
+                "name": "Aqua Capital",
+                "description": "Regional bottler",
+                "location": "Adama",
+                "address": "Adama Industrial Zone",
+                "latitude": "8.540000",
+                "longitude": "39.270000",
+                "contact_email": "ops@aquacapital.example.com",
+                "contact_phone": "+251911000080",
+                "efda_license_number": "EFDA-2026-001",
+                "premium_feature_enabled": "true",
+                "registration_document": SimpleUploadedFile(
+                    "license.pdf",
+                    b"%PDF-1.4 fake pdf",
+                    content_type="application/pdf",
+                ),
+                "admin_first_name": "Marta",
+                "admin_last_name": "Tesfaye",
+                "admin_email": "marta@aquacapital.example.com",
+                "admin_phone_number": "+251911000081",
+                "admin_password": "StrongPass123!",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTemplateUsed(response, "accounts/system_dashboard.html")
+        self.assertFalse(Company.objects.filter(name="Aqua Capital").exists())
+        self.assertContains(response, "Enter the consecutive purchases required.", status_code=400)
+        self.assertContains(response, "Enter the discount percentage.", status_code=400)
+        self.assertIn(
+            "Enter the consecutive purchases required.",
+            response.context["company_form"].errors["premium_streak_threshold"],
+        )
+        self.assertIn(
+            "Enter the discount percentage.",
+            response.context["company_form"].errors["premium_discount_percent"],
+        )
+
+    def test_company_registration_from_company_list_returns_bound_errors_when_premium_fields_are_missing(self):
+        response = self.client.post(
+            reverse("accounts:create_company"),
+            {
+                "name": "Aqua Capital",
+                "description": "Regional bottler",
+                "location": "Adama",
+                "address": "Adama Industrial Zone",
+                "latitude": "8.540000",
+                "longitude": "39.270000",
+                "contact_email": "ops@aquacapital.example.com",
+                "contact_phone": "+251911000080",
+                "efda_license_number": "EFDA-2026-001",
+                "premium_feature_enabled": "true",
+                "registration_document": SimpleUploadedFile(
+                    "license.pdf",
+                    b"%PDF-1.4 fake pdf",
+                    content_type="application/pdf",
+                ),
+                "admin_first_name": "Marta",
+                "admin_last_name": "Tesfaye",
+                "admin_email": "marta@aquacapital.example.com",
+                "admin_phone_number": "+251911000081",
+                "admin_password": "StrongPass123!",
+                "next": reverse("accounts:system_companies"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTemplateUsed(response, "accounts/system_companies.html")
+        self.assertFalse(Company.objects.filter(name="Aqua Capital").exists())
+        self.assertContains(response, "Enter the consecutive purchases required.", status_code=400)
+        self.assertContains(response, "Enter the discount percentage.", status_code=400)
+        self.assertIn(
+            "Enter the consecutive purchases required.",
+            response.context["company_form"].errors["premium_streak_threshold"],
+        )
+        self.assertIn(
+            "Enter the discount percentage.",
+            response.context["company_form"].errors["premium_discount_percent"],
+        )
 
     def test_system_admin_created_company_admin_for_pending_company_stays_inactive(self):
         response = self.client.post(
@@ -1849,6 +2468,72 @@ class SystemAdminPortalTests(TestCase):
         self.assertEqual(self.driver_user.role, UserRole.COMPANY_ADMIN)
         self.assertEqual(self.driver_user.managed_company, self.company)
         self.assertFalse(self.driver_user.is_active)
+
+    def test_primary_company_admin_cannot_be_reassigned_to_another_company(self):
+        other_company = Company.objects.create(
+            name="Afar Springs",
+            description="Secondary company",
+            location="Semera",
+            verification_status="pending_efda",
+            is_verified=False,
+        )
+
+        response = self.client.post(
+            reverse("accounts:system_user_edit", kwargs={"pk": self.company_admin.pk}),
+            {
+                "first_name": self.company_admin.first_name,
+                "last_name": self.company_admin.last_name,
+                "email": self.company_admin.email,
+                "phone_number": self.company_admin.phone_number,
+                "role": UserRole.COMPANY_ADMIN,
+                "managed_company": other_company.pk,
+                "is_active": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.company_admin.refresh_from_db()
+        self.assertEqual(self.company_admin.managed_company, self.company)
+        self.assertContains(response, "Primary company admins must stay assigned to their company.")
+
+    def test_primary_company_admin_role_cannot_change_until_company_is_reassigned(self):
+        response = self.client.post(
+            reverse("accounts:system_user_edit", kwargs={"pk": self.company_admin.pk}),
+            {
+                "first_name": self.company_admin.first_name,
+                "last_name": self.company_admin.last_name,
+                "email": self.company_admin.email,
+                "phone_number": self.company_admin.phone_number,
+                "role": UserRole.AGENT_MANAGER,
+                "is_active": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.company_admin.refresh_from_db()
+        self.assertEqual(self.company_admin.role, UserRole.COMPANY_ADMIN)
+        self.assertContains(
+            response,
+            "Reassign this company&#x27;s primary admin before changing the user&#x27;s role.",
+        )
+
+    def test_system_admin_cannot_create_company_admin_without_company_assignment(self):
+        response = self.client.post(
+            reverse("accounts:create_company_admin"),
+            {
+                "first_name": "Unassigned",
+                "last_name": "Admin",
+                "email": "unassigned-admin@example.com",
+                "phone_number": "+251911000083",
+                "password": "StrongPass123!",
+                "role": UserRole.COMPANY_ADMIN,
+                "next": reverse("accounts:system_dashboard"),
+            },
+            follow=True,
+        )
+
+        self.assertFalse(User.objects.filter(email="unassigned-admin@example.com").exists())
+        self.assertContains(response, "Choose the company that this company admin belongs to.")
 
     def test_system_admin_bulk_action_can_deactivate_selected_users(self):
         response = self.client.post(

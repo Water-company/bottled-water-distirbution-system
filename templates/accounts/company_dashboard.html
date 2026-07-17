@@ -336,6 +336,167 @@
                 {% endif %}
             </div>
         </section>
+
+        <section class="dashboard-card-panel mt-4">
+            <div class="dashboard-card-panel__body">
+                <div class="dashboard-section-title">
+                    <span>Complaint Review Desk</span>
+                    <small>Independent company-level decisions</small>
+                </div>
+                {% if complaints %}
+                    <div class="d-flex flex-column gap-3">
+                        {% for complaint in complaints %}
+                            <div class="border rounded p-3">
+                                <div class="d-flex flex-column flex-xl-row justify-content-between gap-3 mb-3">
+                                    <div>
+                                        <div class="fw-semibold">{{ complaint.reference_number }} | Order {{ complaint.order.order_number }}</div>
+                                        <div class="small text-secondary">
+                                            Customer: {{ complaint.order.customer.full_name }} | Submitted by: {{ complaint.requested_by.full_name|default:complaint.order.customer.full_name }}
+                                        </div>
+                                        <div class="small text-secondary">
+                                            Category: {{ complaint.get_category_display }} | Submitted {{ complaint.created_at|date:"M d, Y H:i" }}
+                                        </div>
+                                    </div>
+                                    <div class="d-flex flex-column align-items-xl-end gap-2">
+                                        <span class="dashboard-pill dashboard-pill--neutral">{{ complaint.get_status_display }}</span>
+                                        {% if complaint.appealed_at %}
+                                            <span class="dashboard-pill dashboard-pill--danger">Appealed</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+
+                                <div class="small mb-3">
+                                    <strong>Complaint details:</strong> {{ complaint.description }}
+                                </div>
+
+                                <div class="row g-3 mb-3">
+                                    <div class="col-lg-6">
+                                        <div class="rounded border p-3 h-100 bg-light-subtle">
+                                            <div class="small fw-semibold text-uppercase text-secondary mb-2">Delivery Evidence</div>
+                                            <div class="small mb-1"><strong>Order Total:</strong> {{ complaint.order.total }}</div>
+                                            <div class="small mb-1"><strong>Driver:</strong> {{ complaint.order.assigned_driver.full_name|default:"Not assigned" }}</div>
+                                            <div class="small mb-1"><strong>Agent:</strong> {{ complaint.order.selected_agent.name|default:"Not assigned" }}</div>
+                                            <div class="small mb-1"><strong>Delivery Timestamp:</strong> {{ complaint.order.actual_delivery_time|default:"-" }}</div>
+                                            <div class="small mb-1"><strong>Delivered Quantity:</strong> {{ complaint.order.quantity }}</div>
+                                            <div class="small"><strong>Refund Record:</strong> {% if complaint.linked_refund_request %}{{ complaint.linked_refund_request.get_status_display }}{% else %}No payment action recorded yet{% endif %}</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-6">
+                                        <div class="rounded border p-3 h-100 bg-light-subtle">
+                                            <div class="small fw-semibold text-uppercase text-secondary mb-2">Agent Manager Response</div>
+                                            {% if complaint.agent_responded_at %}
+                                                <div class="small mb-1"><strong>Response Type:</strong> {{ complaint.get_agent_response_type_display }}</div>
+                                                <div class="small mb-1"><strong>Submitted By:</strong> {{ complaint.agent_responded_by.full_name|default:"Agent manager" }}</div>
+                                                <div class="small mb-1"><strong>Submitted At:</strong> {{ complaint.agent_responded_at|date:"M d, Y H:i" }}</div>
+                                                <div class="small"><strong>Note:</strong> {{ complaint.agent_response_note|default:"No note provided." }}</div>
+                                            {% else %}
+                                                <div class="small text-secondary">The agent manager has not submitted a response yet.</div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {% if complaint.evidences.all %}
+                                    <div class="row g-2 mb-3">
+                                        {% for evidence in complaint.evidences.all %}
+                                            <div class="col-md-3">
+                                                <div class="border rounded p-2 h-100">
+                                                    {% if evidence.is_image %}
+                                                        <a href="{{ evidence.image.url }}" target="_blank" rel="noopener">
+                                                            <img src="{{ evidence.image.url }}" alt="Complaint evidence" class="img-fluid rounded border mb-2">
+                                                        </a>
+                                                    {% endif %}
+                                                    <a href="{{ evidence.image.url }}" target="_blank" rel="noopener" class="small text-decoration-none">{{ evidence.filename }}</a>
+                                                </div>
+                                            </div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+
+                                <div class="rounded border p-3 mb-3 bg-light-subtle">
+                                    <div class="small fw-semibold text-uppercase text-secondary mb-2">Status History</div>
+                                    {% if complaint.status_history.all %}
+                                        <div class="small d-flex flex-column gap-2">
+                                            {% for history in complaint.status_history.all %}
+                                                <div>
+                                                    <strong>{{ history.get_status_display }}</strong>
+                                                    <div class="text-secondary">{{ history.changed_at|date:"M d, Y H:i" }} by {{ history.changed_by.full_name|default:"System" }}</div>
+                                                    {% if history.note %}<div>{{ history.note }}</div>{% endif %}
+                                                </div>
+                                            {% endfor %}
+                                        </div>
+                                    {% else %}
+                                        <div class="small text-secondary">No status changes recorded yet.</div>
+                                    {% endif %}
+                                </div>
+
+                                {% if complaint.company_decided_at %}
+                                    <div class="rounded border p-3 bg-light-subtle">
+                                        <div class="small fw-semibold text-uppercase text-secondary mb-2">Company Decision</div>
+                                        <div class="small mb-1"><strong>Outcome:</strong> {{ complaint.get_resolution_type_display }}</div>
+                                        <div class="small mb-1"><strong>Decided By:</strong> {{ complaint.company_decided_by.full_name|default:"Company admin" }}</div>
+                                        <div class="small mb-1"><strong>Decided At:</strong> {{ complaint.company_decided_at|date:"M d, Y H:i" }}</div>
+                                        {% if complaint.refund_amount %}<div class="small mb-1"><strong>Refund Amount:</strong> {{ complaint.refund_amount }}</div>{% endif %}
+                                        <div class="small"><strong>Reason:</strong> {{ complaint.company_decision_reason|default:complaint.resolution_note|default:"No reason recorded." }}</div>
+                                    </div>
+                                {% else %}
+                                    <div class="rounded border p-3">
+                                        <div class="fw-semibold mb-2">Record Company Decision</div>
+                                        <p class="small text-secondary mb-3">Review the full complaint record before choosing an outcome. Every decision is logged and visible during appeal review.</p>
+                                        <div class="row g-3">
+                                            <div class="col-lg-6">
+                                                <form method="post" action="{% url 'accounts:approve_refund' complaint.pk %}" class="border rounded p-3 h-100">
+                                                    {% csrf_token %}
+                                                    <div class="fw-semibold mb-2">Approve Full Refund</div>
+                                                    <input type="number" step="0.01" name="refund_amount" class="form-control mb-2" value="{{ complaint.order.total }}" placeholder="Refund amount">
+                                                    <textarea name="decision_reason" class="form-control mb-2" rows="3" placeholder="Why is a full refund justified?" required></textarea>
+                                                    <button class="btn btn-primary btn-sm">Approve Full Refund</button>
+                                                </form>
+                                            </div>
+                                            <div class="col-lg-6">
+                                                <form method="post" action="{% url 'accounts:process_refund' complaint.pk %}" class="border rounded p-3 h-100">
+                                                    {% csrf_token %}
+                                                    <div class="fw-semibold mb-2">Approve Partial Refund</div>
+                                                    <input type="number" step="0.01" name="refund_amount" class="form-control mb-2" placeholder="Partial refund amount" required>
+                                                    <textarea name="decision_reason" class="form-control mb-2" rows="3" placeholder="Explain the partial refund decision." required></textarea>
+                                                    <button class="btn btn-outline-primary btn-sm">Approve Partial Refund</button>
+                                                </form>
+                                            </div>
+                                            <div class="col-lg-4">
+                                                <form method="post" action="{% url 'accounts:company_replacement_delivery' complaint.pk %}" class="border rounded p-3 h-100">
+                                                    {% csrf_token %}
+                                                    <div class="fw-semibold mb-2">Replacement Delivery</div>
+                                                    <textarea name="decision_reason" class="form-control mb-2" rows="3" placeholder="Why should the order be replaced?" required></textarea>
+                                                    <button class="btn btn-outline-dark btn-sm">Approve Replacement</button>
+                                                </form>
+                                            </div>
+                                            <div class="col-lg-4">
+                                                <form method="post" action="{% url 'accounts:company_additional_delivery' complaint.pk %}" class="border rounded p-3 h-100">
+                                                    {% csrf_token %}
+                                                    <div class="fw-semibold mb-2">Additional Delivery</div>
+                                                    <textarea name="decision_reason" class="form-control mb-2" rows="3" placeholder="Describe the missing items or quantity to deliver." required></textarea>
+                                                    <button class="btn btn-outline-secondary btn-sm">Approve Additional Delivery</button>
+                                                </form>
+                                            </div>
+                                            <div class="col-lg-4">
+                                                <form method="post" action="{% url 'accounts:reject_refund' complaint.pk %}" class="border rounded p-3 h-100">
+                                                    {% csrf_token %}
+                                                    <div class="fw-semibold mb-2">Reject Complaint</div>
+                                                    <textarea name="decision_reason" class="form-control mb-2" rows="3" placeholder="Document the reason for rejection." required></textarea>
+                                                    <button class="btn btn-outline-danger btn-sm">Reject Complaint</button>
+                                                </form>
+                                            </div>
+                                        </div>
+                                    </div>
+                                {% endif %}
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-secondary mb-0">No complaints are waiting in this company review desk.</p>
+                {% endif %}
+            </div>
+        </section>
     </main>
 </div>
 

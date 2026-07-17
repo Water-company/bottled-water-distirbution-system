@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
@@ -9,10 +10,14 @@ from django.urls import reverse
 
 from accounts.models import CustomerAddress, User, UserRole
 from cart.services import add_product_to_cart
-from catalog.models import Agent, AgentStock, Company, Driver, InventoryBatch, InventoryTransaction, InventoryTransactionType, Product
+from catalog.models import Agent, AgentStock, Company, CompanyRefundPolicyTier, Driver, InventoryBatch, InventoryTransaction, InventoryTransactionType, Product
 from core.models import DriverLocation
 from orders.models import (
     AgentRequestStatus,
+    ComplaintCategory,
+    ComplaintResolutionType,
+    ComplaintStatus,
+    ComplaintStatusHistory,
     DeliveryConfirmation,
     DeliveryFeedback,
     Order,
@@ -20,19 +25,23 @@ from orders.models import (
     OrderStatus,
     PaymentStatus,
     RefundPayoutMethod,
+    RefundRequestStatusHistory,
     RefundRequestStatus,
+    SupportActionLog,
 )
 from orders.services import (
     accept_agent_request,
     accept_delivery_assignment,
     approve_refund_request,
     assign_driver,
+    cancel_order,
     complete_delivery_and_deduct_stock,
     mark_order_arrived,
     mark_order_picked_up,
     mark_order_paid,
     process_refund_request,
     reject_agent_request,
+    request_order_refund,
     start_delivery,
 )
 
@@ -55,14 +64,6 @@ class OrderFlowTests(TestCase):
             phone_number="+251911000021",
             role=UserRole.AGENT_MANAGER,
         )
-        self.company_admin = User.objects.create_user(
-            email="company-admin@example.com",
-            password="StrongPass123!",
-            first_name="Company",
-            last_name="Admin",
-            phone_number="+251911000023",
-            role=UserRole.COMPANY_ADMIN,
-        )
         self.driver_user = User.objects.create_user(
             email="driver@example.com",
             password="StrongPass123!",
@@ -77,7 +78,25 @@ class OrderFlowTests(TestCase):
             description="Delivery company",
             location="Bahir Dar",
             is_verified=True,
-            admin=self.company_admin,
+            refunds_enabled=True,
+            maximum_cancellation_period_minutes=120,
+        )
+        self.company_admin = User.objects.create_user(
+            email="company-admin@example.com",
+            password="StrongPass123!",
+            first_name="Company",
+            last_name="Admin",
+            phone_number="+251911000023",
+            role=UserRole.COMPANY_ADMIN,
+            managed_company=self.company,
+        )
+        self.company.admin = self.company_admin
+        self.company.save(update_fields=["admin", "updated_at"])
+        self.refund_policy_tier = CompanyRefundPolicyTier.objects.create(
+            company=self.company,
+            start_minutes=0,
+            end_minutes=120,
+            refund_percent="80.00",
         )
         self.agent = Agent.objects.create(
             company=self.company,
@@ -147,8 +166,7 @@ class OrderFlowTests(TestCase):
         order.refresh_from_db()
         return order
 
-    def create_delivered_order(self, quantity=1, delivery_address="Piassa"):
-        _, order = self.create_checkout_order(quantity=quantity, delivery_address=delivery_address)
+    def deliver_existing_order(self, order):
         self.accept_checkout_order(order)
         mark_order_paid(order, reference=f"TX-{order.order_number}", payload={"status": "success"})
         assign_driver(order, self.driver)
@@ -159,6 +177,10 @@ class OrderFlowTests(TestCase):
         complete_delivery_and_deduct_stock(order, "", order.confirmation.qr_payload_json, self.driver_user)
         order.refresh_from_db()
         return order
+
+    def create_delivered_order(self, quantity=1, delivery_address="Piassa"):
+        _, order = self.create_checkout_order(quantity=quantity, delivery_address=delivery_address)
+        return self.deliver_existing_order(order)
 
     def test_checkout_creates_pending_agent_request_before_payment(self):
         response, order = self.create_checkout_order(quantity=2, delivery_address="Bole Road, Addis Ababa", notes="Leave at reception")
@@ -605,10 +627,14 @@ class OrderFlowTests(TestCase):
         self.accept_checkout_order(order)
         mark_order_paid(order, reference="TX-CANCEL", payload={"status": "success"})
 
-        response = self.client.post(
-            reverse("orders:cancel", kwargs={"order_number": order.order_number}),
-            {"reason": "Changed my mind"},
-        )
+        with patch(
+            "orders.services.chapa_request",
+            return_value={"status": "success", "data": {"status": "success", "reference": "RF-1"}},
+        ):
+            response = self.client.post(
+                reverse("orders:cancel", kwargs={"order_number": order.order_number}),
+                {"reason": "Changed my mind"},
+            )
 
         self.assertRedirects(response, reverse("orders:detail", kwargs={"order_number": order.order_number}))
         order.refresh_from_db()
@@ -619,6 +645,13 @@ class OrderFlowTests(TestCase):
         cancellation_request = order.refund_requests.get()
         self.assertEqual(cancellation_request.status, RefundRequestStatus.PROCESSED)
         self.assertGreater(cancellation_request.approved_amount, 0)
+        self.assertEqual(
+            list(cancellation_request.status_history.values_list("title", flat=True)),
+            ["Refund Requested", "Approved", "Refund Processed", "Completed"],
+        )
+        self.assertTrue(
+            SupportActionLog.objects.filter(order=order, refund_request=cancellation_request, action="order_cancelled").exists()
+        )
 
     def test_customer_can_request_refund_and_company_admin_can_approve_it(self):
         _, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
@@ -635,37 +668,132 @@ class OrderFlowTests(TestCase):
         response = self.client.post(
             reverse("orders:request_refund", kwargs={"order_number": order.order_number}),
             {
-                "reason": "The delivery arrived damaged and spilled.",
-                "payout_method": RefundPayoutMethod.WALLET_CREDIT,
+                "category": ComplaintCategory.DAMAGED_PRODUCTS,
+                "description": "The delivery arrived damaged and spilled.",
             },
         )
         self.assertRedirects(response, reverse("orders:detail", kwargs={"order_number": order.order_number}))
 
-        refund_request = order.refund_requests.get(request_type="service_issue")
-        self.assertEqual(refund_request.status, RefundRequestStatus.PENDING)
+        complaint = order.complaints.get()
+        self.assertEqual(complaint.category, ComplaintCategory.DAMAGED_PRODUCTS)
+        self.assertEqual(complaint.status, ComplaintStatus.AWAITING_AGENT_RESPONSE)
+        self.assertFalse(order.refund_requests.exists())
+        self.assertIsNone(complaint.linked_refund_request)
+        self.assertEqual(
+            list(complaint.status_history.values_list("title", flat=True)),
+            ["Complaint Submitted", "Awaiting Agent Response"],
+        )
 
         self.client.force_login(self.company_admin)
-        response = self.client.post(
-            reverse("accounts:approve_refund", kwargs={"pk": refund_request.pk}),
-            {
-                "approved_amount": str(order.total),
-                "resolution_note": "Approved after delivery quality review.",
-            },
-        )
+        with patch(
+            "orders.services.chapa_request",
+            return_value={"status": "success", "data": {"status": "success", "reference": "RF-COMPLAINT-1"}},
+        ):
+            response = self.client.post(
+                reverse("accounts:approve_refund", kwargs={"pk": complaint.pk}),
+                {
+                    "decision_reason": "Approved after delivery quality review.",
+                },
+            )
         self.assertRedirects(response, reverse("accounts:company_dashboard"))
+        complaint.refresh_from_db()
+        refund_request = complaint.linked_refund_request
+        self.assertIsNotNone(refund_request)
         refund_request.refresh_from_db()
         order.payment.refresh_from_db()
-        self.assertEqual(refund_request.status, RefundRequestStatus.APPROVED)
-        self.assertEqual(refund_request.payout_method, RefundPayoutMethod.WALLET_CREDIT)
-        self.assertEqual(order.payment.status, PaymentStatus.PAID)
-
-        process_refund_request(refund_request, processed_by=self.company_admin)
-        refund_request.refresh_from_db()
-        order.payment.refresh_from_db()
-        self.user.refresh_from_db()
         self.assertEqual(refund_request.status, RefundRequestStatus.PROCESSED)
+        self.assertEqual(refund_request.payout_method, RefundPayoutMethod.GATEWAY)
+        self.assertEqual(complaint.status, ComplaintStatus.DECISION_ISSUED)
+        self.assertEqual(complaint.resolution_type, ComplaintResolutionType.FULL_REFUND)
         self.assertEqual(order.payment.status, PaymentStatus.REFUNDED)
-        self.assertEqual(self.user.wallet_balance, order.total)
+        self.assertEqual(
+            list(refund_request.status_history.values_list("title", flat=True)),
+            ["Approved", "Refund Processed", "Completed"],
+        )
+        self.assertEqual(
+            list(complaint.status_history.values_list("title", flat=True)),
+            ["Complaint Submitted", "Awaiting Agent Response", "Refund Processed", "Company Decision Issued"],
+        )
+        self.assertEqual(
+            list(
+                SupportActionLog.objects.filter(order=order, refund_request=refund_request, complaint=complaint)
+                .values_list("action", flat=True)
+            ),
+            ["refund_processed", "complaint_company_decision_issued"],
+        )
+
+    def test_out_for_delivery_orders_cannot_be_cancelled(self):
+        _, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
+        self.accept_checkout_order(order)
+        mark_order_paid(order, reference="TX-OUT-DELIVERY", payload={"status": "success"})
+        assign_driver(order, self.driver)
+        accept_delivery_assignment(order, self.driver_user)
+        mark_order_picked_up(order, self.driver_user)
+        start_delivery(order, self.driver_user)
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Orders cannot be cancelled after they are marked out for delivery.",
+        ):
+            cancel_order(order, requested_by=self.user, reason="Too late")
+
+    def test_delivered_orders_must_use_complaint_module_instead_of_cancellation(self):
+        order = self.create_delivered_order()
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Delivered orders cannot be cancelled. Please use the complaint module instead.",
+        ):
+            cancel_order(order, requested_by=self.user, reason="Delivered already")
+
+    def test_unauthorized_user_cannot_approve_or_process_refunds(self):
+        order = self.create_delivered_order()
+        refund_request = request_order_refund(
+            order,
+            requested_by=self.user,
+            description="Need a review for a damaged delivery.",
+            payout_method=RefundPayoutMethod.WALLET_CREDIT,
+            category=ComplaintCategory.DAMAGED_PRODUCTS,
+        )
+
+        with self.assertRaisesMessage(ValidationError, "You are not authorized to approve this refund for this order."):
+            approve_refund_request(
+                refund_request,
+                reviewed_by=self.user,
+                approved_amount=order.total,
+                resolution_note="Customer tried to self-approve.",
+            )
+
+        approve_refund_request(
+            refund_request,
+            reviewed_by=self.company_admin,
+            approved_amount=order.total,
+            resolution_note="Approved by the company admin.",
+        )
+
+        with self.assertRaisesMessage(ValidationError, "You are not authorized to process this refund for this order."):
+            process_refund_request(refund_request, processed_by=self.user)
+
+    def test_approved_refund_cannot_exceed_remaining_payment_amount(self):
+        order = self.create_delivered_order()
+        refund_request = request_order_refund(
+            order,
+            requested_by=self.user,
+            description="Requesting more than the original payment should fail.",
+            payout_method=RefundPayoutMethod.WALLET_CREDIT,
+            category=ComplaintCategory.OTHER,
+        )
+
+        with self.assertRaisesMessage(
+            ValidationError,
+            "Approved refund amount cannot exceed the remaining refundable amount.",
+        ):
+            approve_refund_request(
+                refund_request,
+                reviewed_by=self.company_admin,
+                approved_amount=order.total + Decimal("1.00"),
+                resolution_note="Invalid amount.",
+            )
 
     def test_checkout_applies_company_premium_discount_after_customer_streak(self):
         self.company.premium_feature_enabled = True
@@ -699,7 +827,34 @@ class OrderFlowTests(TestCase):
 
         response, order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
 
-        self.assertRedirects(response, reverse("orders:detail", kwargs={"order_number": order.order_number}))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], reverse("orders:detail", kwargs={"order_number": order.order_number}))
         self.assertEqual(order.discount_amount, order.subtotal * order.premium_discount_percent / 100)
         self.assertEqual(order.total, order.subtotal - order.discount_amount + order.delivery_fee)
         self.assertEqual(order.status, OrderStatus.REQUESTED)
+
+    def test_premium_discount_resets_streak_after_discounted_purchase(self):
+        self.company.premium_feature_enabled = True
+        self.company.premium_streak_threshold = 2
+        self.company.premium_discount_percent = "10.00"
+        self.company.save()
+
+        self.create_delivered_order()
+        self.create_delivered_order()
+
+        _, reward_order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
+        self.assertEqual(reward_order.premium_streak_count, 2)
+        self.assertGreater(reward_order.discount_amount, 0)
+
+        self.deliver_existing_order(reward_order)
+
+        _, reset_order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
+        self.assertEqual(reset_order.discount_amount, Decimal("0.00"))
+        self.assertEqual(reset_order.premium_discount_percent, Decimal("0.00"))
+        self.assertEqual(reset_order.premium_streak_count, 0)
+
+        self.deliver_existing_order(reset_order)
+
+        _, rebuilding_order = self.create_checkout_order(quantity=1, delivery_address="Piassa")
+        self.assertEqual(rebuilding_order.discount_amount, Decimal("0.00"))
+        self.assertEqual(rebuilding_order.premium_streak_count, 1)

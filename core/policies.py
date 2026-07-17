@@ -24,6 +24,9 @@ def get_customer_company_streak(customer, company):
     for order in delivered_orders:
         if order.company_id != company.id:
             break
+        # A rewarded order closes the previous streak and starts a fresh cycle.
+        if order.premium_discount_percent and order.premium_discount_percent > 0:
+            break
         streak += 1
     return streak
 

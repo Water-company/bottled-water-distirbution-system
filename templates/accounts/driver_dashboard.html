@@ -140,13 +140,16 @@
             </div>
             {% if assigned_orders %}
                 {% for order in assigned_orders %}
-                    <div class="driver-delivery-card">
+                    <div class="driver-delivery-card" data-order-card data-order-number="{{ order.order_number }}">
                         <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
                             <div>
                                 <div class="dashboard-row-title">{{ order.order_number }}</div>
                                 <div class="dashboard-row-subtitle">{{ order.customer.full_name }} | {{ order.delivery_address }}</div>
                             </div>
-                            <span class="dashboard-pill {% if order.status == 'delivered' %}dashboard-pill--success{% elif order.status == 'failed' or order.status == 'cancelled' %}dashboard-pill--danger{% else %}dashboard-pill--warning{% endif %}">
+                            <span
+                                class="dashboard-pill {% if order.status == 'delivered' %}dashboard-pill--success{% elif order.status == 'failed' or order.status == 'cancelled' %}dashboard-pill--danger{% else %}dashboard-pill--warning{% endif %}"
+                                data-role="order-status-label"
+                            >
                                 {{ order.get_status_display }}
                             </span>
                         </div>
@@ -176,12 +179,59 @@
                                     <button class="btn btn-primary">Picked Up</button>
                                 </form>
                             {% elif order.status == "picked_up" %}
-                                <form method="post" action="{% url 'accounts:start_delivery' order.order_number %}">
+                                <form
+                                    method="post"
+                                    action="{% url 'accounts:start_delivery' order.order_number %}"
+                                    data-start-delivery-form
+                                    data-order-number="{{ order.order_number }}"
+                                >
                                     {% csrf_token %}
                                     <button class="btn btn-primary">On The Way</button>
                                 </form>
                             {% endif %}
                         </div>
+
+                        <div class="border rounded px-3 py-2 bg-light small mb-3" data-role="tracking-metrics">
+                            {% if order.status == "out_for_delivery" or order.status == "arrived" %}
+                                Live tracking is active for this stop.
+                            {% elif order.status == "picked_up" %}
+                                Live tracking starts after you tap On The Way and approve GPS access.
+                            {% else %}
+                                Route metrics will appear here when delivery tracking begins.
+                            {% endif %}
+                        </div>
+
+                        {% if order.status == "out_for_delivery" or order.status == "arrived" %}
+                            <div class="driver-action-stack mb-3" data-order-tracking-controls data-order-number="{{ order.order_number }}">
+                                <div class="small text-secondary" data-role="tracking-status">
+                                    {% if order.status == "arrived" %}
+                                        Driver has arrived. QR and OTP verification can continue.
+                                    {% else %}
+                                        Live GPS updates are running for this delivery.
+                                    {% endif %}
+                                </div>
+                                {% if order.status == "out_for_delivery" %}
+                                    <div class="d-flex flex-wrap gap-2">
+                                        <button
+                                            type="button"
+                                            class="btn btn-outline-secondary"
+                                            data-tracking-action="pause"
+                                            data-order-number="{{ order.order_number }}"
+                                        >
+                                            Pause Delivery
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="btn btn-outline-primary"
+                                            data-tracking-action="resume"
+                                            data-order-number="{{ order.order_number }}"
+                                        >
+                                            Resume Delivery
+                                        </button>
+                                    </div>
+                                {% endif %}
+                            </div>
+                        {% endif %}
 
                         {% if order.status == "out_for_delivery" or order.status == "arrived" %}
                             <div class="driver-action-stack mb-3">
@@ -298,6 +348,15 @@
         const driverMapChip = document.getElementById("driver-map-chip");
         const useGpsButton = document.getElementById("driver-use-gps");
         const csrfToken = locationForm.querySelector("input[name='csrfmiddlewaretoken']").value;
+        const startDeliveryForms = Array.from(document.querySelectorAll("[data-start-delivery-form]"));
+        const trackingActionButtons = Array.from(document.querySelectorAll("[data-tracking-action]"));
+        const trackingState = {
+            watchId: null,
+            timerId: null,
+            timerIntervalMs: null,
+            lastCoords: null,
+            sending: false,
+        };
 
         function hasCoords(item) {
             return item && Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude));
@@ -305,6 +364,199 @@
 
         function formatCoordinate(value) {
             return Number(value).toFixed(6);
+        }
+
+        function getOrderByNumber(orderNumber) {
+            return payload.assignedOrders.find((order) => order.orderNumber === orderNumber) || null;
+        }
+
+        function getOrderCard(orderNumber) {
+            return document.querySelector(`[data-order-card][data-order-number="${orderNumber}"]`);
+        }
+
+        function updateOrderPayload(orderNumber, updates) {
+            const order = getOrderByNumber(orderNumber);
+            if (!order) {
+                return null;
+            }
+            Object.assign(order, updates);
+            return order;
+        }
+
+        function getTrackingIntervalMs() {
+            const seconds = Number(payload.trackingUpdateSeconds || 5);
+            const safeSeconds = Number.isFinite(seconds) ? seconds : 5;
+            return Math.max(3000, Math.min(5000, safeSeconds * 1000));
+        }
+
+        function getTrackedOrders() {
+            return payload.assignedOrders.filter(
+                (order) => order.statusCode === "out_for_delivery" && order.trackingActive && !order.trackingPaused
+            );
+        }
+
+        function getDistanceLabel(distanceMeters) {
+            const numericDistance = Number(distanceMeters);
+            if (!Number.isFinite(numericDistance)) {
+                return "Distance pending";
+            }
+            if (numericDistance < 1000) {
+                return `${Math.round(numericDistance)} m away`;
+            }
+            return `${(numericDistance / 1000).toFixed(1)} km away`;
+        }
+
+        function getEtaLabel(etaMinutes) {
+            const numericEta = Number(etaMinutes);
+            if (!Number.isFinite(numericEta) || numericEta < 0) {
+                return "ETA pending";
+            }
+            if (numericEta === 0) {
+                return "ETA under 1 min";
+            }
+            return `ETA ${numericEta} min`;
+        }
+
+        function formatRecordedAt(recordedAt) {
+            if (!recordedAt) {
+                return "No GPS ping yet";
+            }
+            const parsed = new Date(recordedAt);
+            if (Number.isNaN(parsed.getTime())) {
+                return "No GPS ping yet";
+            }
+            return `Last ping ${parsed.toLocaleTimeString()}`;
+        }
+
+        function renderTrackingControls() {
+            document.querySelectorAll("[data-order-card]").forEach((card) => {
+                const order = getOrderByNumber(card.dataset.orderNumber);
+                if (!order) {
+                    return;
+                }
+
+                const statusLabel = card.querySelector('[data-role="order-status-label"]');
+                if (statusLabel) {
+                    statusLabel.textContent = order.statusLabel;
+                }
+
+                const metrics = card.querySelector('[data-role="tracking-metrics"]');
+                if (metrics) {
+                    if (order.statusCode === "out_for_delivery" || order.statusCode === "arrived") {
+                        metrics.textContent = `${getDistanceLabel(order.lastDistanceMeters)} | ${getEtaLabel(order.lastEtaMinutes)} | ${formatRecordedAt(order.lastRecordedAt)}`;
+                    } else if (order.statusCode === "picked_up") {
+                        metrics.textContent = "Live tracking starts after you tap On The Way and approve GPS access.";
+                    } else {
+                        metrics.textContent = "Route metrics will appear here when delivery tracking begins.";
+                    }
+                }
+
+                const trackingStatus = card.querySelector('[data-role="tracking-status"]');
+                if (trackingStatus) {
+                    if (order.statusCode === "arrived") {
+                        trackingStatus.textContent = "Driver has arrived. QR and OTP verification can continue.";
+                    } else if (order.statusCode === "out_for_delivery" && order.trackingPaused) {
+                        trackingStatus.textContent = "Delivery is paused. Resume to continue live GPS updates.";
+                    } else if (order.statusCode === "out_for_delivery" && order.trackingActive) {
+                        trackingStatus.textContent = "Live GPS updates are running for this delivery.";
+                    } else {
+                        trackingStatus.textContent = "Tracking is waiting for the delivery to begin.";
+                    }
+                }
+
+                const pauseButton = card.querySelector('[data-tracking-action="pause"]');
+                const resumeButton = card.querySelector('[data-tracking-action="resume"]');
+                if (pauseButton) {
+                    pauseButton.classList.toggle("d-none", order.statusCode !== "out_for_delivery" || order.trackingPaused);
+                    pauseButton.disabled = order.statusCode !== "out_for_delivery" || order.trackingPaused;
+                }
+                if (resumeButton) {
+                    resumeButton.classList.toggle("d-none", order.statusCode !== "out_for_delivery" || !order.trackingPaused);
+                    resumeButton.disabled = order.statusCode !== "out_for_delivery" || !order.trackingPaused;
+                }
+            });
+        }
+
+        function getCurrentPosition(options) {
+            return new Promise((resolve, reject) => {
+                if (!navigator.geolocation) {
+                    reject(new Error("Geolocation is not supported by this browser."));
+                    return;
+                }
+                navigator.geolocation.getCurrentPosition(resolve, reject, options);
+            });
+        }
+
+        function setLatestCoords(latitude, longitude, updateMapView) {
+            const formattedLatitude = formatCoordinate(latitude);
+            const formattedLongitude = formatCoordinate(longitude);
+            trackingState.lastCoords = {
+                latitude: formattedLatitude,
+                longitude: formattedLongitude,
+            };
+            payload.currentDriverLocation = {
+                latitude: Number(formattedLatitude),
+                longitude: Number(formattedLongitude),
+                online: onlineInput.checked,
+            };
+            setDriverCoordinate(formattedLatitude, formattedLongitude, updateMapView);
+        }
+
+        async function captureDriverPosition(updateMapView) {
+            const position = await getCurrentPosition({ enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+            setLatestCoords(position.coords.latitude, position.coords.longitude, updateMapView);
+            return trackingState.lastCoords;
+        }
+
+        function ensureTrackingWatch() {
+            if (trackingState.watchId !== null || !navigator.geolocation || !onlineInput.checked || !getTrackedOrders().length) {
+                return;
+            }
+            trackingState.watchId = navigator.geolocation.watchPosition(
+                (position) => {
+                    setLatestCoords(position.coords.latitude, position.coords.longitude, false);
+                },
+                () => {
+                    locationStatus.textContent = "Location permission is needed to keep live delivery tracking running.";
+                },
+                { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+            );
+        }
+
+        function stopTrackingWatch() {
+            if (trackingState.watchId !== null && navigator.geolocation) {
+                navigator.geolocation.clearWatch(trackingState.watchId);
+            }
+            trackingState.watchId = null;
+        }
+
+        function stopTrackingTimer() {
+            if (trackingState.timerId !== null) {
+                window.clearInterval(trackingState.timerId);
+            }
+            trackingState.timerId = null;
+            trackingState.timerIntervalMs = null;
+        }
+
+        function syncTrackingTimer() {
+            const trackedOrders = getTrackedOrders();
+            if (!onlineInput.checked || !trackedOrders.length) {
+                stopTrackingTimer();
+                stopTrackingWatch();
+                return;
+            }
+
+            ensureTrackingWatch();
+            const intervalMs = getTrackingIntervalMs();
+            if (trackingState.timerId !== null && trackingState.timerIntervalMs === intervalMs) {
+                return;
+            }
+
+            stopTrackingTimer();
+            trackingState.timerIntervalMs = intervalMs;
+            trackingState.timerId = window.setInterval(() => {
+                pushDeliveryTrackingUpdates(false).catch(() => {});
+            }, intervalMs);
         }
 
         function getInitialCenter() {
@@ -468,6 +720,104 @@
             return response.json();
         }
 
+        async function postOrderTrackingUpdate(order, latitude, longitude, recordedAt) {
+            const body = new URLSearchParams({
+                order_id: order.orderId,
+                driver_id: order.driverId,
+                latitude,
+                longitude,
+                recorded_at: recordedAt,
+            });
+            const response = await fetch(order.trackingUpdateUrl, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "X-CSRFToken": csrfToken,
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+                body: body.toString(),
+            });
+            const data = await response.json();
+            if (!response.ok || !data.ok) {
+                throw new Error(data.message || "Unable to update live delivery tracking.");
+            }
+            return data;
+        }
+
+        async function pushDeliveryTrackingUpdates(forceFreshPosition) {
+            const trackedOrders = getTrackedOrders();
+            if (!onlineInput.checked || !trackedOrders.length || trackingState.sending) {
+                syncTrackingTimer();
+                return;
+            }
+
+            trackingState.sending = true;
+            try {
+                const coords = forceFreshPosition || !trackingState.lastCoords
+                    ? await captureDriverPosition(false)
+                    : trackingState.lastCoords;
+
+                await postDriverLocation(coords.latitude, coords.longitude, true);
+
+                const recordedAt = new Date().toISOString();
+                const results = await Promise.allSettled(
+                    trackedOrders.map((order) => postOrderTrackingUpdate(order, coords.latitude, coords.longitude, recordedAt))
+                );
+
+                let arrivalTriggered = false;
+                results.forEach((result, index) => {
+                    const sourceOrder = trackedOrders[index];
+                    if (result.status === "fulfilled") {
+                        const data = result.value;
+                        payload.trackingUpdateSeconds = data.pollSeconds || payload.trackingUpdateSeconds;
+                        updateOrderPayload(sourceOrder.orderNumber, {
+                            statusCode: data.status,
+                            statusLabel: data.statusLabel,
+                            trackingActive: data.trackingActive,
+                            trackingPaused: data.trackingPaused,
+                            driverLatitude: data.latitude,
+                            driverLongitude: data.longitude,
+                            lastDistanceMeters: data.distanceMeters,
+                            lastEtaMinutes: data.etaMinutes,
+                            lastRecordedAt: data.recordedAt,
+                        });
+                        if (data.arrived) {
+                            arrivalTriggered = true;
+                        }
+                    } else {
+                        locationStatus.textContent = result.reason.message || "Live tracking update failed for one delivery.";
+                    }
+                });
+
+                renderTrackingControls();
+                renderAssignedOrders();
+                syncTrackingTimer();
+
+                if (arrivalTriggered) {
+                    locationStatus.textContent = "Driver arrived at the customer stop. QR and OTP verification are now ready.";
+                } else {
+                    locationStatus.textContent = `Live delivery tracking sent at ${new Date().toLocaleTimeString()}.`;
+                }
+            } finally {
+                trackingState.sending = false;
+            }
+        }
+
+        async function postDeliveryStateChange(url) {
+            const response = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken": csrfToken,
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            });
+            const data = await response.json();
+            if (!response.ok || !data.ok) {
+                throw new Error(data.message || "Unable to update that delivery right now.");
+            }
+            return data;
+        }
+
         async function refreshGpsLocation() {
             updateDriverChip();
             if (!onlineInput.checked) {
@@ -478,23 +828,14 @@
                 locationStatus.textContent = "This browser does not support geolocation.";
                 return;
             }
-            navigator.geolocation.getCurrentPosition(
-                async (position) => {
-                    const latitude = position.coords.latitude.toFixed(6);
-                    const longitude = position.coords.longitude.toFixed(6);
-                    setDriverCoordinate(latitude, longitude, true);
-                    try {
-                        await postDriverLocation(latitude, longitude, true);
-                        locationStatus.textContent = `Last GPS update sent at ${new Date().toLocaleTimeString()}.`;
-                    } catch (error) {
-                        locationStatus.textContent = "Automatic GPS update failed. You can still submit the form manually.";
-                    }
-                },
-                () => {
-                    locationStatus.textContent = "Location permission was denied, so automatic GPS updates could not be sent.";
-                },
-                { enableHighAccuracy: true, timeout: 15000 }
-            );
+            try {
+                const coords = await captureDriverPosition(true);
+                await postDriverLocation(coords.latitude, coords.longitude, true);
+                locationStatus.textContent = `Last GPS update sent at ${new Date().toLocaleTimeString()}.`;
+                syncTrackingTimer();
+            } catch (error) {
+                locationStatus.textContent = "Automatic GPS update failed. You can still submit the form manually.";
+            }
         }
 
         map.on("click", (event) => {
@@ -513,8 +854,75 @@
             renderAssignedOrders();
         }
 
+        startDeliveryForms.forEach((form) => {
+            form.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                const orderNumber = form.dataset.orderNumber;
+                const button = form.querySelector("button");
+                if (button) {
+                    button.disabled = true;
+                }
+                try {
+                    await captureDriverPosition(true);
+                    const data = await postDeliveryStateChange(form.action);
+                    payload.trackingUpdateSeconds = data.pollSeconds || payload.trackingUpdateSeconds;
+                    updateOrderPayload(orderNumber, {
+                        statusCode: data.status,
+                        statusLabel: data.statusLabel,
+                        trackingActive: data.trackingActive,
+                        trackingPaused: data.trackingPaused,
+                    });
+                    renderTrackingControls();
+                    syncTrackingTimer();
+                    await pushDeliveryTrackingUpdates(true);
+                } catch (error) {
+                    locationStatus.textContent = error.message || "Unable to start delivery tracking.";
+                } finally {
+                    if (button) {
+                        button.disabled = false;
+                    }
+                }
+            });
+        });
+
+        trackingActionButtons.forEach((button) => {
+            button.addEventListener("click", async () => {
+                const orderNumber = button.dataset.orderNumber;
+                const order = getOrderByNumber(orderNumber);
+                if (!order) {
+                    return;
+                }
+                const action = button.dataset.trackingAction;
+                const url = action === "pause" ? order.pauseUrl : order.resumeUrl;
+                button.disabled = true;
+                try {
+                    const data = await postDeliveryStateChange(url);
+                    payload.trackingUpdateSeconds = data.pollSeconds || payload.trackingUpdateSeconds;
+                    updateOrderPayload(orderNumber, {
+                        statusCode: data.status,
+                        statusLabel: data.statusLabel,
+                        trackingActive: data.trackingActive,
+                        trackingPaused: data.trackingPaused,
+                    });
+                    renderTrackingControls();
+                    syncTrackingTimer();
+                    if (action === "resume") {
+                        await pushDeliveryTrackingUpdates(true);
+                    } else {
+                        locationStatus.textContent = `Delivery tracking paused for ${orderNumber}.`;
+                    }
+                } catch (error) {
+                    locationStatus.textContent = error.message || "Unable to update delivery tracking.";
+                } finally {
+                    button.disabled = false;
+                }
+            });
+        });
+
+        renderTrackingControls();
         updateDriverChip();
         window.setTimeout(() => map.invalidateSize(), 0);
+        syncTrackingTimer();
         window.setInterval(refreshGpsLocation, 10000);
     })();
 

@@ -10,7 +10,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Avg, Count, Prefetch, Q, Sum
 from django.http import Http404, HttpResponse, JsonResponse
-from django.shortcuts import get_object_or_404, redirect
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -23,6 +23,7 @@ from accounts.forms import (
     AgentBatchSaleCancellationForm,
     AgentBatchSalePaymentForm,
     AgentBatchSaleReceiptForm,
+    AgentInventoryPurchaseForm,
     AgentBatchSaleRequestForm,
     AgentForm,
     AgentDriverCreateForm,
@@ -33,6 +34,7 @@ from accounts.forms import (
     CompanyForm,
     CompanyBatchForm,
     CompanyAgentUpdateForm,
+    CompanyCreditPolicyForm,
     SystemCompanyRegistrationForm,
     CompanyPremiumSettingsForm,
     CompanyProductForm,
@@ -41,6 +43,7 @@ from accounts.forms import (
     DriverForm,
     DriverIssueReportForm,
     DriverLocationForm,
+    OrderTrackingUpdateForm,
     InternalUserCreationForm,
     LoginForm,
     RegistrationForm,
@@ -69,8 +72,11 @@ from accounts.services import (
 from catalog.models import (
     Agent,
     AgentBatchSale,
+    AgentBatchSaleCheckout,
+    AgentBatchSaleCheckoutStatus,
     AgentBatchSalePayment,
     AgentBatchSalePaymentStatus,
+    AgentBatchSalePaymentType,
     AgentBatchSaleStatus,
     AgentStock,
     CompanyBatch,
@@ -93,12 +99,17 @@ from catalog.services import (
     confirm_agent_batch_sale_receipt,
     confirm_agent_batch_sale_payment,
     create_company_starter_catalog,
+    finalize_agent_batch_sale_checkout,
     get_agent_open_batch_balance,
+    initialize_agent_batch_sale_checkout,
+    purchase_agent_batch_sale_on_credit,
     recall_company_batch,
     reject_agent_batch_sale,
     reject_agent_batch_sale_payment,
     submit_agent_batch_sale_payment,
     submit_agent_batch_sale_request,
+    sync_agent_overdue_status,
+    sync_company_agent_overdue_statuses,
 )
 from core.mixins import (
     AgentManagerRequiredMixin,
@@ -111,22 +122,36 @@ from core.models import Announcement, AnnouncementTargetRole, AuditLog, DriverLo
 from core.navigation import get_user_home_url
 from core.policies import get_customer_loyalty_summary
 from core.services import deliver_announcement, notify_user, record_audit_log
-from orders.models import DeliveryFeedback, Order, OrderAgentRequest, OrderStatus, RefundRequest, RefundRequestStatus
+from orders.models import (
+    Complaint,
+    ComplaintAgentResponseType,
+    ComplaintResolutionType,
+    ComplaintStatus,
+    DeliveryFeedback,
+    Order,
+    OrderAgentRequest,
+    OrderStatus,
+    RefundRequest,
+    RefundRequestStatus,
+)
 from orders.services import (
     QRConfirmationError,
     accept_delivery_assignment,
-    approve_refund_request,
     assign_driver,
     complete_delivery_and_deduct_stock,
     confirm_delivery_by_qr,
+    decide_complaint_as_company_admin,
+    decide_complaint_as_system_admin,
     expire_order_request_if_needed,
     mark_order_arrived,
     mark_order_picked_up,
-    process_refund_request,
-    reject_refund_request,
+    pause_order_live_tracking,
     report_delivery_issue,
+    resume_order_live_tracking,
+    respond_to_complaint_as_agent,
     start_delivery,
     submit_queued_qr_scans,
+    update_order_live_tracking,
 )
 
 
@@ -161,17 +186,36 @@ def build_driver_dashboard_payload(driver, assigned_orders, location):
             "longitude": _float_or_none(getattr(location, "longitude", None)),
             "online": bool(location and location.is_online),
         },
+        "trackingUpdateSeconds": getattr(settings, "LIVE_TRACKING_UPDATE_SECONDS", 5),
         "assignedOrders": [
             {
                 "orderNumber": order.order_number,
+                "orderId": order.id,
+                "driverId": driver.id,
+                "statusCode": order.status,
                 "statusLabel": order.get_status_display(),
                 "customerName": order.customer.full_name,
+                "customerPhone": order.phone_number,
                 "deliveryAddress": order.delivery_address,
                 "latitude": float(order.latitude),
                 "longitude": float(order.longitude),
                 "agentName": order.selected_agent.name if order.selected_agent else driver.agent.name,
                 "agentLatitude": float(order.selected_agent.latitude) if order.selected_agent else float(driver.agent.latitude),
                 "agentLongitude": float(order.selected_agent.longitude) if order.selected_agent else float(driver.agent.longitude),
+                "trackingActive": bool(getattr(getattr(order, "live_tracking", None), "is_active", False)),
+                "trackingPaused": bool(getattr(getattr(order, "live_tracking", None), "is_paused", False)),
+                "driverLatitude": _float_or_none(getattr(getattr(order, "live_tracking", None), "latitude", None)),
+                "driverLongitude": _float_or_none(getattr(getattr(order, "live_tracking", None), "longitude", None)),
+                "lastDistanceMeters": _float_or_none(getattr(getattr(order, "live_tracking", None), "last_distance_meters", None)),
+                "lastEtaMinutes": getattr(getattr(order, "live_tracking", None), "last_eta_minutes", None),
+                "lastRecordedAt": getattr(getattr(order, "live_tracking", None), "recorded_at", None).isoformat()
+                if getattr(order, "live_tracking", None) and getattr(order.live_tracking, "recorded_at", None)
+                else "",
+                "startUrl": reverse("accounts:start_delivery", kwargs={"order_number": order.order_number}),
+                "trackingUpdateUrl": reverse("accounts:update_delivery_tracking", kwargs={"order_number": order.order_number}),
+                "pauseUrl": reverse("accounts:pause_delivery_tracking", kwargs={"order_number": order.order_number}),
+                "resumeUrl": reverse("accounts:resume_delivery_tracking", kwargs={"order_number": order.order_number}),
+                "arrivedUrl": reverse("accounts:arrived_delivery", kwargs={"order_number": order.order_number}),
             }
             for order in assigned_orders
             if order.status in active_statuses
@@ -180,7 +224,7 @@ def build_driver_dashboard_payload(driver, assigned_orders, location):
 
 
 def get_driver_active_orders(driver):
-    return driver.assigned_orders.select_related("customer", "selected_agent").filter(
+    return driver.assigned_orders.select_related("customer", "selected_agent", "live_tracking").filter(
         status__in=[
             OrderStatus.DRIVER_ASSIGNED,
             OrderStatus.DRIVER_ACCEPTED,
@@ -370,6 +414,7 @@ def get_company_reporting_window(request):
 
 
 def build_company_agent_rows(company):
+    sync_company_agent_overdue_statuses(company)
     agents = list(
         company.agents.select_related("admin").prefetch_related(
             "drivers__user",
@@ -423,6 +468,7 @@ def build_company_agent_rows(company):
                 "low_stock_items": sum(1 for stock in agent.stocks.all() if stock.low_stock),
                 "is_active": agent.is_active,
                 "is_accepting_orders": agent.is_accepting_orders,
+                "overdue_status": agent.overdue_status,
             }
         )
     rows.sort(key=lambda row: (-row["revenue"], row["name"].lower()))
@@ -469,6 +515,7 @@ def build_company_product_rows(company):
 
 
 def build_company_inventory_rows(company):
+    sync_company_agent_overdue_statuses(company)
     stock_rows = list(
         AgentStock.objects.filter(agent__company=company)
         .select_related("agent", "product")
@@ -767,6 +814,21 @@ def serialize_refund_for_audit(refund_request):
     }
 
 
+def serialize_complaint_for_audit(complaint):
+    return {
+        "reference_number": complaint.reference_number,
+        "order_number": complaint.order.order_number,
+        "status": complaint.status,
+        "category": complaint.category,
+        "resolution_type": complaint.resolution_type,
+        "refund_amount": str(complaint.refund_amount),
+        "agent_response_type": complaint.agent_response_type,
+        "company_decision_reason": complaint.company_decision_reason,
+        "appeal_reason": complaint.appeal_reason,
+        "system_decision_reason": complaint.system_decision_reason,
+    }
+
+
 def build_user_company_labels(user):
     labels = set()
     managed_company = user._state.fields_cache.get("managed_company")
@@ -776,11 +838,14 @@ def build_user_company_labels(user):
         else:
             labels.add(user.managed_company.name)
 
-    prefetched_managed_companies = getattr(user, "prefetched_managed_companies", None)
-    if prefetched_managed_companies is not None:
-        labels.update(company.name for company in prefetched_managed_companies if company.name)
-    else:
-        labels.update(user.managed_companies.values_list("name", flat=True))
+    primary_managed_company = user._state.fields_cache.get("primary_managed_company")
+    if primary_managed_company is None:
+        try:
+            primary_managed_company = user.primary_managed_company
+        except Company.DoesNotExist:
+            primary_managed_company = None
+    if primary_managed_company and primary_managed_company.name:
+        labels.add(primary_managed_company.name)
 
     prefetched_managed_agent_branches = getattr(user, "prefetched_managed_agent_branches", None)
     if prefetched_managed_agent_branches is not None:
@@ -810,13 +875,9 @@ def build_user_company_labels(user):
 def get_system_user_queryset(request):
     queryset = User.objects.select_related(
         "managed_company",
+        "primary_managed_company",
         "driver_profile__agent__company",
     ).prefetch_related(
-        Prefetch(
-            "managed_companies",
-            queryset=Company.objects.order_by("name"),
-            to_attr="prefetched_managed_companies",
-        ),
         Prefetch(
             "managed_agent_branches",
             queryset=Agent.objects.select_related("company").order_by("name"),
@@ -842,7 +903,7 @@ def get_system_user_queryset(request):
     if company_filter:
         queryset = queryset.filter(
             Q(managed_company__pk=company_filter)
-            | Q(managed_companies__pk=company_filter)
+            | Q(primary_managed_company__pk=company_filter)
             | Q(managed_agent_branches__company__pk=company_filter)
             | Q(driver_profile__agent__company__pk=company_filter)
             | Q(orders__company__pk=company_filter)
@@ -1544,6 +1605,132 @@ class AgentBatchSaleRequestCreateView(AgentManagerRequiredMixin, View):
         return redirect(request.POST.get("next") or "accounts:agent_inventory")
 
 
+class AgentInventoryPurchaseCreateView(AgentManagerRequiredMixin, View):
+    def post(self, request):
+        agent = get_managed_agent_or_404(request.user)
+        form = AgentInventoryPurchaseForm(request.POST, agent=agent)
+        if not form.is_valid():
+            messages.error(request, "Unable to start that stock purchase.")
+            return redirect(request.POST.get("next") or "accounts:agent_inventory")
+
+        cleaned = form.cleaned_data
+        payment_type = cleaned["payment_type"]
+        try:
+            if payment_type == AgentBatchSalePaymentType.CREDIT:
+                sale = purchase_agent_batch_sale_on_credit(
+                    agent=agent,
+                    batch=cleaned["batch"],
+                    requested_by=request.user,
+                    quantity_requested=cleaned["quantity_requested"],
+                    requested_note=cleaned.get("requested_note", ""),
+                )
+                record_audit_log(
+                    request=request,
+                    actor=request.user,
+                    action="agent_batch_sale.direct_credit_purchase",
+                    entity_type="agent_batch_sale",
+                    entity_id=sale.pk,
+                    entity_label=sale.batch.batch_number,
+                    new_values=serialize_agent_batch_sale_for_audit(sale),
+                )
+                messages.success(
+                    request,
+                    f"Inventory released from batch {sale.batch.batch_number}. Credit is now active until {sale.credit_due_date}.",
+                )
+                return redirect(request.POST.get("next") or "accounts:agent_inventory")
+
+            sale, checkout = initialize_agent_batch_sale_checkout(
+                agent=agent,
+                batch=cleaned["batch"],
+                requested_by=request.user,
+                quantity_requested=cleaned["quantity_requested"],
+                requested_note=cleaned.get("requested_note", ""),
+                callback_url=request.build_absolute_uri(reverse("accounts:agent_inventory_purchase_chapa_callback")),
+                return_url=request.build_absolute_uri(reverse("accounts:agent_inventory_purchase_chapa_return")),
+            )
+            record_audit_log(
+                request=request,
+                actor=request.user,
+                action="agent_batch_sale.pay_now_initialized",
+                entity_type="agent_batch_sale",
+                entity_id=sale.pk,
+                entity_label=sale.batch.batch_number,
+                new_values=serialize_agent_batch_sale_for_audit(sale),
+            )
+            return redirect(checkout.checkout_url)
+        except ValidationError as exc:
+            messages.error(request, exc.messages[0] if exc.messages else "Unable to start that stock purchase.")
+            return redirect(request.POST.get("next") or "accounts:agent_inventory")
+
+
+class AgentInventoryPurchaseChapaCallbackView(View):
+    @staticmethod
+    def _extract_tx_ref(payload):
+        if not isinstance(payload, dict):
+            return ""
+        data = payload.get("data")
+        if isinstance(data, dict):
+            tx_ref = data.get("tx_ref") or data.get("trx_ref")
+            if tx_ref:
+                return tx_ref
+        return payload.get("tx_ref") or payload.get("trx_ref") or ""
+
+    def get(self, request):
+        tx_ref = request.GET.get("tx_ref") or request.GET.get("trx_ref")
+        if not tx_ref:
+            return HttpResponse("Invalid payment callback request.", status=400)
+        try:
+            finalize_agent_batch_sale_checkout(tx_ref=tx_ref)
+        except ValidationError as exc:
+            return HttpResponse(exc.messages[0] if exc.messages else "Unable to verify payment callback.", status=400)
+        return HttpResponse("ok")
+
+    def post(self, request):
+        try:
+            payload = json.loads(request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            return HttpResponse("Invalid webhook payload.", status=400)
+
+        tx_ref = self._extract_tx_ref(payload)
+        if not tx_ref:
+            return HttpResponse("Invalid webhook payload.", status=400)
+        try:
+            sale, _checkout = finalize_agent_batch_sale_checkout(tx_ref=tx_ref)
+        except ValidationError as exc:
+            return HttpResponse(exc.messages[0] if exc.messages else "Unable to verify payment callback.", status=400)
+        return JsonResponse({"status": "ok", "sale_id": sale.pk})
+
+
+class AgentInventoryPurchaseChapaReturnView(AgentManagerRequiredMixin, View):
+    @staticmethod
+    def _resolve_tx_ref(request):
+        tx_ref = request.GET.get("tx_ref") or request.GET.get("trx_ref")
+        if tx_ref:
+            return tx_ref
+        latest_checkout = (
+            AgentBatchSaleCheckout.objects.select_related("sale", "sale__agent")
+            .filter(
+                sale__agent__admin=request.user,
+                status__in=[AgentBatchSaleCheckoutStatus.PENDING, AgentBatchSaleCheckoutStatus.PAID],
+            )
+            .order_by("-created_at")
+            .first()
+        )
+        return latest_checkout.tx_ref if latest_checkout else ""
+
+    def get(self, request):
+        tx_ref = self._resolve_tx_ref(request)
+        if tx_ref:
+            try:
+                finalize_agent_batch_sale_checkout(tx_ref=tx_ref, received_by=request.user)
+                messages.success(request, "Payment verified and inventory was released successfully.")
+            except ValidationError as exc:
+                messages.warning(request, exc.messages[0] if exc.messages else "We could not verify payment yet.")
+        else:
+            messages.warning(request, "We could not find a payment reference to verify.")
+        return redirect("accounts:agent_inventory")
+
+
 class AgentBatchSalePaymentCreateView(AgentManagerRequiredMixin, View):
     def post(self, request, pk):
         agent = get_managed_agent_or_404(request.user)
@@ -1774,20 +1961,23 @@ class AgentInventoryView(AgentManagerRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         agent = get_managed_agent_or_404(self.request.user)
+        agent.overdue_status = sync_agent_overdue_status(agent)
         ensure_agent_stock_rows(agent)
         stocks = agent.stocks.select_related("product").order_by("product__name")
+        batch_purchase_form = AgentInventoryPurchaseForm(agent=agent)
         batch_request_form = AgentBatchSaleRequestForm(agent=agent)
         context["agent"] = agent
         context["stocks"] = stocks
         context["adjustment_form"] = AgentInventoryAdjustmentForm(
             products=Product.objects.filter(company=agent.company, is_active=True)
         )
+        context["batch_purchase_form"] = batch_purchase_form
         context["batch_request_form"] = batch_request_form
         context["batch_payment_form"] = AgentBatchSalePaymentForm()
         context["batch_receipt_form"] = AgentBatchSaleReceiptForm()
         context["restock_form"] = RestockRequestForm(products=Product.objects.filter(company=agent.company))
         context["company_products"] = Product.objects.filter(company=agent.company, is_active=True).order_by("name")
-        context["available_company_batches"] = list(batch_request_form.fields["batch"].queryset)
+        context["available_company_batches"] = list(batch_purchase_form.fields["batch"].queryset)
         context["inventory_batches"] = agent.inventory_batches.select_related("product")[:12]
         context["restock_requests"] = agent.restock_requests.select_related("product", "requested_by", "approved_by")[:12]
         context["batch_sales"] = agent.batch_sales.select_related(
@@ -1813,6 +2003,7 @@ class AgentInventoryView(AgentManagerRequiredMixin, TemplateView):
             "credit_limit": agent.credit_limit,
             "credit_period_days": agent.credit_period_days,
             "outstanding_balance": get_agent_open_batch_balance(agent),
+            "overdue_status": agent.overdue_status,
         }
         return context
 
@@ -1875,23 +2066,39 @@ class AgentRefundListView(AgentManagerRequiredMixin, TemplateView):
         context = super().get_context_data(**kwargs)
         agent = get_managed_agent_or_404(self.request.user)
         selected_status = self.request.GET.get("status", "").strip()
-        refund_requests = RefundRequest.objects.filter(order__selected_agent=agent).select_related(
+        complaints = Complaint.objects.filter(order__selected_agent=agent).select_related(
+            "order__customer",
             "order__customer",
             "requested_by",
-            "reviewed_by",
-        )
+            "agent_responded_by",
+            "company_decided_by",
+            "system_decided_by",
+            "linked_refund_request",
+        ).prefetch_related("evidences", "status_history__changed_by")
         if selected_status:
-            refund_requests = refund_requests.filter(status=selected_status)
+            complaints = complaints.filter(status=selected_status)
         context["agent"] = agent
-        context["refund_requests"] = refund_requests
+        context["complaints"] = complaints
         context["selected_status"] = selected_status
-        context["status_choices"] = RefundRequestStatus.choices
-        context["refund_summary"] = {
-            "pending": RefundRequest.objects.filter(order__selected_agent=agent, status=RefundRequestStatus.PENDING).count(),
-            "approved": RefundRequest.objects.filter(order__selected_agent=agent, status=RefundRequestStatus.APPROVED).count(),
-            "rejected": RefundRequest.objects.filter(order__selected_agent=agent, status=RefundRequestStatus.REJECTED).count(),
-            "processed": RefundRequest.objects.filter(order__selected_agent=agent, status=RefundRequestStatus.PROCESSED).count(),
-            "failed": RefundRequest.objects.filter(order__selected_agent=agent, status=RefundRequestStatus.FAILED).count(),
+        context["status_choices"] = ComplaintStatus.choices
+        context["complaint_summary"] = {
+            "submitted": Complaint.objects.filter(order__selected_agent=agent, status=ComplaintStatus.SUBMITTED).count(),
+            "awaiting_agent_response": Complaint.objects.filter(
+                order__selected_agent=agent,
+                status=ComplaintStatus.AWAITING_AGENT_RESPONSE,
+            ).count(),
+            "under_company_review": Complaint.objects.filter(
+                order__selected_agent=agent,
+                status=ComplaintStatus.UNDER_COMPANY_REVIEW,
+            ).count(),
+            "decision_issued": Complaint.objects.filter(
+                order__selected_agent=agent,
+                status=ComplaintStatus.DECISION_ISSUED,
+            ).count(),
+            "resolved": Complaint.objects.filter(
+                order__selected_agent=agent,
+                status__in=[ComplaintStatus.RESOLVED, ComplaintStatus.CLOSED],
+            ).count(),
         }
         return context
 
@@ -1901,64 +2108,43 @@ class AgentRefundDecisionView(AgentManagerRequiredMixin, View):
 
     def post(self, request, pk):
         agent = get_managed_agent_or_404(request.user)
-        refund_request = get_object_or_404(RefundRequest, pk=pk, order__selected_agent=agent)
-        old_values = serialize_refund_for_audit(refund_request)
-        resolution_note = (request.POST.get("resolution_note") or "").strip()
-        approved_amount_raw = request.POST.get("approved_amount")
-        failure_reason = (request.POST.get("failure_reason") or "").strip()
+        complaint = get_object_or_404(Complaint, pk=pk, order__selected_agent=agent)
+        old_values = serialize_complaint_for_audit(complaint)
+        response_note = (request.POST.get("agent_response_note") or "").strip()
+        if not response_note:
+            messages.error(request, "A written response is required before the complaint can move forward.")
+            return redirect("accounts:agent_refunds")
 
-        if self.action in {"approve", "reject"} and not resolution_note:
-            messages.error(request, "A written reason is required for every refund decision.")
+        response_map = {
+            "accept_responsibility": ComplaintAgentResponseType.ACCEPT_RESPONSIBILITY,
+            "dispute": ComplaintAgentResponseType.DISPUTE,
+            "additional_information": ComplaintAgentResponseType.ADDITIONAL_INFORMATION,
+        }
+        response_type = response_map.get(self.action)
+        if not response_type:
+            messages.error(request, "Unsupported complaint response action.")
             return redirect("accounts:agent_refunds")
 
         try:
-            if self.action == "approve":
-                approve_refund_request(
-                    refund_request,
-                    reviewed_by=request.user,
-                    approved_amount=approved_amount_raw or None,
-                    resolution_note=resolution_note,
-                )
-                messages.success(request, f"Refund approved for {refund_request.order.order_number}.")
-                audit_action = "refund.approved"
-            elif self.action == "process":
-                process_refund_request(
-                    refund_request,
-                    processed_by=request.user,
-                )
-                messages.success(request, f"Refund processed for {refund_request.order.order_number}.")
-                audit_action = "refund.processed"
-            elif self.action == "fail":
-                if not failure_reason:
-                    messages.error(request, "A reason is required when marking refund processing as failed.")
-                    return redirect("accounts:agent_refunds")
-                process_refund_request(
-                    refund_request,
-                    processed_by=request.user,
-                    failure_reason=failure_reason,
-                )
-                messages.warning(request, f"Refund processing marked failed for {refund_request.order.order_number}.")
-                audit_action = "refund.processing_failed"
-            else:
-                reject_refund_request(
-                    refund_request,
-                    reviewed_by=request.user,
-                    resolution_note=resolution_note,
-                )
-                messages.info(request, f"Refund rejected for {refund_request.order.order_number}.")
-                audit_action = "refund.rejected"
+            respond_to_complaint_as_agent(
+                complaint=complaint,
+                actor=request.user,
+                response_type=response_type,
+                note=response_note,
+            )
             record_audit_log(
                 request=request,
                 actor=request.user,
-                action=audit_action,
-                entity_type="refund_request",
-                entity_id=refund_request.pk,
-                entity_label=refund_request.order.order_number,
+                action="complaint.agent_response_submitted",
+                entity_type="complaint",
+                entity_id=complaint.pk,
+                entity_label=complaint.reference_number,
                 old_values=old_values,
-                new_values=serialize_refund_for_audit(refund_request),
+                new_values=serialize_complaint_for_audit(complaint),
             )
+            messages.success(request, f"Complaint response recorded for {complaint.order.order_number}.")
         except ValidationError as exc:
-            messages.error(request, exc.messages[0] if exc.messages else "Unable to update this refund request.")
+            messages.error(request, exc.messages[0] if exc.messages else "Unable to update this complaint.")
         return redirect("accounts:agent_refunds")
 
 
@@ -2015,7 +2201,9 @@ class DriverDashboardView(DriverRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         driver = self.get_driver()
-        assigned_orders = list(driver.assigned_orders.select_related("customer", "selected_agent").order_by("-updated_at")[:10])
+        assigned_orders = list(
+            driver.assigned_orders.select_related("customer", "selected_agent", "live_tracking").order_by("-updated_at")[:10]
+        )
         location = getattr(self.request.user, "driver_location", None)
         performance = build_driver_performance(driver)
         active_delivery = get_driver_active_orders(driver).first()
@@ -2107,10 +2295,28 @@ class UpdateDriverLocationView(DriverRequiredMixin, View):
 class DriverStartDeliveryView(DriverRequiredMixin, View):
     def post(self, request, order_number):
         order = get_object_or_404(Order, order_number=order_number)
+        is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
         try:
             start_delivery(order, request.user)
+            tracking = getattr(order, "live_tracking", None)
+            if is_ajax:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "status": order.status,
+                        "statusLabel": order.get_status_display(),
+                        "trackingActive": bool(tracking and tracking.is_active),
+                        "trackingPaused": bool(tracking and tracking.is_paused),
+                        "pollSeconds": getattr(settings, "LIVE_TRACKING_UPDATE_SECONDS", 5),
+                    }
+                )
             messages.success(request, f"Started delivery for {order.order_number}.")
         except ValidationError as exc:
+            if is_ajax:
+                return JsonResponse(
+                    {"ok": False, "message": exc.messages[0] if exc.messages else "Unable to start that delivery."},
+                    status=400,
+                )
             messages.error(request, exc.messages[0] if exc.messages else "Unable to start that delivery.")
         return redirect("accounts:driver_dashboard")
 
@@ -2153,6 +2359,109 @@ class DriverArrivedView(DriverRequiredMixin, View):
                     status=400,
                 )
             messages.error(request, exc.messages[0] if exc.messages else "Unable to mark the order as arrived.")
+        return redirect("accounts:driver_dashboard")
+
+
+class DriverOrderTrackingUpdateView(DriverRequiredMixin, View):
+    def post(self, request, order_number):
+        order = get_object_or_404(Order.objects.select_related("assigned_driver__user", "live_tracking"), order_number=order_number)
+        driver = get_object_or_404(Driver, user=request.user)
+        form = OrderTrackingUpdateForm(request.POST)
+        if not form.is_valid():
+            return JsonResponse({"ok": False, "errors": form.errors}, status=400)
+
+        cleaned = form.cleaned_data
+        if cleaned["order_id"] != order.id:
+            return JsonResponse({"ok": False, "message": "Order mismatch for this tracking update."}, status=400)
+        if cleaned["driver_id"] != driver.id:
+            return JsonResponse({"ok": False, "message": "Driver mismatch for this tracking update."}, status=400)
+
+        try:
+            tracking, has_arrived = update_order_live_tracking(
+                order,
+                request.user,
+                cleaned["latitude"],
+                cleaned["longitude"],
+                recorded_at=cleaned.get("recorded_at"),
+            )
+            order.refresh_from_db(fields=["status", "arrived_at", "updated_at"])
+        except ValidationError as exc:
+            return JsonResponse(
+                {"ok": False, "message": exc.messages[0] if exc.messages else "Unable to update live tracking."},
+                status=400,
+            )
+
+        return JsonResponse(
+            {
+                "ok": True,
+                "orderNumber": order.order_number,
+                "status": order.status,
+                "statusLabel": order.get_status_display(),
+                "trackingActive": tracking.is_active,
+                "trackingPaused": tracking.is_paused,
+                "latitude": _float_or_none(tracking.latitude),
+                "longitude": _float_or_none(tracking.longitude),
+                "recordedAt": tracking.recorded_at.isoformat() if tracking.recorded_at else "",
+                "distanceMeters": _float_or_none(tracking.last_distance_meters),
+                "etaMinutes": tracking.last_eta_minutes,
+                "arrived": has_arrived or order.status == OrderStatus.ARRIVED,
+                "pollSeconds": getattr(settings, "LIVE_TRACKING_UPDATE_SECONDS", 5),
+            }
+        )
+
+
+class DriverOrderTrackingPauseView(DriverRequiredMixin, View):
+    def post(self, request, order_number):
+        order = get_object_or_404(Order.objects.select_related("live_tracking"), order_number=order_number)
+        is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        try:
+            tracking = pause_order_live_tracking(order, request.user)
+            if is_ajax:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "status": order.status,
+                        "statusLabel": order.get_status_display(),
+                        "trackingActive": tracking.is_active,
+                        "trackingPaused": tracking.is_paused,
+                    }
+                )
+            messages.success(request, f"Paused live tracking for {order.order_number}.")
+        except ValidationError as exc:
+            if is_ajax:
+                return JsonResponse(
+                    {"ok": False, "message": exc.messages[0] if exc.messages else "Unable to pause live tracking."},
+                    status=400,
+                )
+            messages.error(request, exc.messages[0] if exc.messages else "Unable to pause live tracking.")
+        return redirect("accounts:driver_dashboard")
+
+
+class DriverOrderTrackingResumeView(DriverRequiredMixin, View):
+    def post(self, request, order_number):
+        order = get_object_or_404(Order.objects.select_related("live_tracking"), order_number=order_number)
+        is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        try:
+            tracking = resume_order_live_tracking(order, request.user)
+            if is_ajax:
+                return JsonResponse(
+                    {
+                        "ok": True,
+                        "status": order.status,
+                        "statusLabel": order.get_status_display(),
+                        "trackingActive": tracking.is_active,
+                        "trackingPaused": tracking.is_paused,
+                        "pollSeconds": getattr(settings, "LIVE_TRACKING_UPDATE_SECONDS", 5),
+                    }
+                )
+            messages.success(request, f"Resumed live tracking for {order.order_number}.")
+        except ValidationError as exc:
+            if is_ajax:
+                return JsonResponse(
+                    {"ok": False, "message": exc.messages[0] if exc.messages else "Unable to resume live tracking."},
+                    status=400,
+                )
+            messages.error(request, exc.messages[0] if exc.messages else "Unable to resume live tracking.")
         return redirect("accounts:driver_dashboard")
 
 
@@ -2260,6 +2569,14 @@ class CompanyAdminDashboardView(CompanyAdminRequiredMixin, TemplateView):
             status=AgentBatchSalePaymentStatus.PENDING,
         ).select_related("sale__agent", "sale__batch", "submitted_by")[:12]
         context["refund_requests"] = RefundRequest.objects.filter(order__company=company).select_related("order", "requested_by", "reviewed_by")[:15]
+        context["complaints"] = Complaint.objects.filter(order__company=company).select_related(
+            "order__customer",
+            "requested_by",
+            "agent_responded_by",
+            "company_decided_by",
+            "system_decided_by",
+            "linked_refund_request",
+        ).prefetch_related("evidences", "status_history__changed_by")[:15]
         context["agent_form"] = AgentForm(company=company)
         context["agent_manager_form"] = InternalUserCreationForm(allowed_roles=(UserRole.AGENT_MANAGER,))
         context["driver_user_form"] = InternalUserCreationForm(allowed_roles=(UserRole.DRIVER,))
@@ -2482,6 +2799,7 @@ class CompanyInventoryView(CompanyAdminRequiredMixin, TemplateView):
         context["stock_rows"] = stock_rows
         context["inventory_summary"] = summary
         context["batch_form"] = kwargs.get("batch_form") or CompanyBatchForm(company=company)
+        context["credit_policy_form"] = kwargs.get("credit_policy_form") or CompanyCreditPolicyForm(instance=company)
         context["batch_sale_approval_form"] = AgentBatchSaleApprovalForm()
         context["batch_sale_cancellation_form"] = AgentBatchSaleCancellationForm()
         context["products"] = company.products.filter(is_active=True).order_by("name")
@@ -2795,14 +3113,22 @@ class CreateAgentView(CompanyAdminRequiredMixin, View):
         company = get_managed_company_or_404(request.user)
         form = AgentForm(request.POST, company=company)
         if form.is_valid():
-            agent = form.save(commit=False)
-            agent.company = company
-            agent.save()
+            agent = form.save()
             ensure_agent_stock_rows(agent)
-            messages.success(request, f"{agent.name} created successfully.")
-        else:
-            messages.error(request, "Unable to create the agent branch.")
-        return redirect(request.POST.get("next") or "accounts:company_dashboard")
+            messages.success(request, f"{agent.name} and its brand-new manager account were created successfully.")
+            return redirect(request.POST.get("next") or "accounts:company_dashboard")
+
+        messages.error(request, "Unable to create the agent branch.")
+        return render(
+            request,
+            "accounts/company_agents.html",
+            {
+                "company": company,
+                "agents": build_company_agent_rows(company),
+                "agent_form": form,
+            },
+            status=200,
+        )
 
 
 class CreateDriverUserView(CompanyAdminRequiredMixin, View):
@@ -2844,65 +3170,67 @@ class UpdateCompanyPremiumSettingsView(CompanyAdminRequiredMixin, View):
         return redirect("accounts:company_dashboard")
 
 
+class UpdateCompanyCreditPolicyView(CompanyAdminRequiredMixin, View):
+    def post(self, request):
+        company = get_managed_company_or_404(request.user)
+        form = CompanyCreditPolicyForm(request.POST, instance=company)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Agent credit policy updated.")
+            return redirect("accounts:company_inventory")
+
+        messages.error(request, "Unable to update the agent credit policy.")
+        view = CompanyInventoryView()
+        view.request = request
+        context = view.get_context_data(credit_policy_form=form)
+        return render(request, view.template_name, context, status=200)
+
+
 class CompanyRefundDecisionView(CompanyAdminRequiredMixin, View):
     action = None
 
     def post(self, request, pk):
         company = get_managed_company_or_404(request.user)
-        refund_request = get_object_or_404(RefundRequest, pk=pk, order__company=company)
-        old_values = serialize_refund_for_audit(refund_request)
-        resolution_note = request.POST.get("resolution_note", "")
-        approved_amount_raw = request.POST.get("approved_amount")
-        approved_amount = approved_amount_raw or None
-        failure_reason = (request.POST.get("failure_reason") or "").strip()
+        complaint = get_object_or_404(Complaint, pk=pk, order__company=company)
+        old_values = serialize_complaint_for_audit(complaint)
+        decision_reason = (request.POST.get("decision_reason") or "").strip()
+        refund_amount = request.POST.get("refund_amount") or None
+        resolution_map = {
+            "full_refund": ComplaintResolutionType.FULL_REFUND,
+            "partial_refund": ComplaintResolutionType.PARTIAL_REFUND,
+            "replacement_delivery": ComplaintResolutionType.REPLACEMENT_DELIVERY,
+            "additional_delivery": ComplaintResolutionType.ADDITIONAL_DELIVERY,
+            "reject": ComplaintResolutionType.REJECTED,
+        }
+        resolution_type = resolution_map.get(self.action)
+        if not resolution_type:
+            messages.error(request, "Unsupported complaint decision action.")
+            return redirect("accounts:company_dashboard")
+        if not decision_reason:
+            messages.error(request, "A decision reason is required for every complaint outcome.")
+            return redirect("accounts:company_dashboard")
+
         try:
-            if self.action == "approve":
-                approve_refund_request(
-                    refund_request,
-                    reviewed_by=request.user,
-                    approved_amount=approved_amount,
-                    resolution_note=resolution_note,
-                )
-                messages.success(request, f"Refund approved for {refund_request.order.order_number}.")
-                audit_action = "refund.approved"
-            elif self.action == "process":
-                process_refund_request(
-                    refund_request,
-                    processed_by=request.user,
-                )
-                messages.success(request, f"Refund processed for {refund_request.order.order_number}.")
-                audit_action = "refund.processed"
-            elif self.action == "fail":
-                if not failure_reason:
-                    messages.error(request, "A reason is required when marking refund processing as failed.")
-                    return redirect("accounts:company_dashboard")
-                process_refund_request(
-                    refund_request,
-                    processed_by=request.user,
-                    failure_reason=failure_reason,
-                )
-                messages.warning(request, f"Refund processing marked failed for {refund_request.order.order_number}.")
-                audit_action = "refund.processing_failed"
-            else:
-                reject_refund_request(
-                    refund_request,
-                    reviewed_by=request.user,
-                    resolution_note=resolution_note,
-                )
-                messages.info(request, f"Refund request rejected for {refund_request.order.order_number}.")
-                audit_action = "refund.rejected"
+            decide_complaint_as_company_admin(
+                complaint=complaint,
+                actor=request.user,
+                resolution_type=resolution_type,
+                decision_reason=decision_reason,
+                refund_amount=refund_amount,
+            )
             record_audit_log(
                 request=request,
                 actor=request.user,
-                action=audit_action,
-                entity_type="refund_request",
-                entity_id=refund_request.pk,
-                entity_label=refund_request.order.order_number,
+                action="complaint.company_decision_recorded",
+                entity_type="complaint",
+                entity_id=complaint.pk,
+                entity_label=complaint.reference_number,
                 old_values=old_values,
-                new_values=serialize_refund_for_audit(refund_request),
+                new_values=serialize_complaint_for_audit(complaint),
             )
+            messages.success(request, f"Complaint decision saved for {complaint.order.order_number}.")
         except ValidationError as exc:
-            messages.error(request, exc.messages[0] if exc.messages else "Unable to update this refund request.")
+            messages.error(request, exc.messages[0] if exc.messages else "Unable to update this complaint.")
         return redirect("accounts:company_dashboard")
 
 
@@ -2975,14 +3303,76 @@ class SystemDashboardView(SystemAdminRequiredMixin, TemplateView):
         }
         context["recent_orders"] = Order.objects.select_related("company", "customer", "selected_agent")[:15]
         context["companies"] = Company.objects.select_related("admin")
-        context["company_form"] = SystemCompanyRegistrationForm()
-        context["company_admin_form"] = InternalUserCreationForm(allowed_roles=(UserRole.COMPANY_ADMIN,))
-        context["system_admin_form"] = InternalUserCreationForm(allowed_roles=(UserRole.SYSTEM_ADMIN,))
+        context["company_form"] = kwargs.get("company_form") or SystemCompanyRegistrationForm()
+        context["company_admin_form"] = kwargs.get("company_admin_form") or InternalUserCreationForm(
+            allowed_roles=(UserRole.COMPANY_ADMIN,)
+        )
+        context["system_admin_form"] = kwargs.get("system_admin_form") or InternalUserCreationForm(
+            allowed_roles=(UserRole.SYSTEM_ADMIN,)
+        )
         context["recent_audit_logs"] = AuditLog.objects.select_related("actor")[:10]
         context["recent_announcements"] = Announcement.objects.select_related("created_by")[:5]
         context["notifications"] = self.request.user.notifications.all()[:8]
         context["featured_companies"] = context["companies"][:6]
+        context["appealed_complaints"] = Complaint.objects.filter(
+            status__in=[ComplaintStatus.APPEAL_SUBMITTED, ComplaintStatus.UNDER_SYSTEM_REVIEW]
+        ).select_related(
+            "order__company",
+            "order__customer",
+            "requested_by",
+            "agent_responded_by",
+            "company_decided_by",
+            "system_decided_by",
+            "linked_refund_request",
+        ).prefetch_related("evidences", "status_history__changed_by")[:20]
         return context
+
+
+class SystemComplaintDecisionView(SystemAdminRequiredMixin, View):
+    action = None
+
+    def post(self, request, pk):
+        complaint = get_object_or_404(Complaint, pk=pk)
+        old_values = serialize_complaint_for_audit(complaint)
+        decision_reason = (request.POST.get("decision_reason") or "").strip()
+        refund_amount = request.POST.get("refund_amount") or None
+        resolution_map = {
+            "full_refund": ComplaintResolutionType.FULL_REFUND,
+            "partial_refund": ComplaintResolutionType.PARTIAL_REFUND,
+            "replacement_delivery": ComplaintResolutionType.REPLACEMENT_DELIVERY,
+            "additional_delivery": ComplaintResolutionType.ADDITIONAL_DELIVERY,
+            "reject": ComplaintResolutionType.REJECTED,
+        }
+        resolution_type = resolution_map.get(self.action)
+        if not resolution_type:
+            messages.error(request, "Unsupported complaint review action.")
+            return redirect("accounts:system_dashboard")
+        if not decision_reason:
+            messages.error(request, "A final decision reason is required for every appeal outcome.")
+            return redirect("accounts:system_dashboard")
+
+        try:
+            decide_complaint_as_system_admin(
+                complaint=complaint,
+                actor=request.user,
+                resolution_type=resolution_type,
+                decision_reason=decision_reason,
+                refund_amount=refund_amount,
+            )
+            record_audit_log(
+                request=request,
+                actor=request.user,
+                action="complaint.system_decision_recorded",
+                entity_type="complaint",
+                entity_id=complaint.pk,
+                entity_label=complaint.reference_number,
+                old_values=old_values,
+                new_values=serialize_complaint_for_audit(complaint),
+            )
+            messages.success(request, f"Final complaint decision saved for {complaint.order.order_number}.")
+        except ValidationError as exc:
+            messages.error(request, exc.messages[0] if exc.messages else "Unable to update this complaint appeal.")
+        return redirect("accounts:system_dashboard")
 
 
 class SystemCompanyListView(SystemAdminRequiredMixin, TemplateView):
@@ -3253,17 +3643,15 @@ class CreateCompanyAdminView(SystemAdminRequiredMixin, View):
 
     def post(self, request):
         form = InternalUserCreationForm(request.POST, allowed_roles=(self.role,))
-        if form.is_valid():
-            user = form.save()
-            company_id = request.POST.get("company_id")
-            if company_id:
-                company = Company.objects.filter(pk=company_id).first()
-                if company is not None:
-                    user.managed_company = company
-                    user.save(update_fields=["managed_company", "updated_at"])
-                    if company.admin_id is None:
-                        company.admin = user
-                        company.save(update_fields=["admin", "updated_at"])
+        company_id = request.POST.get("company_id")
+        company = Company.objects.filter(pk=company_id).first() if company_id else None
+        if form.is_valid() and company is not None:
+            user = form.save(commit=False)
+            user.managed_company = company
+            user.save()
+            if company.admin_id is None:
+                company.admin = user
+                company.save(update_fields=["admin", "updated_at"])
             record_audit_log(
                 request=request,
                 actor=request.user,
@@ -3275,7 +3663,10 @@ class CreateCompanyAdminView(SystemAdminRequiredMixin, View):
             )
             messages.success(request, "Company admin account created.")
         else:
-            messages.error(request, "Unable to create company admin account.")
+            if company is None:
+                messages.error(request, "Choose the company that this company admin belongs to.")
+            else:
+                messages.error(request, "Unable to create company admin account.")
         return redirect(request.POST.get("next") or "accounts:system_dashboard")
 
 
@@ -3303,14 +3694,10 @@ class CreateCompanyView(SystemAdminRequiredMixin, View):
     def post(self, request):
         form = SystemCompanyRegistrationForm(request.POST, request.FILES)
         if form.is_valid():
-            company = form.save(commit=False)
-            company.verification_status = CompanyVerificationStatus.PENDING_EFDA
-            company.submitted_to_efda_at = timezone.now()
-            company.is_verified = False
-            company.save()
-            if company.admin and company.admin.managed_company_id != company.pk:
-                company.admin.managed_company = company
-                company.admin.save(update_fields=["managed_company", "updated_at"])
+            form.instance.verification_status = CompanyVerificationStatus.PENDING_EFDA
+            form.instance.submitted_to_efda_at = timezone.now()
+            form.instance.is_verified = False
+            company = form.save()
             record_audit_log(
                 request=request,
                 actor=request.user,
@@ -3330,9 +3717,28 @@ class CreateCompanyView(SystemAdminRequiredMixin, View):
                 request,
                 f"{company.name} was created with {company.admin.email} as the pending company admin and sent to EFDA review.",
             )
-        else:
-            messages.error(request, "Unable to create the company.")
-        return redirect(request.POST.get("next") or "accounts:system_dashboard")
+            return redirect(request.POST.get("next") or "accounts:system_dashboard")
+
+        messages.error(request, "Unable to create the company.")
+        next_url = request.POST.get("next") or ""
+        if next_url == reverse("accounts:system_companies"):
+            view = SystemCompanyListView()
+            view.request = request
+            return render(
+                request,
+                "accounts/system_companies.html",
+                view.get_context_data(company_form=form),
+                status=400,
+            )
+
+        view = SystemDashboardView()
+        view.request = request
+        return render(
+            request,
+            "accounts/system_dashboard.html",
+            view.get_context_data(company_form=form),
+            status=400,
+        )
 
 
 class CompanyVerificationDecisionView(SystemAdminRequiredMixin, View):

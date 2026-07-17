@@ -3,14 +3,21 @@ from django.core.exceptions import ValidationError
 
 from accounts.models import CustomerAddress
 from accounts.validators import normalize_ethiopian_phone_number, validate_file_size
-from orders.models import LocationSource, RefundPayoutMethod
+from orders.models import ComplaintCategory, LocationSource, RefundPayoutMethod
 
 
 class MultipleFileInput(forms.ClearableFileInput):
     allow_multiple_selected = True
 
 
-IMAGE_MAX_SIZE_VALIDATOR = validate_file_size(5)
+EVIDENCE_MAX_SIZE_VALIDATOR = validate_file_size(5)
+ALLOWED_COMPLAINT_EVIDENCE_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "application/pdf",
+}
 
 
 class CheckoutForm(forms.Form):
@@ -79,28 +86,29 @@ class CheckoutForm(forms.Form):
 
 
 class RefundRequestForm(forms.Form):
-    reason = forms.CharField(widget=forms.Textarea(attrs={"rows": 3}), min_length=10)
-    payout_method = forms.ChoiceField(choices=RefundPayoutMethod.choices, initial=RefundPayoutMethod.GATEWAY)
-    photos = forms.FileField(
+    category = forms.ChoiceField(choices=ComplaintCategory.choices)
+    description = forms.CharField(widget=forms.Textarea(attrs={"rows": 3}), min_length=10)
+    evidence_files = forms.FileField(
         required=False,
         widget=MultipleFileInput(),
     )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["reason"].widget.attrs["class"] = "form-control"
-        self.fields["payout_method"].widget.attrs["class"] = "form-select"
-        self.fields["photos"].widget.attrs["class"] = "form-control"
+        self.fields["category"].widget.attrs["class"] = "form-select"
+        self.fields["description"].widget.attrs["class"] = "form-control"
+        self.fields["evidence_files"].widget.attrs["class"] = "form-control"
+        self.fields["evidence_files"].help_text = "Optional: upload up to 3 images or PDF documents."
 
-    def clean_photos(self):
-        files = self.files.getlist("photos")
+    def clean_evidence_files(self):
+        files = self.files.getlist("evidence_files")
         if len(files) > 3:
-            raise ValidationError("You can upload up to 3 refund photos.")
+            raise ValidationError("You can upload up to 3 complaint evidence files.")
         for item in files:
             content_type = getattr(item, "content_type", "") or ""
-            if not content_type.startswith("image/"):
-                raise ValidationError("Refund evidence must be image files.")
-            IMAGE_MAX_SIZE_VALIDATOR(item)
+            if content_type not in ALLOWED_COMPLAINT_EVIDENCE_TYPES:
+                raise ValidationError("Complaint evidence must be JPG, PNG, GIF, WEBP, or PDF files.")
+            EVIDENCE_MAX_SIZE_VALIDATOR(item)
         return files
 
 
@@ -118,5 +126,5 @@ class DeliveryFeedbackForm(forms.Form):
     def clean_photo(self):
         photo = self.cleaned_data.get("photo")
         if photo:
-            IMAGE_MAX_SIZE_VALIDATOR(photo)
+            EVIDENCE_MAX_SIZE_VALIDATOR(photo)
         return photo

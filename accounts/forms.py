@@ -263,7 +263,13 @@ class CompanyForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["admin"].queryset = User.objects.filter(role=UserRole.COMPANY_ADMIN)
+        admin_queryset = User.objects.filter(role=UserRole.COMPANY_ADMIN)
+        if self.instance.pk:
+            admin_queryset = admin_queryset.filter(managed_company=self.instance)
+        else:
+            admin_queryset = admin_queryset.none()
+        self.fields["admin"].queryset = admin_queryset
+        self.fields["admin"].help_text = "Primary company admins are created during company onboarding."
         for name, field in self.fields.items():
             field.widget.attrs["class"] = "form-control"
 
@@ -285,6 +291,14 @@ class CompanyForm(forms.ModelForm):
 
 
 class SystemCompanyRegistrationForm(forms.ModelForm):
+    premium_feature_enabled = forms.TypedChoiceField(
+        label="Enable Premium Customer Program?",
+        choices=(("true", "Yes"), ("false", "No")),
+        coerce=lambda value: str(value).lower() == "true",
+        empty_value=False,
+        widget=forms.RadioSelect,
+        initial="false",
+    )
     admin_first_name = forms.CharField(max_length=150)
     admin_last_name = forms.CharField(max_length=150)
     admin_email = forms.EmailField()
@@ -303,14 +317,70 @@ class SystemCompanyRegistrationForm(forms.ModelForm):
             "contact_email",
             "contact_phone",
             "efda_license_number",
+            "premium_feature_enabled",
+            "premium_streak_threshold",
+            "premium_discount_percent",
             "registration_document",
             "logo",
         )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        for field in self.fields.values():
-            field.widget.attrs["class"] = "form-control"
+        self.fields["premium_streak_threshold"].required = False
+        self.fields["premium_discount_percent"].required = False
+        self.fields["premium_streak_threshold"].label = "Consecutive Purchases Required"
+        self.fields["premium_discount_percent"].label = "Discount Percentage"
+        self.fields["premium_streak_threshold"].widget.attrs.update(
+            {
+                "class": "form-control",
+                "min": "1",
+                "step": "1",
+                "placeholder": "5",
+            }
+        )
+        self.fields["premium_discount_percent"].widget.attrs.update(
+            {
+                "class": "form-control",
+                "min": "1",
+                "max": "100",
+                "step": "0.01",
+                "placeholder": "15",
+            }
+        )
+        self.fields["premium_feature_enabled"].widget.attrs["class"] = "d-flex gap-3"
+        for name, field in self.fields.items():
+            if name not in {"premium_feature_enabled", "premium_streak_threshold", "premium_discount_percent"}:
+                field.widget.attrs["class"] = "form-control"
+
+    def clean(self):
+        cleaned_data = super().clean()
+        premium_enabled = cleaned_data.get("premium_feature_enabled")
+        threshold = cleaned_data.get("premium_streak_threshold")
+        discount_percent = cleaned_data.get("premium_discount_percent")
+
+        if premium_enabled:
+            if threshold in {None, ""}:
+                self.add_error("premium_streak_threshold", "Enter the consecutive purchases required.")
+            elif threshold < 1:
+                self.add_error("premium_streak_threshold", "Consecutive purchases required must be greater than zero.")
+
+            if discount_percent in {None, ""}:
+                self.add_error("premium_discount_percent", "Enter the discount percentage.")
+            elif discount_percent < 1 or discount_percent > 100:
+                self.add_error("premium_discount_percent", "Discount percentage must be between 1 and 100.")
+        else:
+            cleaned_data["premium_streak_threshold"] = (
+                self.instance.premium_streak_threshold
+                if self.instance.pk
+                else Company._meta.get_field("premium_streak_threshold").get_default()
+            )
+            cleaned_data["premium_discount_percent"] = (
+                self.instance.premium_discount_percent
+                if self.instance.pk
+                else Company._meta.get_field("premium_discount_percent").get_default()
+            )
+
+        return cleaned_data
 
     def clean_admin_email(self):
         email = self.cleaned_data["admin_email"].lower()
@@ -348,6 +418,10 @@ class SystemCompanyRegistrationForm(forms.ModelForm):
     @transaction.atomic
     def save(self, commit=True):
         company = super().save(commit=False)
+        if not commit:
+            return company
+
+        company.save()
         admin_user = User.objects.create_user(
             email=self.cleaned_data["admin_email"],
             password=self.cleaned_data["admin_password"],
@@ -355,15 +429,13 @@ class SystemCompanyRegistrationForm(forms.ModelForm):
             last_name=self.cleaned_data["admin_last_name"],
             phone_number=self.cleaned_data["admin_phone_number"],
             role=UserRole.COMPANY_ADMIN,
+            managed_company=company,
             is_active=False,
         )
         admin_user.email_verified_at = None
         admin_user.save(update_fields=["email_verified_at", "updated_at"])
         company.admin = admin_user
-        if commit:
-            company.save()
-            admin_user.managed_company = company
-            admin_user.save(update_fields=["managed_company", "updated_at"])
+        company.save(update_fields=["admin", "updated_at"])
         return company
 
 
@@ -384,41 +456,132 @@ class CompanyPremiumSettingsForm(forms.ModelForm):
             else:
                 field.widget.attrs["class"] = "form-control"
 
+    def clean(self):
+        cleaned_data = super().clean()
+        premium_enabled = cleaned_data.get("premium_feature_enabled")
+        threshold = cleaned_data.get("premium_streak_threshold")
+        discount_percent = cleaned_data.get("premium_discount_percent")
 
-class AgentForm(forms.ModelForm):
+        if premium_enabled:
+            if threshold in {None, ""}:
+                self.add_error("premium_streak_threshold", "Enter the consecutive purchases required.")
+            elif threshold < 1:
+                self.add_error("premium_streak_threshold", "Consecutive purchases required must be greater than zero.")
+
+            if discount_percent in {None, ""}:
+                self.add_error("premium_discount_percent", "Enter the discount percentage.")
+            elif discount_percent < 1 or discount_percent > 100:
+                self.add_error("premium_discount_percent", "Discount percentage must be between 1 and 100.")
+        else:
+            cleaned_data["premium_streak_threshold"] = self.instance.premium_streak_threshold
+            cleaned_data["premium_discount_percent"] = self.instance.premium_discount_percent
+
+        return cleaned_data
+
+
+class CompanyCreditPolicyForm(forms.ModelForm):
     class Meta:
-        model = Agent
-        fields = (
-            "company",
-            "name",
-            "description",
-            "location_name",
-            "address",
-            "latitude",
-            "longitude",
-            "service_radius_km",
-            "phone_number",
-            "is_active",
-            "is_accepting_orders",
-            "credit_limit",
-            "credit_period_days",
-            "admin",
-        )
+        model = Company
+        fields = ("allow_agent_credit", "maximum_credit_duration_days")
 
     def __init__(self, *args, **kwargs):
-        company = kwargs.pop("company", None)
         super().__init__(*args, **kwargs)
-        self.fields["admin"].queryset = User.objects.filter(role=UserRole.AGENT_MANAGER)
-        if company:
-            self.fields["company"].initial = company
-            self.fields["company"].queryset = Company.objects.filter(pk=company.pk)
-        self.fields["credit_limit"].required = False
-        self.fields["credit_period_days"].required = False
+        self.fields["allow_agent_credit"].label = "Allow Agent Credit?"
+        self.fields["allow_agent_credit"].required = False
+        self.fields["maximum_credit_duration_days"].label = "Maximum Credit Duration"
+        self.fields["maximum_credit_duration_days"].required = False
+        self.fields["maximum_credit_duration_days"].widget.attrs.update(
+            {
+                "class": "form-control",
+                "min": 1,
+                "step": 1,
+                "placeholder": "e.g. 14",
+            }
+        )
+        self.fields["allow_agent_credit"].widget.attrs["class"] = "form-check-input"
+
+    def clean(self):
+        cleaned_data = super().clean()
+        allow_agent_credit = cleaned_data.get("allow_agent_credit")
+        maximum_credit_duration_days = cleaned_data.get("maximum_credit_duration_days")
+
+        if allow_agent_credit:
+            if maximum_credit_duration_days in {None, ""}:
+                self.add_error("maximum_credit_duration_days", "Enter the maximum credit duration in days.")
+            elif maximum_credit_duration_days < 1:
+                self.add_error("maximum_credit_duration_days", "Maximum credit duration must be a positive integer.")
+        else:
+            cleaned_data["maximum_credit_duration_days"] = (
+                self.instance.maximum_credit_duration_days if self.instance.pk else 14
+            )
+
+        return cleaned_data
+
+
+class AgentForm(forms.Form):
+    manager_first_name = forms.CharField(max_length=150)
+    manager_last_name = forms.CharField(max_length=150)
+    manager_email = forms.EmailField()
+    manager_phone_number = forms.CharField(max_length=20)
+    manager_password1 = forms.CharField(
+        label="Manager Password",
+        strip=False,
+        widget=forms.PasswordInput(render_value=False),
+        help_text=password_validation.password_validators_help_text_html(),
+    )
+    manager_password2 = forms.CharField(
+        label="Confirm Manager Password",
+        strip=False,
+        widget=forms.PasswordInput(render_value=False),
+    )
+    name = forms.CharField(max_length=255)
+    description = forms.CharField(required=False, widget=forms.Textarea(attrs={"rows": 3}))
+    location_name = forms.CharField(max_length=255)
+    address = forms.CharField(required=False, widget=forms.Textarea(attrs={"rows": 3}))
+    latitude = forms.DecimalField(max_digits=9, decimal_places=6)
+    longitude = forms.DecimalField(max_digits=9, decimal_places=6)
+    service_radius_km = forms.DecimalField(max_digits=6, decimal_places=2, initial=15)
+    phone_number = forms.CharField(max_length=20, required=False)
+    is_active = forms.BooleanField(required=False, initial=True)
+    is_accepting_orders = forms.BooleanField(required=False, initial=True)
+    credit_limit = forms.DecimalField(max_digits=12, decimal_places=2, required=False, initial=0)
+    credit_period_days = forms.IntegerField(required=False, min_value=1, initial=14)
+
+    def __init__(self, *args, **kwargs):
+        self.company = kwargs.pop("company", None)
+        super().__init__(*args, **kwargs)
+        if self.company is None:
+            raise ValueError("AgentForm requires a company.")
+
+        self.fields["manager_first_name"].label = "Manager First Name"
+        self.fields["manager_last_name"].label = "Manager Last Name"
+        self.fields["manager_email"].label = "Manager Email"
+        self.fields["manager_phone_number"].label = "Manager Phone Number"
+        self.fields["manager_phone_number"].help_text = "This must be a brand-new account and cannot belong to another company."
+        self.fields["name"].label = "Agent Branch Name"
+        self.fields["phone_number"].label = "Branch Phone Number"
+
         for name, field in self.fields.items():
             if name in {"is_active", "is_accepting_orders"}:
                 field.widget.attrs["class"] = "form-check-input"
             else:
-                field.widget.attrs["class"] = "form-control"
+                existing_class = field.widget.attrs.get("class", "")
+                field.widget.attrs["class"] = f"{existing_class} form-control".strip()
+
+    def clean_manager_email(self):
+        email = (self.cleaned_data.get("manager_email") or "").strip().lower()
+        if User.objects.filter(email__iexact=email).exists():
+            raise ValidationError("An account with this email already exists.")
+        return email
+
+    def clean_manager_phone_number(self):
+        phone_number = normalize_required_phone(self.cleaned_data.get("manager_phone_number"))
+        if User.objects.filter(phone_number=phone_number).exists():
+            raise ValidationError("An account with this phone number already exists.")
+        return phone_number
+
+    def clean_phone_number(self):
+        return normalize_optional_phone(self.cleaned_data.get("phone_number"))
 
     def clean_credit_limit(self):
         return self.cleaned_data.get("credit_limit") or 0
@@ -426,8 +589,56 @@ class AgentForm(forms.ModelForm):
     def clean_credit_period_days(self):
         return self.cleaned_data.get("credit_period_days") or 14
 
-    def clean_phone_number(self):
-        return normalize_optional_phone(self.cleaned_data.get("phone_number"))
+    def clean(self):
+        cleaned_data = super().clean()
+        password1 = cleaned_data.get("manager_password1")
+        password2 = cleaned_data.get("manager_password2")
+
+        if password1 and password2 and password1 != password2:
+            self.add_error("manager_password2", "The two password fields must match.")
+
+        if password1:
+            candidate_user = User(
+                email=cleaned_data.get("manager_email"),
+                first_name=cleaned_data.get("manager_first_name"),
+                last_name=cleaned_data.get("manager_last_name"),
+                phone_number=cleaned_data.get("manager_phone_number"),
+                role=UserRole.AGENT_MANAGER,
+            )
+            try:
+                password_validation.validate_password(password1, user=candidate_user)
+            except ValidationError as exc:
+                self.add_error("manager_password1", exc)
+
+        return cleaned_data
+
+    @transaction.atomic
+    def save(self):
+        manager_user = User.objects.create_user(
+            email=self.cleaned_data["manager_email"],
+            password=self.cleaned_data["manager_password1"],
+            first_name=self.cleaned_data["manager_first_name"],
+            last_name=self.cleaned_data["manager_last_name"],
+            phone_number=self.cleaned_data["manager_phone_number"],
+            role=UserRole.AGENT_MANAGER,
+            is_active=True,
+        )
+        return Agent.objects.create(
+            company=self.company,
+            name=self.cleaned_data["name"],
+            description=self.cleaned_data["description"],
+            location_name=self.cleaned_data["location_name"],
+            address=self.cleaned_data["address"],
+            latitude=self.cleaned_data["latitude"],
+            longitude=self.cleaned_data["longitude"],
+            service_radius_km=self.cleaned_data["service_radius_km"],
+            phone_number=self.cleaned_data["phone_number"],
+            is_active=self.cleaned_data["is_active"],
+            is_accepting_orders=self.cleaned_data["is_accepting_orders"],
+            credit_limit=self.cleaned_data["credit_limit"],
+            credit_period_days=self.cleaned_data["credit_period_days"],
+            admin=manager_user,
+        )
 
 
 class DriverForm(forms.ModelForm):
@@ -588,6 +799,42 @@ class AgentBatchSaleRequestForm(forms.ModelForm):
         )
 
 
+class AgentInventoryPurchaseForm(forms.Form):
+    batch = forms.ModelChoiceField(queryset=CompanyBatch.objects.none())
+    quantity_requested = forms.IntegerField(min_value=1)
+    payment_type = forms.ChoiceField(
+        choices=(
+            (AgentBatchSalePaymentType.FULL, "Pay now with Chapa"),
+            (AgentBatchSalePaymentType.CREDIT, "Take on credit"),
+        )
+    )
+    requested_note = forms.CharField(required=False, widget=forms.Textarea(attrs={"rows": 3}))
+
+    def __init__(self, *args, **kwargs):
+        agent = kwargs.pop("agent", None)
+        super().__init__(*args, **kwargs)
+        self.fields["batch"].label = "Choose product batch"
+        self.fields["quantity_requested"].label = "Cases to buy"
+        self.fields["payment_type"].label = "How to pay"
+        self.fields["requested_note"].label = "Optional note"
+        self.fields["batch"].help_text = "Pick the exact company batch you want to restock from right now."
+        self.fields["quantity_requested"].help_text = "Enter the number of cases you want to move into branch inventory."
+        self.fields["payment_type"].help_text = "Pay now to continue to Chapa, or take the stock on credit if your company policy allows it."
+        self.fields["requested_note"].help_text = "Optional context for the company admin and branch audit trail."
+        if agent is not None:
+            self.fields["batch"].queryset = CompanyBatch.objects.filter(
+                company=agent.company,
+                status=CompanyBatchStatus.AVAILABLE,
+                unsold_cases_remaining__gt=0,
+            ).select_related("product")
+        self.fields["batch"].empty_label = "Select an available company batch"
+        for name, field in self.fields.items():
+            field.widget.attrs["class"] = "form-select" if name in {"batch", "payment_type"} else "form-control"
+        self.fields["quantity_requested"].widget.attrs.update({"min": "1", "step": "1", "placeholder": "e.g. 40"})
+        self.fields["payment_type"].initial = AgentBatchSalePaymentType.FULL
+        self.fields["batch"].label_from_instance = AgentBatchSaleRequestForm._label_batch_option
+
+
 class AgentBatchSaleApprovalForm(forms.Form):
     quantity_approved = forms.IntegerField(min_value=1)
     unit_price = forms.DecimalField(max_digits=10, decimal_places=2, min_value=0)
@@ -670,6 +917,29 @@ class DriverLocationForm(forms.ModelForm):
                 field.widget.attrs["class"] = "form-check-input"
             else:
                 field.widget.attrs["class"] = "form-control"
+
+    def clean(self):
+        cleaned_data = super().clean()
+        latitude = cleaned_data.get("latitude")
+        longitude = cleaned_data.get("longitude")
+        if latitude is not None and not (-90 <= float(latitude) <= 90):
+            raise ValidationError("Driver latitude must be between -90 and 90.")
+        if longitude is not None and not (-180 <= float(longitude) <= 180):
+            raise ValidationError("Driver longitude must be between -180 and 180.")
+        return cleaned_data
+
+
+class OrderTrackingUpdateForm(forms.Form):
+    order_id = forms.IntegerField(min_value=1)
+    driver_id = forms.IntegerField(min_value=1)
+    latitude = forms.DecimalField(max_digits=9, decimal_places=6)
+    longitude = forms.DecimalField(max_digits=9, decimal_places=6)
+    recorded_at = forms.DateTimeField(required=False)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field in self.fields.values():
+            field.widget.attrs["class"] = "form-control"
 
     def clean(self):
         cleaned_data = super().clean()
@@ -1004,8 +1274,18 @@ class SystemUserUpdateForm(forms.ModelForm):
         cleaned_data = super().clean()
         role = cleaned_data.get("role")
         managed_company = cleaned_data.get("managed_company")
+        try:
+            primary_company = self.instance.primary_managed_company
+        except Company.DoesNotExist:
+            primary_company = None
+
         if role == UserRole.COMPANY_ADMIN and managed_company is None:
             self.add_error("managed_company", "Company admins must be assigned to exactly one company.")
+        if primary_company is not None:
+            if role != UserRole.COMPANY_ADMIN:
+                self.add_error("role", "Reassign this company's primary admin before changing the user's role.")
+            elif managed_company is not None and managed_company.pk != primary_company.pk:
+                self.add_error("managed_company", "Primary company admins must stay assigned to their company.")
         if role != UserRole.COMPANY_ADMIN:
             cleaned_data["managed_company"] = None
         return cleaned_data

@@ -77,7 +77,11 @@
                             <td>{{ order.total }}</td>
                             <td class="text-end">
                                 <a class="btn btn-sm btn-outline-primary" href="{% url 'orders:detail' order.order_number %}">Details</a>
-                                <a class="btn btn-sm btn-outline-dark" href="{% url 'orders:tracking' order.order_number %}">Track</a>
+                                {% if order.status == "out_for_delivery" or order.status == "arrived" or order.status == "delivered" %}
+                                    <a class="btn btn-sm btn-outline-dark" href="{% url 'orders:tracking' order.order_number %}">Track</a>
+                                {% else %}
+                                    <button class="btn btn-sm btn-outline-secondary" type="button" disabled>Tracking Pending</button>
+                                {% endif %}
                                 {% if order.status == "delivered" %}
                                     <form method="post" action="{% url 'orders:reorder' order.order_number %}" class="d-inline">
                                         {% csrf_token %}

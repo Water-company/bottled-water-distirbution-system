@@ -1,26 +1,36 @@
 import uuid
 import json
+import math
 from decimal import Decimal
 from datetime import timezone as dt_timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.urls import reverse
 from django.utils import timezone
 
 from accounts.services import get_company_admin_users
+from core.models import DriverLocation
 from core.services import notify_user
 from core.policies import get_cart_pricing_summary, quantize_money
 from cart.services import add_product_to_cart, get_or_create_cart
-from catalog.models import Agent, AgentStock, InventoryBatch, InventoryTransactionType
+from catalog.models import Agent, AgentStock, CompanyRefundPolicyTier, InventoryBatch, InventoryTransactionType, haversine_km
 from catalog.services import create_inventory_transaction
 from orders.models import (
     AgentRequestStatus,
+    Complaint,
+    ComplaintAgentResponseType,
+    ComplaintCategory,
+    ComplaintEvidence,
+    ComplaintResolutionType,
+    ComplaintStatus,
+    ComplaintStatusHistory,
     DeliveryFeedback,
     DeliveryIssue,
     DeliveryIssueType,
@@ -28,6 +38,7 @@ from orders.models import (
     Order,
     OrderAgentRequest,
     OrderItem,
+    OrderLiveTracking,
     OrderStatus,
     Payment,
     PaymentProvider,
@@ -36,8 +47,12 @@ from orders.models import (
     RefundEvidence,
     RefundPayoutMethod,
     RefundRequestStatus,
+    RefundRequestStatusHistory,
     RefundRequestType,
+    RefundTransaction,
+    RefundTransactionStatus,
     OrderStatusHistory,
+    SupportActionLog,
 )
 from orders.qr_tokens import QRTokenError, build_customer_token_id, decode_signed_qr_token
 
@@ -60,6 +75,275 @@ class QRConfirmationError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+def _get_or_create_live_tracking(order):
+    tracking, _ = OrderLiveTracking.objects.get_or_create(
+        order=order,
+        defaults={"driver": order.assigned_driver},
+    )
+    return tracking
+
+
+def _sync_driver_location(driver_user, latitude, longitude, is_online=True):
+    if latitude is None or longitude is None:
+        return None
+    location, _ = DriverLocation.objects.update_or_create(
+        driver_user=driver_user,
+        defaults={
+            "latitude": latitude,
+            "longitude": longitude,
+            "is_online": is_online,
+        },
+    )
+    return location
+
+
+def _driver_has_other_active_delivery(driver, excluded_order_id=None):
+    if not driver:
+        return False
+    queryset = OrderLiveTracking.objects.filter(
+        driver=driver,
+        is_active=True,
+        order__status=OrderStatus.OUT_FOR_DELIVERY,
+    )
+    if excluded_order_id:
+        queryset = queryset.exclude(order_id=excluded_order_id)
+    return queryset.exists()
+
+
+def _set_driver_online_state(driver_user, is_online):
+    location = getattr(driver_user, "driver_location", None)
+    if not location:
+        return None
+    if location.is_online == is_online:
+        return location
+    location.is_online = is_online
+    location.save(update_fields=["is_online", "updated_at"])
+    return location
+
+
+def _estimate_distance_and_eta(order, latitude, longitude):
+    if latitude is None or longitude is None or order.latitude is None or order.longitude is None:
+        return None, None
+    distance_km = Decimal(
+        str(
+            haversine_km(
+                float(latitude),
+                float(longitude),
+                float(order.latitude),
+                float(order.longitude),
+            )
+        )
+    )
+    distance_meters = (distance_km * Decimal("1000")).quantize(Decimal("0.01"))
+    average_speed_kmh = getattr(settings, "ETA_AVERAGE_SPEED_KMH", Decimal("25")) or Decimal("25")
+    speed = Decimal(str(average_speed_kmh))
+    if speed <= 0:
+        eta_minutes = None
+    elif distance_km <= 0:
+        eta_minutes = 0
+    else:
+        eta_minutes = max(1, int(math.ceil((float(distance_km) / float(speed)) * 60)))
+    return distance_meters, eta_minutes
+
+
+def get_delivery_route_snapshot(origin_latitude, origin_longitude, destination_latitude, destination_longitude):
+    if (
+        origin_latitude in (None, "")
+        or origin_longitude in (None, "")
+        or destination_latitude in (None, "")
+        or destination_longitude in (None, "")
+    ):
+        return {
+            "route_points": [],
+            "distance_meters": None,
+            "eta_minutes": None,
+            "source": "unavailable",
+        }
+
+    start_latitude = float(origin_latitude)
+    start_longitude = float(origin_longitude)
+    end_latitude = float(destination_latitude)
+    end_longitude = float(destination_longitude)
+
+    base_url = getattr(settings, "LIVE_TRACKING_ROUTING_BASE_URL", "https://router.project-osrm.org").rstrip("/")
+    route_url = (
+        f"{base_url}/route/v1/driving/"
+        f"{start_longitude},{start_latitude};{end_longitude},{end_latitude}"
+        "?overview=full&geometries=geojson&steps=false"
+    )
+    request = Request(
+        route_url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "AquaFlow Live Tracking/1.0",
+        },
+    )
+
+    try:
+        with urlopen(request, timeout=4) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        route = (payload.get("routes") or [None])[0]
+        geometry = (route or {}).get("geometry") or {}
+        coordinates = geometry.get("coordinates") or []
+        route_points = [
+            [float(latitude), float(longitude)]
+            for longitude, latitude in coordinates
+            if longitude is not None and latitude is not None
+        ]
+        distance_value = route.get("distance") if route else None
+        duration_seconds = route.get("duration") if route else None
+        if route_points and distance_value is not None and duration_seconds is not None:
+            return {
+                "route_points": route_points,
+                "distance_meters": round(float(distance_value), 2),
+                "eta_minutes": max(1, int(math.ceil(float(duration_seconds) / 60))),
+                "source": "road",
+            }
+    except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError):
+        pass
+
+    fallback_distance_km = haversine_km(
+        start_latitude,
+        start_longitude,
+        end_latitude,
+        end_longitude,
+    )
+    fallback_distance_meters = round(float(fallback_distance_km) * 1000, 2)
+    average_speed_kmh = max(float(getattr(settings, "ETA_AVERAGE_SPEED_KMH", 25)), 1.0)
+    fallback_eta_minutes = max(1, int(math.ceil((fallback_distance_km / average_speed_kmh) * 60)))
+    return {
+        "route_points": [
+            [start_latitude, start_longitude],
+            [end_latitude, end_longitude],
+        ],
+        "distance_meters": fallback_distance_meters,
+        "eta_minutes": fallback_eta_minutes,
+        "source": "direct",
+    }
+
+
+def start_order_live_tracking(order, driver_user=None):
+    if driver_user is not None:
+        _ensure_assigned_driver(order, driver_user)
+    if not order.assigned_driver:
+        raise ValidationError("This delivery does not have an assigned driver yet.")
+    if order.status != OrderStatus.OUT_FOR_DELIVERY:
+        raise ValidationError("Live tracking only becomes active once the order is out for delivery.")
+
+    now = timezone.now()
+    tracking = _get_or_create_live_tracking(order)
+    tracking.driver = order.assigned_driver
+    tracking.is_active = True
+    tracking.is_paused = False
+    tracking.started_at = tracking.started_at or order.out_for_delivery_at or now
+    tracking.paused_at = None
+    tracking.stopped_at = None
+    tracking.save(
+        update_fields=[
+            "driver",
+            "is_active",
+            "is_paused",
+            "started_at",
+            "paused_at",
+            "stopped_at",
+            "updated_at",
+        ]
+    )
+    return tracking
+
+
+def _stop_order_live_tracking(order, stopped_at=None, driver=None):
+    tracking = getattr(order, "live_tracking", None)
+    if tracking is None:
+        tracking = OrderLiveTracking.objects.filter(order=order).first()
+    if not tracking:
+        return None
+
+    tracking.driver = driver or tracking.driver or order.assigned_driver
+    tracking.is_active = False
+    tracking.is_paused = False
+    tracking.stopped_at = stopped_at or timezone.now()
+    tracking.save(update_fields=["driver", "is_active", "is_paused", "stopped_at", "updated_at"])
+
+    driver_obj = tracking.driver
+    if (
+        driver_obj
+        and driver_obj.user_id
+        and not _driver_has_other_active_delivery(driver_obj, excluded_order_id=order.id)
+    ):
+        _set_driver_online_state(driver_obj.user, False)
+    return tracking
+
+
+def pause_order_live_tracking(order, driver_user):
+    _ensure_assigned_driver(order, driver_user)
+    if order.status != OrderStatus.OUT_FOR_DELIVERY:
+        raise ValidationError("Live tracking can only be paused while the order is out for delivery.")
+    tracking = start_order_live_tracking(order, driver_user=driver_user)
+    if tracking.is_paused:
+        return tracking
+
+    tracking.is_paused = True
+    tracking.paused_at = timezone.now()
+    tracking.save(update_fields=["is_paused", "paused_at", "updated_at"])
+    _set_driver_online_state(driver_user, False)
+    return tracking
+
+
+def resume_order_live_tracking(order, driver_user):
+    _ensure_assigned_driver(order, driver_user)
+    if order.status != OrderStatus.OUT_FOR_DELIVERY:
+        raise ValidationError("Live tracking can only be resumed while the order is out for delivery.")
+    tracking = start_order_live_tracking(order, driver_user=driver_user)
+    if not tracking.is_paused:
+        return tracking
+
+    tracking.is_paused = False
+    tracking.resumed_at = timezone.now()
+    tracking.save(update_fields=["is_paused", "resumed_at", "updated_at"])
+    _set_driver_online_state(driver_user, True)
+    return tracking
+
+
+def update_order_live_tracking(order, driver_user, latitude, longitude, recorded_at=None):
+    _ensure_assigned_driver(order, driver_user)
+    if order.status != OrderStatus.OUT_FOR_DELIVERY:
+        raise ValidationError("GPS updates are only accepted while the order is out for delivery.")
+
+    tracking = start_order_live_tracking(order, driver_user=driver_user)
+    if tracking.is_paused:
+        raise ValidationError("Live tracking is paused for this delivery.")
+
+    event_time = recorded_at or timezone.now()
+    distance_meters, eta_minutes = _estimate_distance_and_eta(order, latitude, longitude)
+
+    tracking.driver = order.assigned_driver
+    tracking.latitude = latitude
+    tracking.longitude = longitude
+    tracking.recorded_at = event_time
+    tracking.last_distance_meters = distance_meters
+    tracking.last_eta_minutes = eta_minutes
+    tracking.save(
+        update_fields=[
+            "driver",
+            "latitude",
+            "longitude",
+            "recorded_at",
+            "last_distance_meters",
+            "last_eta_minutes",
+            "updated_at",
+        ]
+    )
+    _sync_driver_location(driver_user, latitude, longitude, is_online=True)
+
+    arrival_threshold = Decimal(str(getattr(settings, "DELIVERY_ARRIVAL_THRESHOLD_METERS", 30)))
+    has_arrived = distance_meters is not None and distance_meters <= arrival_threshold
+    if has_arrived:
+        mark_order_arrived(order, driver_user)
+        tracking.refresh_from_db()
+    return tracking, has_arrived
 
 
 def get_cart_company(cart):
@@ -692,6 +976,364 @@ def chapa_request(method, path, payload=None):
         raise ValidationError("Unable to connect to Chapa. Please try again.") from exc
 
 
+def _minutes_since(moment):
+    if not moment:
+        return 0
+    elapsed_seconds = max((timezone.now() - moment).total_seconds(), 0)
+    return int(math.ceil(elapsed_seconds / 60))
+
+
+def _record_refund_status_history(refund_request, title, *, actor=None, note="", metadata=None, status=None):
+    return RefundRequestStatusHistory.objects.create(
+        refund_request=refund_request,
+        status=status or refund_request.status,
+        title=title,
+        note=note,
+        changed_by=actor,
+        metadata=metadata or {},
+    )
+
+
+def _record_complaint_status_history(complaint, title, *, actor=None, note="", metadata=None, status=None):
+    return ComplaintStatusHistory.objects.create(
+        complaint=complaint,
+        status=status or complaint.status,
+        title=title,
+        note=note,
+        changed_by=actor,
+        metadata=metadata or {},
+    )
+
+
+def _log_support_action(
+    order,
+    action,
+    *,
+    actor=None,
+    refund_request=None,
+    complaint=None,
+    details="",
+    outcome="",
+    metadata=None,
+):
+    return SupportActionLog.objects.create(
+        order=order,
+        refund_request=refund_request,
+        complaint=complaint,
+        actor=actor,
+        action=action,
+        details=details,
+        outcome=outcome,
+        metadata=metadata or {},
+    )
+
+
+def _is_support_actor_authorized(order, actor):
+    if not actor:
+        return False
+    if getattr(actor, "is_system_admin", False):
+        return True
+    if actor.pk == order.company.admin_id:
+        return True
+    if actor.pk == getattr(order.selected_agent, "admin_id", None):
+        return True
+    return any(admin.pk == actor.pk for admin in get_company_admin_users(order.company))
+
+
+def _ensure_support_actor_is_authorized(order, actor, action_label):
+    if not _is_support_actor_authorized(order, actor):
+        raise ValidationError(f"You are not authorized to {action_label} for this order.")
+
+
+def _is_company_admin_for_order(order, actor):
+    if not actor:
+        return False
+    if actor.pk == order.company.admin_id:
+        return True
+    return any(admin.pk == actor.pk for admin in get_company_admin_users(order.company))
+
+
+def _ensure_agent_manager_can_respond(complaint, actor):
+    if not actor or actor.pk != getattr(complaint.order.selected_agent, "admin_id", None):
+        raise ValidationError("Only the assigned agent manager can respond to this complaint.")
+
+
+def _ensure_company_admin_can_decide(complaint, actor):
+    if not _is_company_admin_for_order(complaint.order, actor):
+        raise ValidationError("Only a company admin can decide this complaint.")
+
+
+def _ensure_system_admin_can_decide(complaint, actor):
+    if not actor or not getattr(actor, "is_system_admin", False):
+        raise ValidationError("Only a system admin can decide this appeal.")
+
+
+def _ensure_refund_decision_actor_is_authorized(order, actor, action_label):
+    if getattr(actor, "is_system_admin", False):
+        return
+    if _is_company_admin_for_order(order, actor):
+        return
+    raise ValidationError(f"You are not authorized to {action_label} for this order.")
+
+
+def _notify_system_admins(title, message, *, link=""):
+    User = get_user_model()
+    for system_admin in User.objects.filter(is_system_admin=True, is_active=True):
+        notify_user(system_admin, title, message, link=link)
+
+
+def _get_refund_policy_tier(company, elapsed_minutes):
+    return (
+        company.refund_policy_tiers.filter(start_minutes__lte=elapsed_minutes)
+        .filter(Q(end_minutes__isnull=True) | Q(end_minutes__gte=elapsed_minutes))
+        .order_by("start_minutes", "id")
+        .first()
+    )
+
+
+def _get_cancellation_refund_breakdown(order, payment):
+    company = order.company
+    if order.status == OrderStatus.OUT_FOR_DELIVERY:
+        return {"eligible": False, "reason": "Orders cannot be cancelled after they are marked out for delivery."}
+    if order.status == OrderStatus.DELIVERED:
+        return {"eligible": False, "reason": "Delivered orders cannot be cancelled. Please use the complaint module instead."}
+    if order.status in {OrderStatus.REJECTED, OrderStatus.CANCELLED}:
+        return {"eligible": False, "reason": "This order can no longer be cancelled from the customer portal."}
+    if not company.refunds_enabled:
+        return {"eligible": False, "reason": "Automatic refunds are disabled for this company."}
+    if company.maximum_cancellation_period_minutes < 1:
+        return {"eligible": False, "reason": "The company refund policy is not configured correctly."}
+
+    reference_time = payment.paid_at or payment.created_at or timezone.now()
+    elapsed_minutes = _minutes_since(reference_time)
+    if elapsed_minutes > company.maximum_cancellation_period_minutes:
+        return {
+            "eligible": False,
+            "reason": "The allowed cancellation period has already passed for this order.",
+            "elapsed_minutes": elapsed_minutes,
+        }
+
+    tier = _get_refund_policy_tier(company, elapsed_minutes)
+    if tier is None:
+        return {
+            "eligible": False,
+            "reason": "No refund rule matches the elapsed payment time for this order.",
+            "elapsed_minutes": elapsed_minutes,
+        }
+
+    payment_amount = quantize_money(payment.amount)
+    refund_percent = Decimal(tier.refund_percent)
+    refund_amount = quantize_money(payment_amount * refund_percent / Decimal("100"))
+    fee_amount = quantize_money(payment_amount - refund_amount)
+    fee_percent = quantize_money(Decimal("100") - refund_percent)
+    return {
+        "eligible": True,
+        "elapsed_minutes": elapsed_minutes,
+        "refund_percent": refund_percent,
+        "refund_amount": refund_amount,
+        "fee_percent": fee_percent,
+        "fee_amount": fee_amount,
+        "tier": tier,
+    }
+
+
+def _update_payment_after_refund(payment, amount, payload_key, payload_data):
+    amount = quantize_money(amount)
+    if amount <= 0:
+        raise ValidationError("Refund amount must be greater than zero.")
+
+    refunded_total = quantize_money(
+        payment.refund_transactions.filter(status=RefundTransactionStatus.SUCCEEDED)
+        .aggregate(total=Sum("amount"))
+        .get("total")
+        or Decimal("0.00")
+    )
+    payment.status = (
+        PaymentStatus.REFUNDED
+        if refunded_total >= quantize_money(payment.amount)
+        else PaymentStatus.PARTIALLY_REFUNDED
+    )
+    payment.raw_payload = {
+        **(payment.raw_payload or {}),
+        payload_key: payload_data,
+    }
+    payment.save(update_fields=["status", "raw_payload", "updated_at"])
+    return payment
+
+
+def _process_gateway_refund(payment, amount, processed_by, refund_request=None, complaint=None, note=""):
+    amount = quantize_money(amount)
+    if amount <= 0:
+        raise ValidationError("Refund amount must be greater than zero.")
+    if payment.provider != PaymentProvider.CHAPA:
+        raise ValidationError("Only Chapa payments can be refunded automatically.")
+
+    refund_path = getattr(settings, "CHAPA_REFUND_PATH", "/refund")
+    payload = {
+        "tx_ref": payment.reference,
+        "amount": str(amount),
+        "currency": getattr(settings, "CHAPA_CURRENCY", "ETB"),
+        "reason": note or "Order refund",
+    }
+    refund_transaction = RefundTransaction.objects.create(
+        refund_request=refund_request,
+        complaint=complaint,
+        payment=payment,
+        provider=payment.provider,
+        amount=amount,
+        status=RefundTransactionStatus.PENDING,
+        provider_reference=payment.reference,
+        request_payload=payload,
+        processed_by=processed_by,
+        processed_at=timezone.now(),
+    )
+
+    try:
+        response = chapa_request("POST", refund_path, payload)
+    except ValidationError as exc:
+        error_message = exc.messages[0] if getattr(exc, "messages", None) else "Unable to process the refund through Chapa."
+        refund_transaction.status = RefundTransactionStatus.FAILED
+        refund_transaction.failure_reason = error_message
+        refund_transaction.response_payload = {"message": error_message}
+        refund_transaction.save(update_fields=["status", "failure_reason", "response_payload", "updated_at"])
+        raise ValidationError(error_message) from exc
+
+    upstream_status = (response.get("status") or "").lower()
+    data = response.get("data") or {}
+    provider_status = (data.get("status") or "").lower()
+    succeeded = upstream_status == "success" and provider_status not in {"failed", "error"}
+
+    refund_transaction.response_payload = response
+    refund_transaction.provider_reference = (
+        data.get("reference")
+        or data.get("tx_ref")
+        or data.get("id")
+        or refund_transaction.provider_reference
+    )
+    if not succeeded:
+        refund_transaction.status = RefundTransactionStatus.FAILED
+        refund_transaction.failure_reason = (
+            response.get("message")
+            or data.get("message")
+            or "Chapa did not confirm the refund request."
+        )
+        refund_transaction.save(
+            update_fields=["status", "failure_reason", "response_payload", "provider_reference", "updated_at"]
+        )
+        raise ValidationError(refund_transaction.failure_reason)
+
+    refund_transaction.status = RefundTransactionStatus.SUCCEEDED
+    refund_transaction.failure_reason = ""
+    refund_transaction.save(
+        update_fields=["status", "failure_reason", "response_payload", "provider_reference", "updated_at"]
+    )
+    return refund_transaction
+
+
+def _record_wallet_refund(payment, amount, processed_by, refund_request=None, complaint=None, note=""):
+    amount = quantize_money(amount)
+    if amount <= 0:
+        raise ValidationError("Refund amount must be greater than zero.")
+    return RefundTransaction.objects.create(
+        refund_request=refund_request,
+        complaint=complaint,
+        payment=payment,
+        provider=payment.provider,
+        amount=amount,
+        status=RefundTransactionStatus.SUCCEEDED,
+        provider_reference=f"WALLET-{payment.order.order_number}",
+        request_payload={"method": RefundPayoutMethod.WALLET_CREDIT, "note": note},
+        response_payload={"status": "success", "method": RefundPayoutMethod.WALLET_CREDIT},
+        processed_by=processed_by,
+        processed_at=timezone.now(),
+    )
+
+
+def _resolution_type_for_amount(payment, amount):
+    if amount >= quantize_money(payment.amount):
+        return ComplaintResolutionType.FULL_REFUND
+    return ComplaintResolutionType.PARTIAL_REFUND
+
+
+def _sync_complaint_from_refund_request(refund_request):
+    complaint = getattr(refund_request, "complaint", None)
+    if complaint is None:
+        return None
+
+    payment = getattr(refund_request.order, "payment", None)
+    approved_amount = quantize_money(refund_request.approved_amount or Decimal("0.00"))
+    update_fields = ["updated_at", "refund_amount", "resolution_note"]
+
+    complaint.refund_amount = approved_amount
+    complaint.resolution_note = refund_request.resolution_note
+    if payment and approved_amount > 0 and complaint.resolution_type in {
+        ComplaintResolutionType.FULL_REFUND,
+        ComplaintResolutionType.PARTIAL_REFUND,
+        "",
+    }:
+        complaint.resolution_type = _resolution_type_for_amount(payment, approved_amount)
+        update_fields.append("resolution_type")
+    if refund_request.status == RefundRequestStatus.PROCESSED:
+        complaint.resolved_at = refund_request.processed_at or timezone.now()
+        update_fields.append("resolved_at")
+    if refund_request.status == RefundRequestStatus.FAILED and refund_request.failure_reason:
+        complaint.resolution_note = f"{refund_request.resolution_note}\nProcessing note: {refund_request.failure_reason}".strip()
+    complaint.save(update_fields=list(dict.fromkeys(update_fields)))
+    return complaint
+
+
+def _create_or_update_complaint_refund_request(
+    complaint,
+    *,
+    payout_method=RefundPayoutMethod.GATEWAY,
+    requested_amount=None,
+):
+    requested_amount = quantize_money(
+        requested_amount
+        if requested_amount is not None
+        else getattr(getattr(complaint.order, "payment", None), "amount", complaint.order.total)
+    )
+    refund_request = complaint.linked_refund_request
+    if refund_request is None:
+        refund_request = RefundRequest.objects.create(
+            order=complaint.order,
+            requested_by=complaint.requested_by,
+            request_type=RefundRequestType.SERVICE_ISSUE,
+            payout_method=payout_method,
+            reason=f"{complaint.get_category_display()}: {complaint.description}",
+            requested_amount=requested_amount,
+        )
+        complaint.linked_refund_request = refund_request
+        complaint.save(update_fields=["linked_refund_request", "updated_at"])
+    return refund_request
+
+
+def _set_refund_request_approved(refund_request, *, reviewed_by, approved_amount, resolution_note, payout_method):
+    approved_amount = quantize_money(approved_amount)
+    refund_request.status = RefundRequestStatus.APPROVED
+    refund_request.payout_method = payout_method
+    refund_request.requested_amount = approved_amount
+    refund_request.approved_amount = approved_amount
+    refund_request.reviewed_by = reviewed_by
+    refund_request.reviewed_at = timezone.now()
+    refund_request.resolution_note = resolution_note
+    refund_request.failure_reason = ""
+    refund_request.save(
+        update_fields=[
+            "status",
+            "payout_method",
+            "requested_amount",
+            "approved_amount",
+            "reviewed_by",
+            "reviewed_at",
+            "resolution_note",
+            "failure_reason",
+            "updated_at",
+        ]
+    )
+    return refund_request
+
+
 @transaction.atomic
 def assign_driver(order, driver):
     if order.selected_agent_id != driver.agent_id:
@@ -701,8 +1343,11 @@ def assign_driver(order, driver):
     if order.status not in ACTIVE_DELIVERY_STATUSES | {OrderStatus.PAID}:
         raise ValidationError("A driver can only be assigned after payment and before delivery completion.")
 
-    previous_driver_user = order.assigned_driver.user if order.assigned_driver and order.assigned_driver.user_id != driver.user_id else None
+    previous_driver = order.assigned_driver
+    previous_driver_user = previous_driver.user if previous_driver and previous_driver.user_id != driver.user_id else None
     now = timezone.now()
+    if previous_driver and previous_driver.pk != driver.pk:
+        _stop_order_live_tracking(order, stopped_at=now, driver=previous_driver)
     order.assigned_driver = driver
     order.status = OrderStatus.DRIVER_ASSIGNED
     order.driver_assigned_at = order.driver_assigned_at or now
@@ -835,6 +1480,7 @@ def start_delivery(order, driver_user):
     order.status = OrderStatus.OUT_FOR_DELIVERY
     order.out_for_delivery_at = now
     order.save()
+    start_order_live_tracking(order, driver_user=driver_user)
     notify_user(
         order.customer,
         "Delivery started",
@@ -863,6 +1509,7 @@ def mark_order_arrived(order, driver_user):
     order.status = OrderStatus.ARRIVED
     order.arrived_at = timezone.now()
     order.save()
+    _stop_order_live_tracking(order, stopped_at=order.arrived_at, driver=order.assigned_driver)
     notify_user(
         order.customer,
         "Driver arrived",
@@ -1029,6 +1676,7 @@ def _mark_order_delivered(order, confirmation, verified_by_user):
     if not order.arrived_at:
         order.arrived_at = now
     order.save()
+    _stop_order_live_tracking(order, stopped_at=now, driver=order.assigned_driver)
     if order.assigned_driver:
         order.assigned_driver.availability_status = order.assigned_driver.AvailabilityStatus.AVAILABLE
         order.assigned_driver.save(update_fields=["availability_status", "updated_at"])
@@ -1173,13 +1821,14 @@ def complete_delivery_and_deduct_stock(order, otp_code, qr_token, verified_by_us
 def cancel_order(order, requested_by, reason=""):
     if order.status == OrderStatus.CANCELLED:
         raise ValidationError("This order has already been cancelled.")
-    if order.status in {OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED, OrderStatus.REJECTED}:
+    if order.status == OrderStatus.OUT_FOR_DELIVERY:
+        raise ValidationError("Orders cannot be cancelled after they are marked out for delivery.")
+    if order.status == OrderStatus.DELIVERED:
+        raise ValidationError("Delivered orders cannot be cancelled. Please use the complaint module instead.")
+    if order.status == OrderStatus.REJECTED:
         raise ValidationError("This order can no longer be cancelled from the customer portal.")
-    if order.refund_requests.filter(
-        request_type=RefundRequestType.CANCELLATION,
-        status=RefundRequestStatus.APPROVED,
-    ).exists():
-        raise ValidationError("A cancellation has already been processed for this order.")
+    if order.refund_requests.filter(request_type=RefundRequestType.CANCELLATION).exists():
+        raise ValidationError("A cancellation has already been recorded for this order.")
 
     payment = getattr(order, "payment", None)
     paid_statuses = {PaymentStatus.PAID, PaymentStatus.PARTIALLY_REFUNDED}
@@ -1187,40 +1836,24 @@ def cancel_order(order, requested_by, reason=""):
     fee_percent = Decimal("0.00")
     fee_amount = Decimal("0.00")
     approved_amount = Decimal("0.00")
+    cancellation_note = "Customer cancelled the order."
 
     if is_paid:
-        if not order.cancellation_window_open:
-            raise ValidationError("The cancellation window has passed for this paid order.")
-        fee_percent = Decimal(settings.ORDER_CANCELLATION_FEE_PERCENT)
-        fee_amount = quantize_money(payment.amount * fee_percent / Decimal("100"))
-        approved_amount = quantize_money(payment.amount - fee_amount)
-        payment.status = PaymentStatus.PARTIALLY_REFUNDED if approved_amount < payment.amount else PaymentStatus.REFUNDED
-        payment.raw_payload = {
-            **(payment.raw_payload or {}),
-            "cancellation_refund": {
-                "fee_percent": str(fee_percent),
-                "fee_amount": str(fee_amount),
-                "approved_amount": str(approved_amount),
-                "processed_at": timezone.now().isoformat(),
-                "payout_method": RefundPayoutMethod.GATEWAY,
-            },
-        }
-        payment.save(update_fields=["status", "raw_payload", "updated_at"])
+        refund_breakdown = _get_cancellation_refund_breakdown(order, payment)
+        if not refund_breakdown["eligible"]:
+            raise ValidationError(refund_breakdown["reason"])
+        fee_percent = quantize_money(refund_breakdown["fee_percent"])
+        fee_amount = refund_breakdown["fee_amount"]
+        approved_amount = refund_breakdown["refund_amount"]
+        elapsed_minutes = refund_breakdown.get("elapsed_minutes", 0)
+        cancellation_note = (
+            f"Customer cancelled the order {elapsed_minutes} minute(s) after payment. "
+            f"Approved refund {approved_amount} after deducting {fee_amount} ({fee_percent}%)."
+        )
     elif payment and payment.status == PaymentStatus.PENDING:
         payment.status = PaymentStatus.CANCELLED
         payment.checkout_url = ""
         payment.save(update_fields=["status", "checkout_url", "updated_at"])
-
-    release_reserved_stock(order)
-    order.status = OrderStatus.CANCELLED
-    order.assigned_driver = None
-    order.save()
-    cancellation_note = "Customer cancelled the order."
-    if is_paid:
-        cancellation_note = (
-            f"Customer cancelled within the refund window. Refunded {approved_amount} after a {fee_percent}% cancellation fee."
-        )
-    _set_latest_status_note(order, cancellation_note)
 
     refund_request = RefundRequest.objects.create(
         order=order,
@@ -1239,6 +1872,92 @@ def cancel_order(order, requested_by, reason=""):
         processed_by=requested_by,
         resolution_note=cancellation_note,
     )
+    _record_refund_status_history(
+        refund_request,
+        "Refund Requested",
+        actor=requested_by,
+        note=reason,
+        metadata={
+            "request_type": refund_request.request_type,
+            "requested_amount": str(refund_request.requested_amount),
+            "order_number": order.order_number,
+        },
+        status=RefundRequestStatus.PENDING,
+    )
+    _record_refund_status_history(
+        refund_request,
+        "Approved",
+        actor=requested_by,
+        note=cancellation_note,
+        metadata={"approved_amount": str(approved_amount), "fee_amount": str(fee_amount)},
+        status=RefundRequestStatus.APPROVED,
+    )
+
+    if is_paid and approved_amount > 0:
+        refund_transaction = _process_gateway_refund(
+            payment,
+            approved_amount,
+            requested_by,
+            refund_request=refund_request,
+            note=f"Cancellation refund for {order.order_number}",
+        )
+        _update_payment_after_refund(
+            payment,
+            approved_amount,
+            "cancellation_refund",
+            {
+                "refund_percent": str(quantize_money(Decimal("100.00") - fee_percent)),
+                "fee_percent": str(fee_percent),
+                "fee_amount": str(fee_amount),
+                "approved_amount": str(approved_amount),
+                "processed_at": timezone.now().isoformat(),
+                "elapsed_minutes": refund_breakdown.get("elapsed_minutes", 0),
+                "payout_method": RefundPayoutMethod.GATEWAY,
+                "transaction_id": refund_transaction.pk,
+                "provider_reference": refund_transaction.provider_reference,
+            },
+        )
+
+    _record_refund_status_history(
+        refund_request,
+        "Refund Processed",
+        actor=requested_by,
+        note=cancellation_note,
+        metadata={"processed_amount": str(approved_amount), "payout_method": refund_request.payout_method},
+        status=RefundRequestStatus.PROCESSED,
+    )
+    _record_refund_status_history(
+        refund_request,
+        "Completed",
+        actor=requested_by,
+        note="Cancellation workflow completed.",
+        metadata={"final_status": refund_request.status},
+        status=RefundRequestStatus.PROCESSED,
+    )
+    _log_support_action(
+        order,
+        "order_cancelled",
+        actor=requested_by,
+        refund_request=refund_request,
+        details=reason or "Customer cancelled the order.",
+        outcome="completed",
+        metadata={
+            "request_type": refund_request.request_type,
+            "requested_amount": str(refund_request.requested_amount),
+            "approved_amount": str(approved_amount),
+            "fee_amount": str(fee_amount),
+            "fee_percent": str(fee_percent),
+            "payout_method": refund_request.payout_method,
+        },
+    )
+
+    release_reserved_stock(order)
+    assigned_driver = order.assigned_driver
+    order.status = OrderStatus.CANCELLED
+    order.assigned_driver = None
+    order.save()
+    _stop_order_live_tracking(order, stopped_at=timezone.now(), driver=assigned_driver)
+    _set_latest_status_note(order, cancellation_note)
 
     notify_user(
         order.customer,
@@ -1258,31 +1977,65 @@ def cancel_order(order, requested_by, reason=""):
 
 
 @transaction.atomic
-def request_order_refund(order, requested_by, reason, payout_method=RefundPayoutMethod.GATEWAY, photos=None):
-    if not order.can_request_refund:
-        raise ValidationError("This order is not eligible for a service refund request anymore.")
-    if order.refund_requests.filter(
-        request_type=RefundRequestType.SERVICE_ISSUE,
-    ).exists():
-        raise ValidationError("A service refund request already exists for this order.")
+def request_order_refund(
+    order,
+    requested_by,
+    description,
+    evidence_files=None,
+    category=ComplaintCategory.OTHER,
+):
+    if not order.can_submit_complaint:
+        raise ValidationError("This order is not eligible for a complaint anymore.")
+    if order.complaints.exists():
+        raise ValidationError("A complaint already exists for this order.")
+    if order.refund_requests.filter(request_type=RefundRequestType.SERVICE_ISSUE).exists():
+        raise ValidationError("A service complaint already exists for this order.")
+    description = (description or "").strip()
+    if not description:
+        raise ValidationError("Please provide a clear explanation for your complaint.")
 
-    payment = getattr(order, "payment", None)
-    requested_amount = payment.amount if payment else order.total
-    refund_request = RefundRequest.objects.create(
+    complaint = Complaint.objects.create(
         order=order,
         requested_by=requested_by,
-        request_type=RefundRequestType.SERVICE_ISSUE,
-        payout_method=payout_method,
-        reason=reason,
-        requested_amount=requested_amount,
+        category=category,
+        description=description,
+        status=ComplaintStatus.AWAITING_AGENT_RESPONSE,
     )
-    for photo in photos or []:
-        RefundEvidence.objects.create(refund_request=refund_request, image=photo)
+    for evidence_file in evidence_files or []:
+        ComplaintEvidence.objects.create(complaint=complaint, image=evidence_file)
+    _record_complaint_status_history(
+        complaint,
+        "Complaint Submitted",
+        actor=requested_by,
+        note=description,
+        metadata={"category": complaint.category, "order_number": order.order_number},
+        status=ComplaintStatus.SUBMITTED,
+    )
+    _record_complaint_status_history(
+        complaint,
+        "Awaiting Agent Response",
+        actor=requested_by,
+        note="The assigned agent manager has been asked to respond.",
+        metadata={"complaint_reference": complaint.reference_number},
+        status=ComplaintStatus.AWAITING_AGENT_RESPONSE,
+    )
+    _log_support_action(
+        order,
+        "complaint_submitted",
+        actor=requested_by,
+        complaint=complaint,
+        details=description,
+        outcome="submitted",
+        metadata={
+            "category": category,
+            "complaint_reference": complaint.reference_number,
+        },
+    )
     if order.selected_agent and order.selected_agent.admin:
         notify_user(
             order.selected_agent.admin,
-            "New refund request",
-            f"{order.order_number} has a new service refund request waiting for review.",
+            "New complaint submitted",
+            f"{complaint.reference_number} for {order.order_number} is awaiting your response.",
             link=reverse("accounts:agent_refunds"),
         )
     company_admins = list(get_company_admin_users(order.company))
@@ -1292,22 +2045,393 @@ def request_order_refund(order, requested_by, reason, payout_method=RefundPayout
             if not order.selected_agent or not selected_agent_admin_id or admin_user.pk != selected_agent_admin_id:
                 notify_user(
                     admin_user,
-                    "New refund request",
-                    f"{order.order_number} has a new service refund request waiting for review.",
+                    "New complaint submitted",
+                    f"{complaint.reference_number} for {order.order_number} was submitted and is awaiting the agent manager response.",
                     link=reverse("accounts:company_dashboard"),
                 )
     notify_user(
         order.customer,
-        "Refund request received",
-        f"We received your refund request for {order.order_number}. The company will review it shortly.",
+        "Complaint received",
+        f"We received complaint {complaint.reference_number} for {order.order_number}. You can now track it in real time.",
         link=reverse("orders:detail", kwargs={"order_number": order.order_number}),
     )
-    send_refund_request_email(order, refund_request)
+    return complaint
+
+
+def _prepare_complaint_refund_amount(complaint, resolution_type, refund_amount):
+    payment = getattr(complaint.order, "payment", None)
+    maximum_amount = quantize_money(getattr(payment, "refundable_amount", complaint.order.total))
+    if maximum_amount <= 0:
+        raise ValidationError("There is no refundable balance remaining for this order.")
+
+    if resolution_type == ComplaintResolutionType.FULL_REFUND:
+        return maximum_amount
+
+    if refund_amount in (None, ""):
+        raise ValidationError("A refund amount is required for a partial refund decision.")
+
+    amount = quantize_money(refund_amount)
+    if amount <= 0:
+        raise ValidationError("Refund amount must be greater than zero.")
+    if amount > maximum_amount:
+        raise ValidationError("Refund amount cannot exceed the remaining refundable amount.")
+    return amount
+
+
+def _process_complaint_refund_resolution(
+    complaint,
+    *,
+    reviewed_by,
+    resolution_note,
+    refund_amount,
+    payout_method=RefundPayoutMethod.GATEWAY,
+):
+    refund_request = _create_or_update_complaint_refund_request(
+        complaint,
+        payout_method=payout_method,
+        requested_amount=refund_amount,
+    )
+    _set_refund_request_approved(
+        refund_request,
+        reviewed_by=reviewed_by,
+        approved_amount=refund_amount,
+        resolution_note=resolution_note,
+        payout_method=payout_method,
+    )
+    _record_refund_status_history(
+        refund_request,
+        "Approved",
+        actor=reviewed_by,
+        note=resolution_note,
+        metadata={"approved_amount": str(refund_amount), "complaint_reference": complaint.reference_number},
+        status=RefundRequestStatus.APPROVED,
+    )
+    process_refund_request(refund_request, processed_by=reviewed_by)
     return refund_request
 
 
 @transaction.atomic
+def respond_to_complaint_as_agent(complaint, actor, response_type, note):
+    _ensure_agent_manager_can_respond(complaint, actor)
+    if complaint.company_decided_at or complaint.system_decided_at:
+        raise ValidationError("This complaint already has a decision and can no longer receive an agent response.")
+
+    note = (note or "").strip()
+    if not note:
+        raise ValidationError("Please provide a response before submitting.")
+
+    allowed_statuses = {
+        ComplaintStatus.SUBMITTED,
+        ComplaintStatus.AWAITING_AGENT_RESPONSE,
+        ComplaintStatus.UNDER_COMPANY_REVIEW,
+    }
+    if complaint.status not in allowed_statuses:
+        raise ValidationError("This complaint is not awaiting an agent response.")
+
+    responded_at = timezone.now()
+    complaint.agent_response_type = response_type
+    complaint.agent_response_note = note
+    complaint.agent_responded_by = actor
+    complaint.agent_responded_at = responded_at
+    complaint.agent_reviewed_by = actor
+    complaint.agent_reviewed_at = responded_at
+    complaint.agent_note = note
+    complaint.status = ComplaintStatus.UNDER_COMPANY_REVIEW
+    complaint.save(
+        update_fields=[
+            "agent_response_type",
+            "agent_response_note",
+            "agent_responded_by",
+            "agent_responded_at",
+            "agent_reviewed_by",
+            "agent_reviewed_at",
+            "agent_note",
+            "status",
+            "updated_at",
+        ]
+    )
+
+    _record_complaint_status_history(
+        complaint,
+        "Agent Manager Response Submitted",
+        actor=actor,
+        note=note,
+        metadata={"response_type": response_type},
+        status=ComplaintStatus.UNDER_COMPANY_REVIEW,
+    )
+    _log_support_action(
+        complaint.order,
+        "complaint_agent_response_submitted",
+        actor=actor,
+        complaint=complaint,
+        details=note,
+        outcome=response_type,
+        metadata={"complaint_reference": complaint.reference_number},
+    )
+
+    for admin_user in get_company_admin_users(complaint.order.company):
+        notify_user(
+            admin_user,
+            "Complaint ready for company review",
+            f"{complaint.reference_number} for {complaint.order.order_number} now includes the agent manager response.",
+            link=reverse("accounts:company_dashboard"),
+        )
+    notify_user(
+        complaint.order.customer,
+        "Complaint update",
+        f"The agent manager has responded to complaint {complaint.reference_number}. It is now under company review.",
+        link=reverse("orders:detail", kwargs={"order_number": complaint.order.order_number}),
+    )
+    return complaint
+
+
+@transaction.atomic
+def decide_complaint_as_company_admin(
+    complaint,
+    actor,
+    resolution_type,
+    decision_reason,
+    refund_amount=None,
+    payout_method=RefundPayoutMethod.GATEWAY,
+):
+    _ensure_company_admin_can_decide(complaint, actor)
+    if complaint.status not in {
+        ComplaintStatus.SUBMITTED,
+        ComplaintStatus.AWAITING_AGENT_RESPONSE,
+        ComplaintStatus.UNDER_COMPANY_REVIEW,
+    }:
+        raise ValidationError("This complaint is not ready for a company decision.")
+
+    decision_reason = (decision_reason or "").strip()
+    if not decision_reason:
+        raise ValidationError("A documented reason is required for every complaint decision.")
+
+    approved_refund_amount = Decimal("0.00")
+    if resolution_type in {ComplaintResolutionType.FULL_REFUND, ComplaintResolutionType.PARTIAL_REFUND}:
+        approved_refund_amount = _prepare_complaint_refund_amount(complaint, resolution_type, refund_amount)
+        payment = getattr(complaint.order, "payment", None)
+        if payment:
+            resolution_type = _resolution_type_for_amount(payment, approved_refund_amount)
+
+    decided_at = timezone.now()
+    complaint.status = ComplaintStatus.DECISION_ISSUED
+    complaint.resolution_type = resolution_type
+    complaint.resolution_note = decision_reason
+    complaint.refund_amount = approved_refund_amount
+    complaint.company_decided_by = actor
+    complaint.company_decided_at = decided_at
+    complaint.company_decision_reason = decision_reason
+    complaint.save(
+        update_fields=[
+            "status",
+            "resolution_type",
+            "resolution_note",
+            "refund_amount",
+            "company_decided_by",
+            "company_decided_at",
+            "company_decision_reason",
+            "updated_at",
+        ]
+    )
+
+    if approved_refund_amount > 0:
+        _process_complaint_refund_resolution(
+            complaint,
+            reviewed_by=actor,
+            resolution_note=decision_reason,
+            refund_amount=approved_refund_amount,
+            payout_method=payout_method,
+        )
+
+    _record_complaint_status_history(
+        complaint,
+        "Company Decision Issued",
+        actor=actor,
+        note=decision_reason,
+        metadata={
+            "resolution_type": resolution_type,
+            "refund_amount": str(approved_refund_amount),
+            "appeal_deadline": complaint.appeal_deadline.isoformat() if complaint.appeal_deadline else "",
+        },
+        status=ComplaintStatus.DECISION_ISSUED,
+    )
+    _log_support_action(
+        complaint.order,
+        "complaint_company_decision_issued",
+        actor=actor,
+        refund_request=complaint.linked_refund_request,
+        complaint=complaint,
+        details=decision_reason,
+        outcome=resolution_type,
+        metadata={"refund_amount": str(approved_refund_amount)},
+    )
+
+    notify_user(
+        complaint.order.customer,
+        "Complaint decision issued",
+        f"A company admin issued a decision for complaint {complaint.reference_number}.",
+        link=reverse("orders:detail", kwargs={"order_number": complaint.order.order_number}),
+    )
+    return complaint
+
+
+@transaction.atomic
+def submit_complaint_appeal(complaint, actor, appeal_reason):
+    if not actor or actor.pk != complaint.order.customer_id:
+        raise ValidationError("Only the customer who placed the order can appeal this complaint decision.")
+    if not complaint.can_customer_appeal:
+        raise ValidationError("This complaint is no longer eligible for appeal.")
+
+    appeal_reason = (appeal_reason or "").strip()
+    if not appeal_reason:
+        raise ValidationError("Please explain why you are appealing this complaint decision.")
+
+    appealed_at = timezone.now()
+    complaint.appeal_reason = appeal_reason
+    complaint.appealed_by = actor
+    complaint.appealed_at = appealed_at
+    complaint.status = ComplaintStatus.APPEAL_SUBMITTED
+    complaint.save(update_fields=["appeal_reason", "appealed_by", "appealed_at", "status", "updated_at"])
+
+    _record_complaint_status_history(
+        complaint,
+        "Appeal Submitted",
+        actor=actor,
+        note=appeal_reason,
+        metadata={"complaint_reference": complaint.reference_number},
+        status=ComplaintStatus.APPEAL_SUBMITTED,
+    )
+    _log_support_action(
+        complaint.order,
+        "complaint_appeal_submitted",
+        actor=actor,
+        refund_request=complaint.linked_refund_request,
+        complaint=complaint,
+        details=appeal_reason,
+        outcome="appealed",
+    )
+    _notify_system_admins(
+        "Complaint appeal submitted",
+        f"{complaint.reference_number} for {complaint.order.order_number} requires an independent review.",
+        link=reverse("accounts:system_dashboard"),
+    )
+    return complaint
+
+
+@transaction.atomic
+def decide_complaint_as_system_admin(
+    complaint,
+    actor,
+    resolution_type,
+    decision_reason,
+    refund_amount=None,
+    payout_method=RefundPayoutMethod.GATEWAY,
+):
+    _ensure_system_admin_can_decide(complaint, actor)
+    if complaint.status not in {ComplaintStatus.APPEAL_SUBMITTED, ComplaintStatus.UNDER_SYSTEM_REVIEW}:
+        raise ValidationError("This complaint is not awaiting a system-level appeal decision.")
+
+    decision_reason = (decision_reason or "").strip()
+    if not decision_reason:
+        raise ValidationError("A documented reason is required for the final system decision.")
+
+    approved_refund_amount = Decimal("0.00")
+    if resolution_type in {ComplaintResolutionType.FULL_REFUND, ComplaintResolutionType.PARTIAL_REFUND}:
+        approved_refund_amount = _prepare_complaint_refund_amount(complaint, resolution_type, refund_amount)
+        payment = getattr(complaint.order, "payment", None)
+        if payment:
+            resolution_type = _resolution_type_for_amount(payment, approved_refund_amount)
+
+    review_started_at = timezone.now()
+    _record_complaint_status_history(
+        complaint,
+        "Under System Review",
+        actor=actor,
+        note="The appeal is under independent review.",
+        metadata={"complaint_reference": complaint.reference_number},
+        status=ComplaintStatus.UNDER_SYSTEM_REVIEW,
+    )
+
+    complaint.status = ComplaintStatus.RESOLVED
+    complaint.resolution_type = resolution_type
+    complaint.resolution_note = decision_reason
+    complaint.refund_amount = approved_refund_amount
+    complaint.system_decided_by = actor
+    complaint.system_decided_at = review_started_at
+    complaint.system_decision_reason = decision_reason
+    complaint.final_reviewed_by = actor
+    complaint.final_reviewed_at = review_started_at
+    complaint.final_decision_reason = decision_reason
+    complaint.resolved_at = review_started_at
+    complaint.closed_at = review_started_at
+    complaint.save(
+        update_fields=[
+            "status",
+            "resolution_type",
+            "resolution_note",
+            "refund_amount",
+            "system_decided_by",
+            "system_decided_at",
+            "system_decision_reason",
+            "final_reviewed_by",
+            "final_reviewed_at",
+            "final_decision_reason",
+            "resolved_at",
+            "closed_at",
+            "updated_at",
+        ]
+    )
+
+    if approved_refund_amount > 0:
+        _process_complaint_refund_resolution(
+            complaint,
+            reviewed_by=actor,
+            resolution_note=decision_reason,
+            refund_amount=approved_refund_amount,
+            payout_method=payout_method,
+        )
+
+    _record_complaint_status_history(
+        complaint,
+        "System Decision Issued",
+        actor=actor,
+        note=decision_reason,
+        metadata={"resolution_type": resolution_type, "refund_amount": str(approved_refund_amount)},
+        status=ComplaintStatus.RESOLVED,
+    )
+    _record_complaint_status_history(
+        complaint,
+        "Closed",
+        actor=actor,
+        note="The final complaint decision has been issued and the case is now closed.",
+        metadata={"complaint_reference": complaint.reference_number},
+        status=ComplaintStatus.CLOSED,
+    )
+    complaint.status = ComplaintStatus.CLOSED
+    complaint.save(update_fields=["status", "updated_at"])
+
+    _log_support_action(
+        complaint.order,
+        "complaint_system_decision_issued",
+        actor=actor,
+        refund_request=complaint.linked_refund_request,
+        complaint=complaint,
+        details=decision_reason,
+        outcome=resolution_type,
+        metadata={"refund_amount": str(approved_refund_amount)},
+    )
+    notify_user(
+        complaint.order.customer,
+        "Final complaint decision issued",
+        f"The final system review decision for complaint {complaint.reference_number} is now available.",
+        link=reverse("orders:detail", kwargs={"order_number": complaint.order.order_number}),
+    )
+    return complaint
+
+
+@transaction.atomic
 def approve_refund_request(refund_request, reviewed_by, approved_amount=None, resolution_note=""):
+    _ensure_refund_decision_actor_is_authorized(refund_request.order, reviewed_by, "approve this refund")
     if refund_request.status != RefundRequestStatus.PENDING:
         raise ValidationError("This refund request has already been reviewed.")
     resolution_note = (resolution_note or "").strip()
@@ -1322,8 +2446,8 @@ def approve_refund_request(refund_request, reviewed_by, approved_amount=None, re
     approved_amount = quantize_money(approved_amount_value)
     if approved_amount <= 0:
         raise ValidationError("Approved refund amount must be greater than zero.")
-    if approved_amount > payment.amount:
-        raise ValidationError("Approved refund amount cannot be greater than the paid amount.")
+    if approved_amount > payment.refundable_amount:
+        raise ValidationError("Approved refund amount cannot exceed the remaining refundable amount.")
 
     refund_request.status = RefundRequestStatus.APPROVED
     refund_request.approved_amount = approved_amount
@@ -1340,6 +2464,34 @@ def approve_refund_request(refund_request, reviewed_by, approved_amount=None, re
         "failure_reason",
         "updated_at",
     ])
+    complaint = _sync_complaint_from_refund_request(refund_request)
+    _record_refund_status_history(
+        refund_request,
+        "Approved",
+        actor=reviewed_by,
+        note=resolution_note,
+        metadata={"approved_amount": str(approved_amount)},
+        status=RefundRequestStatus.APPROVED,
+    )
+    if complaint:
+        _record_complaint_status_history(
+            complaint,
+            "Refund Approval Recorded",
+            actor=reviewed_by,
+            note=resolution_note,
+            metadata={"approved_amount": str(approved_amount), "decision": "approved"},
+            status=complaint.status,
+        )
+    _log_support_action(
+        refund_request.order,
+        "refund_approved",
+        actor=reviewed_by,
+        refund_request=refund_request,
+        complaint=complaint,
+        details=resolution_note,
+        outcome="approved",
+        metadata={"approved_amount": str(approved_amount)},
+    )
 
     OrderStatusHistory.objects.create(
         order=refund_request.order,
@@ -1358,6 +2510,7 @@ def approve_refund_request(refund_request, reviewed_by, approved_amount=None, re
 
 @transaction.atomic
 def reject_refund_request(refund_request, reviewed_by, resolution_note=""):
+    _ensure_refund_decision_actor_is_authorized(refund_request.order, reviewed_by, "reject this refund")
     if refund_request.status != RefundRequestStatus.PENDING:
         raise ValidationError("This refund request has already been reviewed.")
     resolution_note = (resolution_note or "").strip()
@@ -1377,6 +2530,34 @@ def reject_refund_request(refund_request, reviewed_by, resolution_note=""):
         "failure_reason",
         "updated_at",
     ])
+    complaint = _sync_complaint_from_refund_request(refund_request)
+    _record_refund_status_history(
+        refund_request,
+        "Rejected",
+        actor=reviewed_by,
+        note=resolution_note,
+        metadata={"decision": "rejected"},
+        status=RefundRequestStatus.REJECTED,
+    )
+    if complaint:
+        _record_complaint_status_history(
+            complaint,
+            "Refund Rejected",
+            actor=reviewed_by,
+            note=resolution_note,
+            metadata={"decision": "rejected"},
+            status=complaint.status,
+        )
+    _log_support_action(
+        refund_request.order,
+        "refund_rejected",
+        actor=reviewed_by,
+        refund_request=refund_request,
+        complaint=complaint,
+        details=resolution_note,
+        outcome="rejected",
+        metadata={"decision": "rejected"},
+    )
 
     OrderStatusHistory.objects.create(
         order=refund_request.order,
@@ -1395,6 +2576,7 @@ def reject_refund_request(refund_request, reviewed_by, resolution_note=""):
 
 @transaction.atomic
 def process_refund_request(refund_request, processed_by, failure_reason=""):
+    _ensure_refund_decision_actor_is_authorized(refund_request.order, processed_by, "process this refund")
     if refund_request.status not in {RefundRequestStatus.APPROVED, RefundRequestStatus.FAILED}:
         raise ValidationError("Only approved refund requests can be processed.")
 
@@ -1403,12 +2585,35 @@ def process_refund_request(refund_request, processed_by, failure_reason=""):
     if payment is None:
         raise ValidationError("This order does not have a payment to refund.")
 
+    approved_amount = quantize_money(refund_request.approved_amount or refund_request.requested_amount)
+    if approved_amount <= 0:
+        raise ValidationError("Approved refund amount must be greater than zero.")
+
     if failure_reason:
         refund_request.status = RefundRequestStatus.FAILED
         refund_request.processed_by = processed_by
         refund_request.processed_at = timezone.now()
         refund_request.failure_reason = failure_reason
         refund_request.save(update_fields=["status", "processed_by", "processed_at", "failure_reason", "updated_at"])
+        complaint = _sync_complaint_from_refund_request(refund_request)
+        _record_refund_status_history(
+            refund_request,
+            "Processing Failed",
+            actor=processed_by,
+            note=failure_reason,
+            metadata={"attempted_amount": str(approved_amount)},
+            status=RefundRequestStatus.FAILED,
+        )
+        _log_support_action(
+            refund_request.order,
+            "refund_processing_failed",
+            actor=processed_by,
+            refund_request=refund_request,
+            complaint=complaint,
+            details=failure_reason,
+            outcome="failed",
+            metadata={"attempted_amount": str(approved_amount)},
+        )
         notify_user(
             refund_request.order.customer,
             "Refund processing failed",
@@ -1417,29 +2622,85 @@ def process_refund_request(refund_request, processed_by, failure_reason=""):
         )
         return refund_request
 
-    approved_amount = refund_request.approved_amount or refund_request.requested_amount
+    if approved_amount > payment.refundable_amount:
+        raise ValidationError("Refund amount cannot exceed the remaining refundable amount.")
+
     customer = refund_request.order.customer
+    payload_key = "service_refund"
+    payload_data = {
+        "approved_amount": str(approved_amount),
+        "reviewed_by": refund_request.reviewed_by.email if refund_request.reviewed_by else "",
+        "processed_by": processed_by.email,
+        "processed_at": timezone.now().isoformat(),
+        "note": refund_request.resolution_note,
+        "payout_method": refund_request.payout_method,
+    }
     if refund_request.payout_method == RefundPayoutMethod.WALLET_CREDIT and customer:
         customer.credit_wallet(approved_amount)
-    payment.status = PaymentStatus.REFUNDED if approved_amount >= payment.amount else PaymentStatus.PARTIALLY_REFUNDED
-    payment.raw_payload = {
-        **(payment.raw_payload or {}),
-        "service_refund": {
-            "approved_amount": str(approved_amount),
-            "reviewed_by": refund_request.reviewed_by.email if refund_request.reviewed_by else "",
-            "processed_by": processed_by.email,
-            "processed_at": timezone.now().isoformat(),
-            "note": refund_request.resolution_note,
-            "payout_method": refund_request.payout_method,
-        },
-    }
-    payment.save(update_fields=["status", "raw_payload", "updated_at"])
+        refund_transaction = _record_wallet_refund(
+            payment,
+            approved_amount,
+            processed_by,
+            refund_request=refund_request,
+            complaint=getattr(refund_request, "complaint", None),
+            note=f"Wallet credit refund for {refund_request.order.order_number}",
+        )
+        payload_data["transaction_id"] = refund_transaction.pk
+        payload_data["provider_reference"] = refund_transaction.provider_reference
+    else:
+        refund_transaction = _process_gateway_refund(
+            payment,
+            approved_amount,
+            processed_by,
+            refund_request=refund_request,
+            complaint=getattr(refund_request, "complaint", None),
+            note=f"Complaint refund for {refund_request.order.order_number}",
+        )
+        payload_data["transaction_id"] = refund_transaction.pk
+        payload_data["provider_reference"] = refund_transaction.provider_reference
+    _update_payment_after_refund(payment, approved_amount, payload_key, payload_data)
 
     refund_request.status = RefundRequestStatus.PROCESSED
     refund_request.processed_by = processed_by
     refund_request.processed_at = timezone.now()
     refund_request.failure_reason = ""
     refund_request.save(update_fields=["status", "processed_by", "processed_at", "failure_reason", "updated_at"])
+    complaint = _sync_complaint_from_refund_request(refund_request)
+    _record_refund_status_history(
+        refund_request,
+        "Refund Processed",
+        actor=processed_by,
+        note=f"Refund issued via {refund_request.get_payout_method_display().lower()}.",
+        metadata={"processed_amount": str(approved_amount), "payout_method": refund_request.payout_method},
+        status=RefundRequestStatus.PROCESSED,
+    )
+    _record_refund_status_history(
+        refund_request,
+        "Completed",
+        actor=processed_by,
+        note="The refund workflow has been completed.",
+        metadata={"processed_amount": str(approved_amount)},
+        status=RefundRequestStatus.PROCESSED,
+    )
+    if complaint:
+        _record_complaint_status_history(
+            complaint,
+            "Refund Processed",
+            actor=processed_by,
+            note=f"Refund issued via {refund_request.get_payout_method_display().lower()}.",
+            metadata={"refund_amount": str(approved_amount), "resolution_type": complaint.resolution_type},
+            status=complaint.status,
+        )
+    _log_support_action(
+        refund_request.order,
+        "refund_processed",
+        actor=processed_by,
+        refund_request=refund_request,
+        complaint=complaint,
+        details=refund_request.resolution_note,
+        outcome="completed",
+        metadata={"processed_amount": str(approved_amount), "payout_method": refund_request.payout_method},
+    )
 
     OrderStatusHistory.objects.create(
         order=refund_request.order,

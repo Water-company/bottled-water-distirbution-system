@@ -72,6 +72,46 @@ class RefundPayoutMethod(models.TextChoices):
     WALLET_CREDIT = "wallet_credit", "Wallet Credit"
 
 
+class ComplaintCategory(models.TextChoices):
+    MISSING_ITEMS = "missing_items", "Missing items"
+    INCORRECT_QUANTITY = "incorrect_quantity", "Incorrect quantity"
+    WRONG_PRODUCTS = "wrong_products", "Wrong products"
+    DAMAGED_PRODUCTS = "damaged_products", "Damaged products"
+    POOR_QUALITY = "poor_quality", "Poor product quality"
+    OTHER = "other", "Other issues"
+
+
+class ComplaintStatus(models.TextChoices):
+    SUBMITTED = "submitted", "Complaint Submitted"
+    AWAITING_AGENT_RESPONSE = "awaiting_agent_response", "Awaiting Agent Response"
+    UNDER_COMPANY_REVIEW = "under_company_review", "Under Company Review"
+    DECISION_ISSUED = "decision_issued", "Decision Issued"
+    APPEAL_SUBMITTED = "appeal_submitted", "Appeal Submitted"
+    UNDER_SYSTEM_REVIEW = "under_system_review", "Under System Review"
+    RESOLVED = "resolved", "Resolved"
+    CLOSED = "closed", "Closed"
+
+
+class ComplaintAgentResponseType(models.TextChoices):
+    ACCEPT_RESPONSIBILITY = "accept_responsibility", "Accept responsibility"
+    DISPUTE = "dispute", "Dispute the complaint"
+    ADDITIONAL_INFORMATION = "additional_information", "Provide additional information"
+
+
+class ComplaintResolutionType(models.TextChoices):
+    FULL_REFUND = "full_refund", "Full refund"
+    PARTIAL_REFUND = "partial_refund", "Partial refund"
+    REPLACEMENT_DELIVERY = "replacement_delivery", "Replacement delivery"
+    ADDITIONAL_DELIVERY = "additional_delivery", "Additional delivery for missing products"
+    REJECTED = "rejected", "Complaint rejected"
+
+
+class RefundTransactionStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    SUCCEEDED = "succeeded", "Succeeded"
+    FAILED = "failed", "Failed"
+
+
 class DeliveryIssueType(models.TextChoices):
     CUSTOMER_NOT_FOUND = "customer_not_found", "Customer not found"
     WRONG_ADDRESS = "wrong_address", "Wrong address"
@@ -190,6 +230,15 @@ class Order(TimeStampedModel):
         return self.delivered_at + timezone.timedelta(days=settings.ORDER_REFUND_REQUEST_WINDOW_DAYS)
 
     @property
+    def complaint_deadline(self):
+        if not self.delivered_at:
+            return None
+        complaint_period_days = getattr(self.company, "complaint_period_days", 0) or 0
+        if complaint_period_days < 1:
+            return None
+        return self.delivered_at + timezone.timedelta(days=complaint_period_days)
+
+    @property
     def can_request_refund(self):
         payment = getattr(self, "payment", None)
         if self.status != OrderStatus.DELIVERED or not payment:
@@ -199,6 +248,17 @@ class Order(TimeStampedModel):
         if self.refund_deadline is None:
             return False
         return timezone.now() <= self.refund_deadline
+
+    @property
+    def can_submit_complaint(self):
+        payment = getattr(self, "payment", None)
+        if self.status != OrderStatus.DELIVERED or not payment:
+            return False
+        if payment.status in {PaymentStatus.CANCELLED}:
+            return False
+        if self.complaint_deadline is None:
+            return False
+        return timezone.now() <= self.complaint_deadline
 
     @property
     def feedback_record(self):
@@ -219,6 +279,44 @@ class Order(TimeStampedModel):
             raise ValidationError({"delivery_fee": "Delivery fee cannot be negative."})
         if self.total is not None and self.total < 0:
             raise ValidationError({"total": "Total cannot be negative."})
+
+
+class OrderLiveTracking(TimeStampedModel):
+    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name="live_tracking")
+    driver = models.ForeignKey(
+        "catalog.Driver",
+        on_delete=models.SET_NULL,
+        related_name="live_trackings",
+        blank=True,
+        null=True,
+    )
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    recorded_at = models.DateTimeField(blank=True, null=True)
+    started_at = models.DateTimeField(blank=True, null=True)
+    paused_at = models.DateTimeField(blank=True, null=True)
+    resumed_at = models.DateTimeField(blank=True, null=True)
+    stopped_at = models.DateTimeField(blank=True, null=True)
+    is_active = models.BooleanField(default=False)
+    is_paused = models.BooleanField(default=False)
+    last_distance_meters = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    last_eta_minutes = models.PositiveIntegerField(blank=True, null=True)
+
+    class Meta:
+        ordering = ("-recorded_at", "-updated_at")
+        indexes = [
+            models.Index(fields=["is_active"], name="ord_live_active_idx"),
+            models.Index(fields=["recorded_at"], name="ord_live_recorded_idx"),
+        ]
+
+    def __str__(self):
+        return f"Tracking for {self.order.order_number}"
+
+    def clean(self):
+        if self.latitude is not None and not Decimal("-90") <= Decimal(self.latitude) <= Decimal("90"):
+            raise ValidationError({"latitude": "Latitude must be between -90 and 90."})
+        if self.longitude is not None and not Decimal("-180") <= Decimal(self.longitude) <= Decimal("180"):
+            raise ValidationError({"longitude": "Longitude must be between -180 and 180."})
 
 
 class OrderItem(TimeStampedModel):
@@ -282,11 +380,20 @@ class Payment(TimeStampedModel):
 
     @property
     def refundable_amount(self):
+        from core.policies import quantize_money
+
         if self.status == PaymentStatus.REFUNDED:
             return 0
         if self.status == PaymentStatus.CANCELLED:
             return 0
-        return self.amount
+        refunded_total = (
+            self.refund_transactions.filter(status=RefundTransactionStatus.SUCCEEDED)
+            .aggregate(total=models.Sum("amount"))
+            .get("total")
+            or Decimal("0.00")
+        )
+        remaining = quantize_money(self.amount - refunded_total)
+        return remaining if remaining > 0 else Decimal("0.00")
 
 
 class DeliveryConfirmation(TimeStampedModel):
@@ -504,6 +611,29 @@ class RefundRequest(TimeStampedModel):
         return f"{self.order.order_number} {self.get_request_type_display()}"
 
 
+class RefundRequestStatusHistory(models.Model):
+    refund_request = models.ForeignKey(RefundRequest, on_delete=models.CASCADE, related_name="status_history")
+    status = models.CharField(max_length=20, choices=RefundRequestStatus.choices)
+    title = models.CharField(max_length=80)
+    note = models.TextField(blank=True)
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="refund_status_updates",
+        blank=True,
+        null=True,
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("created_at",)
+        verbose_name_plural = "refund request status history"
+
+    def __str__(self):
+        return f"{self.refund_request.order.order_number} refund - {self.title}"
+
+
 class RefundEvidence(TimeStampedModel):
     refund_request = models.ForeignKey(RefundRequest, on_delete=models.CASCADE, related_name="evidences")
     image = models.ImageField(upload_to="orders/refunds/")
@@ -513,3 +643,268 @@ class RefundEvidence(TimeStampedModel):
 
     def __str__(self):
         return f"Evidence for {self.refund_request.order.order_number}"
+
+
+class Complaint(TimeStampedModel):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="complaints")
+    reference_number = models.CharField(max_length=24, unique=True, editable=False)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="submitted_complaints",
+        blank=True,
+        null=True,
+    )
+    category = models.CharField(max_length=30, choices=ComplaintCategory.choices)
+    description = models.TextField()
+    status = models.CharField(
+        max_length=30,
+        choices=ComplaintStatus.choices,
+        default=ComplaintStatus.SUBMITTED,
+    )
+    resolution_type = models.CharField(
+        max_length=30,
+        choices=ComplaintResolutionType.choices,
+        blank=True,
+    )
+    resolution_note = models.TextField(blank=True)
+    refund_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    linked_refund_request = models.OneToOneField(
+        RefundRequest,
+        on_delete=models.SET_NULL,
+        related_name="complaint",
+        blank=True,
+        null=True,
+    )
+    agent_response_type = models.CharField(
+        max_length=30,
+        choices=ComplaintAgentResponseType.choices,
+        blank=True,
+    )
+    agent_response_note = models.TextField(blank=True)
+    agent_responded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="agent_responded_complaints",
+        blank=True,
+        null=True,
+    )
+    agent_responded_at = models.DateTimeField(blank=True, null=True)
+    agent_reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="agent_reviewed_complaints",
+        blank=True,
+        null=True,
+    )
+    agent_reviewed_at = models.DateTimeField(blank=True, null=True)
+    agent_note = models.TextField(blank=True)
+    company_decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="company_decided_complaints",
+        blank=True,
+        null=True,
+    )
+    company_decided_at = models.DateTimeField(blank=True, null=True)
+    company_decision_reason = models.TextField(blank=True)
+    final_reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="final_reviewed_complaints",
+        blank=True,
+        null=True,
+    )
+    final_reviewed_at = models.DateTimeField(blank=True, null=True)
+    final_decision_reason = models.TextField(blank=True)
+    appeal_reason = models.TextField(blank=True)
+    appealed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="appealed_complaints",
+        blank=True,
+        null=True,
+    )
+    appealed_at = models.DateTimeField(blank=True, null=True)
+    system_decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="system_decided_complaints",
+        blank=True,
+        null=True,
+    )
+    system_decided_at = models.DateTimeField(blank=True, null=True)
+    system_decision_reason = models.TextField(blank=True)
+    resolved_at = models.DateTimeField(blank=True, null=True)
+    closed_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return self.reference_number
+
+    @staticmethod
+    def generate_reference_number():
+        alphabet = string.ascii_uppercase + string.digits
+        suffix = "".join(secrets.choice(alphabet) for _ in range(10))
+        return f"CMP-{suffix}"
+
+    def save(self, *args, **kwargs):
+        if not self.reference_number:
+            candidate = self.generate_reference_number()
+            while Complaint.objects.filter(reference_number=candidate).exists():
+                candidate = self.generate_reference_number()
+            self.reference_number = candidate
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def clean(self):
+        if self.refund_amount < 0:
+            raise ValidationError({"refund_amount": "Refund amount cannot be negative."})
+
+    @property
+    def appeal_deadline(self):
+        if not self.company_decided_at:
+            return None
+        appeal_period_days = getattr(self.order.company, "complaint_appeal_period_days", 0) or 0
+        if appeal_period_days < 1:
+            return None
+        return self.company_decided_at + timezone.timedelta(days=appeal_period_days)
+
+    @property
+    def can_customer_appeal(self):
+        if self.status != ComplaintStatus.DECISION_ISSUED:
+            return False
+        if self.appealed_at or self.system_decided_at:
+            return False
+        deadline = self.appeal_deadline
+        if deadline is None:
+            return False
+        return timezone.now() <= deadline
+
+    @property
+    def appeal_window_expired(self):
+        deadline = self.appeal_deadline
+        return bool(deadline and timezone.now() > deadline)
+
+
+class ComplaintStatusHistory(models.Model):
+    complaint = models.ForeignKey(Complaint, on_delete=models.CASCADE, related_name="status_history")
+    status = models.CharField(max_length=30, choices=ComplaintStatus.choices)
+    title = models.CharField(max_length=80)
+    note = models.TextField(blank=True)
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="complaint_status_updates",
+        blank=True,
+        null=True,
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("created_at",)
+        verbose_name_plural = "complaint status history"
+
+    def __str__(self):
+        return f"{self.complaint.reference_number} - {self.title}"
+
+
+class ComplaintEvidence(TimeStampedModel):
+    complaint = models.ForeignKey(Complaint, on_delete=models.CASCADE, related_name="evidences")
+    image = models.FileField(upload_to="orders/complaints/")
+
+    class Meta:
+        ordering = ("created_at",)
+
+    def __str__(self):
+        return f"Evidence for {self.complaint.reference_number}"
+
+    @property
+    def filename(self):
+        return (self.image.name or "").split("/")[-1]
+
+    @property
+    def is_image(self):
+        file_name = (self.image.name or "").lower()
+        return file_name.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"))
+
+
+class RefundTransaction(TimeStampedModel):
+    refund_request = models.ForeignKey(
+        RefundRequest,
+        on_delete=models.CASCADE,
+        related_name="transactions",
+        blank=True,
+        null=True,
+    )
+    complaint = models.ForeignKey(
+        Complaint,
+        on_delete=models.SET_NULL,
+        related_name="refund_transactions",
+        blank=True,
+        null=True,
+    )
+    payment = models.ForeignKey(Payment, on_delete=models.CASCADE, related_name="refund_transactions")
+    provider = models.CharField(max_length=20, choices=PaymentProvider.choices, default=PaymentProvider.CHAPA)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(
+        max_length=20,
+        choices=RefundTransactionStatus.choices,
+        default=RefundTransactionStatus.PENDING,
+    )
+    provider_reference = models.CharField(max_length=120, blank=True)
+    request_payload = models.JSONField(default=dict, blank=True)
+    response_payload = models.JSONField(default=dict, blank=True)
+    failure_reason = models.TextField(blank=True)
+    processed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="recorded_refund_transactions",
+        blank=True,
+        null=True,
+    )
+    processed_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return f"{self.payment.order.order_number} refund {self.amount}"
+
+
+class SupportActionLog(TimeStampedModel):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="support_action_logs")
+    refund_request = models.ForeignKey(
+        RefundRequest,
+        on_delete=models.SET_NULL,
+        related_name="support_logs",
+        blank=True,
+        null=True,
+    )
+    complaint = models.ForeignKey(
+        Complaint,
+        on_delete=models.SET_NULL,
+        related_name="support_logs",
+        blank=True,
+        null=True,
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="support_action_logs",
+        blank=True,
+        null=True,
+    )
+    action = models.CharField(max_length=80)
+    details = models.TextField(blank=True)
+    outcome = models.CharField(max_length=80, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ("created_at",)
+
+    def __str__(self):
+        return f"{self.order.order_number} - {self.action}"

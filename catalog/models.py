@@ -55,10 +55,16 @@ class Company(TimeStampedModel):
     premium_feature_enabled = models.BooleanField(default=False)
     premium_streak_threshold = models.PositiveIntegerField(default=5)
     premium_discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
-    admin = models.ForeignKey(
+    allow_agent_credit = models.BooleanField(default=True)
+    maximum_credit_duration_days = models.PositiveIntegerField(default=14)
+    refunds_enabled = models.BooleanField(default=False)
+    complaint_period_days = models.PositiveIntegerField(default=7)
+    complaint_appeal_period_days = models.PositiveIntegerField(default=7)
+    maximum_cancellation_period_minutes = models.PositiveIntegerField(default=120)
+    admin = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
-        related_name="managed_companies",
+        related_name="primary_managed_company",
         blank=True,
         null=True,
     )
@@ -75,6 +81,23 @@ class Company(TimeStampedModel):
             raise ValidationError({"premium_discount_percent": "Premium discount percent must be between 0 and 100."})
         if self.premium_streak_threshold < 1:
             raise ValidationError({"premium_streak_threshold": "Premium streak threshold must be at least 1."})
+        if self.maximum_credit_duration_days < 1:
+            raise ValidationError(
+                {"maximum_credit_duration_days": "Maximum credit duration must be a positive integer."}
+            )
+        if self.maximum_cancellation_period_minutes < 1:
+            raise ValidationError(
+                {"maximum_cancellation_period_minutes": "Maximum cancellation period must be a positive integer."}
+            )
+        if self.complaint_period_days < 1:
+            raise ValidationError({"complaint_period_days": "Complaint period must be at least one day."})
+        if self.complaint_appeal_period_days < 1:
+            raise ValidationError({"complaint_appeal_period_days": "Complaint appeal period must be at least one day."})
+        if self.admin:
+            if getattr(self.admin, "role", None) != "company_admin":
+                raise ValidationError({"admin": "Only company admin users can be assigned as the primary company admin."})
+            if self.pk and self.admin.managed_company_id != self.pk:
+                raise ValidationError({"admin": "The primary company admin must belong to this company."})
 
     def save(self, *args, **kwargs):
         if not self.slug:
@@ -91,6 +114,32 @@ class Company(TimeStampedModel):
     @property
     def is_live(self):
         return self.is_active and self.is_verified
+
+
+class CompanyRefundPolicyTier(models.Model):
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="refund_policy_tiers")
+    start_minutes = models.PositiveIntegerField()
+    end_minutes = models.PositiveIntegerField(blank=True, null=True)
+    refund_percent = models.DecimalField(max_digits=5, decimal_places=2)
+
+    class Meta:
+        ordering = ("start_minutes", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["company", "start_minutes", "end_minutes"],
+                name="unique_company_refund_policy_tier",
+            ),
+        ]
+
+    def __str__(self):
+        end_label = self.end_minutes if self.end_minutes is not None else "up"
+        return f"{self.company.name}: {self.start_minutes}-{end_label} minutes"
+
+    def clean(self):
+        if self.end_minutes is not None and self.end_minutes < self.start_minutes:
+            raise ValidationError({"end_minutes": "End minute must be greater than or equal to the start minute."})
+        if self.refund_percent < 0 or self.refund_percent > 100:
+            raise ValidationError({"refund_percent": "Refund percentage must be between 0 and 100."})
 
 
 class Product(TimeStampedModel):
@@ -129,6 +178,13 @@ class Product(TimeStampedModel):
 
 
 class Agent(TimeStampedModel):
+    OVERDUE_STATUS_ACTIVE = "active"
+    OVERDUE_STATUS_INACTIVE = "inactive"
+    OVERDUE_STATUS_CHOICES = (
+        (OVERDUE_STATUS_ACTIVE, "Active"),
+        (OVERDUE_STATUS_INACTIVE, "Inactive"),
+    )
+
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="agents")
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=60, unique=True, blank=True)
@@ -141,6 +197,7 @@ class Agent(TimeStampedModel):
     phone_number = models.CharField(max_length=20, blank=True)
     is_active = models.BooleanField(default=True)
     is_accepting_orders = models.BooleanField(default=True)
+    overdue_status = models.CharField(max_length=20, choices=OVERDUE_STATUS_CHOICES, default=OVERDUE_STATUS_ACTIVE)
     credit_limit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     credit_period_days = models.PositiveIntegerField(default=14)
     admin = models.ForeignKey(
@@ -393,6 +450,13 @@ class AgentBatchSalePaymentStatus(models.TextChoices):
     REJECTED = "rejected", "Rejected"
 
 
+class AgentBatchSaleCheckoutStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    PAID = "paid", "Paid"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+
+
 class CompanyBatch(TimeStampedModel):
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="production_batches")
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="production_batches")
@@ -584,6 +648,8 @@ class AgentBatchSale(TimeStampedModel):
             return "pending"
         if self.outstanding_balance <= 0:
             return "paid"
+        if self.status == AgentBatchSaleStatus.APPROVED and self.payment_type == AgentBatchSalePaymentType.FULL:
+            return "awaiting_payment"
         if self.status == AgentBatchSaleStatus.RECEIVED and self.credit_due_date and self.credit_due_date < timezone.localdate():
             return "overdue"
         if self.amount_collected > 0:
@@ -593,6 +659,14 @@ class AgentBatchSale(TimeStampedModel):
     @property
     def is_overdue(self):
         return self.collection_status == "overdue"
+
+    @property
+    def can_confirm_receipt(self):
+        if self.status != AgentBatchSaleStatus.APPROVED:
+            return False
+        if self.payment_type == AgentBatchSalePaymentType.FULL and self.outstanding_balance > 0:
+            return False
+        return True
 
 
 class AgentBatchSalePayment(TimeStampedModel):
@@ -630,6 +704,26 @@ class AgentBatchSalePayment(TimeStampedModel):
     def clean(self):
         if self.amount <= 0:
             raise ValidationError({"amount": "Payment amount must be greater than zero."})
+
+
+class AgentBatchSaleCheckout(TimeStampedModel):
+    sale = models.OneToOneField(AgentBatchSale, on_delete=models.CASCADE, related_name="checkout")
+    tx_ref = models.CharField(max_length=120, unique=True)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(
+        max_length=20,
+        choices=AgentBatchSaleCheckoutStatus.choices,
+        default=AgentBatchSaleCheckoutStatus.PENDING,
+    )
+    checkout_url = models.URLField(blank=True)
+    raw_payload = models.JSONField(default=dict, blank=True)
+    paid_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return f"{self.sale.batch.batch_number} checkout - {self.tx_ref}"
 
 
 class ProductImage(TimeStampedModel):

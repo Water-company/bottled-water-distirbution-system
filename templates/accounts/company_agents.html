@@ -3,21 +3,28 @@
 {% block content %}
 <section class="hero-card p-4 p-lg-5 mb-4">
     <span class="eyebrow">Company Admin</span>
-    <h1 class="display-6 fw-semibold mt-2 mb-2">Agent Companies</h1>
-    <p class="text-secondary mb-0">Manage branches, assign managers, and monitor branch-level delivery performance.</p>
+    <h1 class="display-6 fw-semibold mt-2 mb-2">Agent Branches</h1>
+    <p class="text-secondary mb-0">Create and manage agent branches, assign brand-new manager accounts, and monitor branch-level delivery performance.</p>
 </section>
 
 <section class="row g-4">
     <div class="col-xl-4">
         <div class="content-card p-4">
             <h2 class="h4 mb-3">Add Agent Branch</h2>
+            <p class="small text-secondary">Each new agent branch must get a brand-new manager account. Existing accounts cannot be reused, and a branch stays permanently attached to one company.</p>
             <form method="post" action="{% url 'accounts:create_agent' %}">
                 {% csrf_token %}
                 <input type="hidden" name="next" value="{% url 'accounts:company_agents' %}">
+                {% if agent_form.non_field_errors %}
+                    <div class="alert alert-danger py-2">
+                        {{ agent_form.non_field_errors|join:", " }}
+                    </div>
+                {% endif %}
                 {% for field in agent_form %}
                     <div class="mb-3">
                         <label class="form-label">{{ field.label }}</label>
                         {{ field }}
+                        {% if field.help_text %}<div class="small text-secondary mt-1">{{ field.help_text|safe }}</div>{% endif %}
                         {% if field.errors %}<div class="text-danger small mt-1">{{ field.errors|join:", " }}</div>{% endif %}
                     </div>
                 {% endfor %}
@@ -39,6 +46,7 @@
                         <tr>
                             <th>Agent</th>
                             <th>Manager</th>
+                            <th>Overdue Status</th>
                             <th>Drivers</th>
                             <th>Delivered</th>
                             <th>Revenue</th>
@@ -54,6 +62,13 @@
                                     <div class="text-secondary small">{{ agent.location_name }}{% if agent.low_stock_items %} | {{ agent.low_stock_items }} low-stock lines{% endif %}</div>
                                 </td>
                                 <td>{{ agent.manager_name }}</td>
+                                <td>
+                                    {% if agent.overdue_status == "inactive" %}
+                                        <span class="badge text-bg-danger">Inactive</span>
+                                    {% else %}
+                                        <span class="badge text-bg-success">Active</span>
+                                    {% endif %}
+                                </td>
                                 <td>{{ agent.drivers_count }}</td>
                                 <td>{{ agent.delivered_orders }}</td>
                                 <td>{{ agent.revenue_display }}</td>
@@ -76,7 +91,7 @@
                             </tr>
                         {% empty %}
                             <tr>
-                                <td colspan="7" class="text-center text-secondary py-4">No agent branches yet.</td>
+                                <td colspan="8" class="text-center text-secondary py-4">No agent branches yet.</td>
                             </tr>
                         {% endfor %}
                     </tbody>

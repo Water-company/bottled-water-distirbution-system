@@ -15,7 +15,7 @@
         <div class="hero-card p-4 p-lg-5">
             <span class="eyebrow">Order Tracking</span>
             <h1 class="display-6 fw-semibold mt-2">{{ order.order_number }}</h1>
-            <p class="text-secondary mb-2">Current status: <strong id="tracking-status-label">{{ order.get_status_display }}</strong>.</p>
+            <p class="text-secondary mb-2">Current status: <strong id="tracking-status-label">{{ tracking_map_payload.statusLabel }}</strong>.</p>
             <p class="text-secondary mb-4">Last order update: <span id="tracking-last-update">{{ order.last_status_update|date:"M d, Y H:i" }}</span></p>
             {% if order.confirmation %}
                 <div class="alert alert-success small">Delivery confirmation is ready. OTP: <strong>{{ order.confirmation.otp_code }}</strong>.</div>
@@ -58,31 +58,104 @@
                                 Waiting for driver assignment
                             {% endif %}
                         </p>
+                        <div class="small text-secondary mt-3 mb-2">Driver Contact</div>
+                        <p class="mb-0" id="tracking-driver-contact">
+                            {% if tracking_map_payload.driver and tracking_map_payload.driver.phoneNumber %}
+                                {{ tracking_map_payload.driver.phoneNumber }}
+                            {% else %}
+                                Contact will appear when available
+                            {% endif %}
+                        </p>
+                        <div class="small text-secondary mt-3 mb-2">Tracking State</div>
+                        <p class="mb-0" id="tracking-state-summary">
+                            {% if tracking_map_payload.driverArrived %}
+                                Driver arrived
+                            {% elif tracking_map_payload.trackingPaused %}
+                                Tracking paused
+                            {% elif tracking_map_payload.trackingActive %}
+                                Live tracking active
+                            {% else %}
+                                Waiting for live tracking
+                            {% endif %}
+                        </p>
+                        <div class="small text-secondary mt-3 mb-2">Last Driver Ping</div>
+                        <p class="mb-0" id="tracking-last-ping-summary">
+                            {% if tracking_map_payload.lastRecordedAt %}
+                                {{ tracking_map_payload.lastRecordedAt }}
+                            {% else %}
+                                Waiting for first GPS update
+                            {% endif %}
+                        </p>
+                        <div class="small text-secondary mt-3 mb-2">Remaining Distance</div>
+                        <p class="mb-0" id="tracking-distance-summary">
+                            {% if tracking_map_payload.distanceKm %}
+                                {{ tracking_map_payload.distanceKm|floatformat:2 }} km
+                            {% else %}
+                                Waiting for route data
+                            {% endif %}
+                        </p>
                         <div class="small text-secondary mt-3 mb-2">ETA</div>
                         <p class="mb-0" id="tracking-eta-summary">{% if tracking_map_payload.etaMinutes %}{{ tracking_map_payload.etaMinutes }} mins{% else %}Waiting for route data{% endif %}</p>
                     </div>
                 </div>
             </div>
 
-            <div class="tracking-steps">
-                {% for step in tracking_steps %}
-                    <div class="tracking-step {% if step.complete %}complete{% endif %} {% if step.current %}current{% endif %}">
-                        <div class="tracking-marker"></div>
-                        <div>
-                            <h2 class="h5 mb-1">{{ step.label }}</h2>
-                            <p class="text-secondary mb-0">
-                                {% if step.current %}
-                                    This is the current stage of your order.
-                                {% elif step.complete %}
-                                    This step has been completed.
-                                {% else %}
-                                    Waiting for this stage.
-                                {% endif %}
-                            </p>
-                        </div>
+            <div class="row g-4 mb-4">
+                <div class="col-lg-6">
+                    <div class="content-card p-4 h-100">
+                        <h2 class="h4 mb-3">Delivery Progress</h2>
+                        <p class="mb-2" id="tracking-progress-headline">
+                            {% if tracking_map_payload.driverArrived %}
+                                Your driver has arrived at the delivery point.
+                            {% elif tracking_map_payload.trackingPaused %}
+                                Delivery is temporarily paused.
+                            {% elif tracking_map_payload.trackingActive %}
+                                Your driver is on the way with live GPS updates enabled.
+                            {% else %}
+                                Live tracking will begin when the order is out for delivery.
+                            {% endif %}
+                        </p>
+                        <p class="text-secondary mb-0" id="tracking-progress-detail">
+                            {% if tracking_map_payload.driverArrived %}
+                                Please meet the driver and complete the QR code scan plus OTP verification to finish the handoff.
+                            {% elif tracking_map_payload.trackingActive %}
+                                We are refreshing the driver's latest position automatically while the delivery is active.
+                            {% else %}
+                                You can stay on this page and the map will update as soon as delivery starts.
+                            {% endif %}
+                        </p>
                     </div>
-                {% endfor %}
+                </div>
+                <div class="col-lg-6">
+                    <div class="content-card p-4 h-100">
+                        <h2 class="h4 mb-3">Delivery Verification</h2>
+                        <p class="mb-2" id="tracking-verification-status">
+                            {% if tracking_map_payload.deliveryConfirmation and tracking_map_payload.deliveryConfirmation.verifiedAt %}
+                                QR code scanned and OTP verified.
+                            {% elif tracking_map_payload.deliveryConfirmation and tracking_map_payload.deliveryConfirmation.scannedAt %}
+                                QR code scanned. Waiting for OTP verification.
+                            {% elif tracking_map_payload.verificationReady %}
+                                Verification is ready. Complete the QR scan and OTP handoff with the driver.
+                            {% else %}
+                                QR scan and OTP verification will unlock after the driver arrives.
+                            {% endif %}
+                        </p>
+                        <p class="text-secondary mb-0" id="tracking-verification-detail">
+                            {% if tracking_map_payload.deliveryConfirmation and tracking_map_payload.deliveryConfirmation.verifiedAt %}
+                                Delivery can now be finalized successfully.
+                            {% elif tracking_map_payload.deliveryConfirmation and tracking_map_payload.deliveryConfirmation.scannedAt %}
+                                Share the OTP with the driver to complete the delivery.
+                            {% elif tracking_map_payload.verificationReady %}
+                                Keep your phone ready so the driver can scan the QR code and confirm the OTP.
+                            {% else %}
+                                The system will not mark the order delivered until both verification steps are completed.
+                            {% endif %}
+                        </p>
+                    </div>
+                </div>
             </div>
+
+            <div class="tracking-steps" id="tracking-workflow-timeline"></div>
         </div>
     </div>
 </div>
@@ -117,9 +190,18 @@
         const customerSummary = document.getElementById("tracking-customer-summary");
         const agentSummary = document.getElementById("tracking-agent-summary");
         const driverSummary = document.getElementById("tracking-driver-summary");
+        const driverContact = document.getElementById("tracking-driver-contact");
         const driverChip = document.getElementById("tracking-driver-chip");
         const liveIndicator = document.getElementById("tracking-live-indicator");
+        const trackingStateSummary = document.getElementById("tracking-state-summary");
+        const lastPingSummary = document.getElementById("tracking-last-ping-summary");
+        const distanceSummary = document.getElementById("tracking-distance-summary");
         const etaSummary = document.getElementById("tracking-eta-summary");
+        const progressHeadline = document.getElementById("tracking-progress-headline");
+        const progressDetail = document.getElementById("tracking-progress-detail");
+        const verificationStatus = document.getElementById("tracking-verification-status");
+        const verificationDetail = document.getElementById("tracking-verification-detail");
+        const workflowTimeline = document.getElementById("tracking-workflow-timeline");
         let refreshTimerId = null;
 
         function hasCoords(item) {
@@ -138,6 +220,9 @@
         }
 
         function getRefreshInterval(payload) {
+            if (payload.trackingRefreshSeconds) {
+                return Number(payload.trackingRefreshSeconds) * 1000;
+            }
             return ["out_for_delivery", "arrived"].includes(payload.statusCode) ? 5000 : 10000;
         }
 
@@ -148,9 +233,167 @@
             refreshTimerId = window.setTimeout(refreshTracking, getRefreshInterval(payload));
         }
 
-        function upsertMarker(existingMarker, point, icon, popupHtml) {
+        function formatLastPing(value) {
+            if (!value) {
+                return "Waiting for first GPS update";
+            }
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) {
+                return value;
+            }
+            return date.toLocaleString([], {
+                month: "short",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+            });
+        }
+
+        function formatTimelineTimestamp(value) {
+            if (!value) {
+                return "";
+            }
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) {
+                return value;
+            }
+            return date.toLocaleString([], {
+                month: "short",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+            });
+        }
+
+        function renderWorkflowTimeline(payload) {
+            const timeline = Array.isArray(payload.workflowTimeline) ? payload.workflowTimeline : [];
+            if (!timeline.length) {
+                workflowTimeline.innerHTML = "";
+                return;
+            }
+
+            workflowTimeline.innerHTML = timeline.map((step) => {
+                let detail = step.description || "Waiting for this stage.";
+                if (step.current) {
+                    detail = step.timestamp
+                        ? `Current stage since ${formatTimelineTimestamp(step.timestamp)}.`
+                        : "This is the current stage of your order.";
+                } else if (step.complete) {
+                    detail = step.timestamp
+                        ? `Completed at ${formatTimelineTimestamp(step.timestamp)}.`
+                        : "This step has been completed.";
+                }
+
+                return `
+                    <div class="tracking-step ${step.complete ? "complete" : ""} ${step.current ? "current" : ""}">
+                        <div class="tracking-marker"></div>
+                        <div>
+                            <h2 class="h5 mb-1">${maps.escapeHtml(step.label || "Tracking Step")}</h2>
+                            <p class="text-secondary mb-0">${maps.escapeHtml(detail)}</p>
+                        </div>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        function setTrackingStateText(payload) {
+            if (payload.driverArrived) {
+                trackingStateSummary.textContent = "Driver arrived";
+                return;
+            }
+            if (payload.statusCode === "delivered") {
+                trackingStateSummary.textContent = "Delivered";
+                return;
+            }
+            if (payload.trackingPaused) {
+                trackingStateSummary.textContent = "Tracking paused";
+                return;
+            }
+            if (payload.trackingActive) {
+                trackingStateSummary.textContent = "Live tracking active";
+                return;
+            }
+            trackingStateSummary.textContent = "Waiting for live tracking";
+        }
+
+        function setProgressCopy(payload) {
+            if (payload.statusCode === "delivered") {
+                progressHeadline.textContent = "Delivery completed successfully.";
+                progressDetail.textContent = "This order has already been handed over and verified.";
+                return;
+            }
+            if (payload.driverArrived) {
+                progressHeadline.textContent = "Your driver has arrived at the delivery point.";
+                progressDetail.textContent = "Please meet the driver and complete the QR code scan plus OTP verification to finish the handoff.";
+                return;
+            }
+            if (payload.trackingPaused) {
+                progressHeadline.textContent = "Delivery is temporarily paused.";
+                progressDetail.textContent = "The driver stopped live sharing for a moment. The map will resume automatically when tracking continues.";
+                return;
+            }
+            if (payload.trackingActive) {
+                progressHeadline.textContent = "Your driver is on the way with live GPS updates enabled.";
+                progressDetail.textContent = "We are refreshing the driver's latest position automatically while the delivery is active.";
+                return;
+            }
+            progressHeadline.textContent = "Live tracking will begin when the order is out for delivery.";
+            progressDetail.textContent = "You can stay on this page and the map will update as soon as delivery starts.";
+        }
+
+        function setVerificationCopy(payload) {
+            const confirmation = payload.deliveryConfirmation;
+            if (confirmation && confirmation.verifiedAt) {
+                verificationStatus.textContent = "QR code scanned and OTP verified.";
+                verificationDetail.textContent = "Delivery can now be finalized successfully.";
+                return;
+            }
+            if (confirmation && confirmation.scannedAt) {
+                verificationStatus.textContent = "QR code scanned. Waiting for OTP verification.";
+                verificationDetail.textContent = "Share the OTP with the driver to complete the delivery.";
+                return;
+            }
+            if (payload.verificationReady) {
+                verificationStatus.textContent = "Verification is ready. Complete the QR scan and OTP handoff with the driver.";
+                verificationDetail.textContent = "Keep your phone ready so the driver can scan the QR code and confirm the OTP.";
+                return;
+            }
+            verificationStatus.textContent = "QR scan and OTP verification will unlock after the driver arrives.";
+            verificationDetail.textContent = "The system will not mark the order delivered until both verification steps are completed.";
+        }
+
+        function animateMarker(marker, targetPoint) {
+            const startLatLng = marker.getLatLng();
+            const startTime = performance.now();
+            const duration = 1200;
+
+            if (marker.__animationFrame) {
+                cancelAnimationFrame(marker.__animationFrame);
+            }
+
+            function step(now) {
+                const progress = Math.min((now - startTime) / duration, 1);
+                const latitude = startLatLng.lat + ((targetPoint[0] - startLatLng.lat) * progress);
+                const longitude = startLatLng.lng + ((targetPoint[1] - startLatLng.lng) * progress);
+                marker.setLatLng([latitude, longitude]);
+
+                if (progress < 1) {
+                    marker.__animationFrame = requestAnimationFrame(step);
+                } else {
+                    marker.__animationFrame = null;
+                }
+            }
+
+            marker.__animationFrame = requestAnimationFrame(step);
+        }
+
+        function upsertMarker(existingMarker, point, icon, popupHtml, options = {}) {
             if (!point) {
                 if (existingMarker) {
+                    if (existingMarker.__animationFrame) {
+                        cancelAnimationFrame(existingMarker.__animationFrame);
+                    }
                     map.removeLayer(existingMarker);
                 }
                 return null;
@@ -159,7 +402,16 @@
             if (!existingMarker) {
                 existingMarker = L.marker(point, { icon }).addTo(map);
             } else {
-                existingMarker.setLatLng(point);
+                const current = existingMarker.getLatLng();
+                if (
+                    options.animate &&
+                    current &&
+                    (Math.abs(current.lat - point[0]) > 0.00001 || Math.abs(current.lng - point[1]) > 0.00001)
+                ) {
+                    animateMarker(existingMarker, point);
+                } else {
+                    existingMarker.setLatLng(point);
+                }
             }
             existingMarker.bindPopup(popupHtml);
             return existingMarker;
@@ -170,6 +422,7 @@
             const points = [];
             statusLabel.textContent = payload.statusLabel;
             customerSummary.textContent = payload.customer.address;
+            renderWorkflowTimeline(payload);
 
             if (hasCoords(payload.customer)) {
                 const customerPoint = [Number(payload.customer.latitude), Number(payload.customer.longitude)];
@@ -204,46 +457,65 @@
                     driverMarker,
                     driverPoint,
                     maps.icons.driver,
-                    `<strong>Driver</strong><br>${maps.escapeHtml(payload.driver.name)}<br>${maps.escapeHtml(payload.driver.vehicleIdentifier || "Vehicle pending")}`
+                    `<strong>Driver</strong><br>${maps.escapeHtml(payload.driver.name)}<br>${maps.escapeHtml(payload.driver.vehicleIdentifier || "Vehicle pending")}`,
+                    { animate: true }
                 );
                 driverSummary.textContent = `${payload.driver.name}${payload.driver.vehicleIdentifier ? ` | ${payload.driver.vehicleIdentifier}` : ""}`;
+                driverContact.textContent = payload.driver.phoneNumber || "Contact will appear when available";
                 driverChip.textContent = payload.driver.online ? "Driver online" : "Driver offline";
                 liveIndicator.classList.toggle("d-none", !driverIsLive);
                 points.push(driverPoint);
             } else {
                 driverMarker = upsertMarker(driverMarker, null, maps.icons.driver, "");
                 driverSummary.textContent = "Waiting for driver assignment";
+                driverContact.textContent = "Contact will appear when available";
                 driverChip.textContent = "Waiting for driver assignment";
                 liveIndicator.classList.add("d-none");
             }
 
             routeLayer.clearLayers();
-            if (hasCoords(payload.driver) && hasCoords(payload.customer)) {
+            if (Array.isArray(payload.routePoints) && payload.routePoints.length > 1) {
+                const routeOptions = payload.routeSource === "road"
+                    ? { color: "#17a6b6", weight: 4, opacity: 0.82 }
+                    : { color: "#17a6b6", weight: 4, opacity: 0.65, dashArray: "8 6" };
                 L.polyline(
-                    [
-                        [Number(payload.driver.latitude), Number(payload.driver.longitude)],
-                        [Number(payload.customer.latitude), Number(payload.customer.longitude)],
-                    ],
-                    { color: "#17a6b6", weight: 4, opacity: 0.75 }
+                    payload.routePoints.map((point) => [Number(point[0]), Number(point[1])]),
+                    routeOptions
                 ).addTo(routeLayer);
-                if (payload.driver.online) {
-                    mapStatus.textContent = isDriverPingLive(payload.driver.lastPingAt)
-                        ? "Driver location is live and refreshing every 5 seconds."
-                        : `Driver last ping: ${payload.driver.lastPingAt || "Just now"}`;
-                } else {
-                    mapStatus.textContent = "Driver has been assigned, but is currently offline.";
+
+                if (hasCoords(payload.driver)) {
+                    if (payload.driver.online) {
+                        const refreshSeconds = payload.trackingRefreshSeconds || Math.round(getRefreshInterval(payload) / 1000);
+                        if (isDriverPingLive(payload.driver.lastPingAt)) {
+                            mapStatus.textContent = payload.routeSource === "road"
+                                ? `Driver location is live with a road route refreshing every ${refreshSeconds} seconds.`
+                                : `Driver location is live and refreshing every ${refreshSeconds} seconds.`;
+                        } else {
+                            mapStatus.textContent = `Driver last ping: ${formatLastPing(payload.driver.lastPingAt)}`;
+                        }
+                    } else {
+                        mapStatus.textContent = "Driver has been assigned, but is currently offline.";
+                    }
+                } else if (hasCoords(payload.agent)) {
+                    mapStatus.textContent = payload.routeSource === "road"
+                        ? "Agent branch shown with a road route preview. Driver coordinates will appear once a driver is assigned."
+                        : "Agent branch shown. Driver coordinates will appear once a driver is assigned.";
                 }
-            } else if (hasCoords(payload.agent) && hasCoords(payload.customer)) {
-                L.polyline(
-                    [
-                        [Number(payload.agent.latitude), Number(payload.agent.longitude)],
-                        [Number(payload.customer.latitude), Number(payload.customer.longitude)],
-                    ],
-                    { color: "#4c7d27", weight: 3, opacity: 0.5, dashArray: "6 6" }
-                ).addTo(routeLayer);
-                mapStatus.textContent = "Agent branch shown. Driver coordinates will appear once a driver is assigned.";
             } else {
                 mapStatus.textContent = "Waiting for agent and driver coordinates.";
+            }
+
+            setTrackingStateText(payload);
+            setProgressCopy(payload);
+            setVerificationCopy(payload);
+            lastPingSummary.textContent = formatLastPing(payload.lastRecordedAt || (payload.driver && payload.driver.lastPingAt));
+
+            if (payload.distanceKm) {
+                distanceSummary.textContent = `${payload.distanceKm.toFixed(2)} km`;
+            } else if (payload.distanceMeters) {
+                distanceSummary.textContent = `${(Number(payload.distanceMeters) / 1000).toFixed(2)} km`;
+            } else {
+                distanceSummary.textContent = "Waiting for route data";
             }
 
             if (payload.etaMinutes) {

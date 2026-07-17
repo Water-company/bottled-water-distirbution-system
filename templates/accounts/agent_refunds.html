@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Refund Management{% endblock %}
+{% block title %}Complaint Review{% endblock %}
 {% block content %}
 <section class="hero-card p-4 p-lg-5 mb-4">
-    <span class="eyebrow">Refund Management</span>
+    <span class="eyebrow">Complaint Review</span>
     <h1 class="display-6 fw-semibold mt-2 mb-2">{{ agent.name }}</h1>
-    <p class="text-secondary mb-3">Review refund requests for deliveries handled by this branch and record written decisions for every outcome.</p>
+    <p class="text-secondary mb-3">Respond to customer complaints for deliveries handled by your branch. Agent Managers can provide context and evidence, but final decisions are made by the company admin.</p>
     <div class="d-flex flex-wrap gap-2">
         <a href="{% url 'accounts:agent_dashboard' %}" class="btn btn-outline-dark">Back to Dashboard</a>
         <a href="{% url 'accounts:agent_fleet' %}" class="btn btn-outline-primary">Open Fleet</a>
@@ -12,11 +12,11 @@
 </section>
 
 <section class="row g-4 mb-4">
-    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Pending</div><div class="display-6 fw-semibold">{{ refund_summary.pending }}</div></div></div>
-    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Approved</div><div class="display-6 fw-semibold">{{ refund_summary.approved }}</div></div></div>
-    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Rejected</div><div class="display-6 fw-semibold">{{ refund_summary.rejected }}</div></div></div>
-    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Processed</div><div class="display-6 fw-semibold">{{ refund_summary.processed }}</div></div></div>
-    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Failed</div><div class="display-6 fw-semibold text-danger">{{ refund_summary.failed }}</div></div></div>
+    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Submitted</div><div class="display-6 fw-semibold">{{ complaint_summary.submitted }}</div></div></div>
+    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Awaiting Agent Response</div><div class="display-6 fw-semibold">{{ complaint_summary.awaiting_agent_response }}</div></div></div>
+    <div class="col-md-4"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Under Company Review</div><div class="display-6 fw-semibold">{{ complaint_summary.under_company_review }}</div></div></div>
+    <div class="col-md-6"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Decision Issued</div><div class="display-6 fw-semibold">{{ complaint_summary.decision_issued }}</div></div></div>
+    <div class="col-md-6"><div class="content-card p-4 h-100"><div class="text-secondary small text-uppercase">Resolved</div><div class="display-6 fw-semibold">{{ complaint_summary.resolved }}</div></div></div>
 </section>
 
 <section class="content-card p-4 mb-4">
@@ -37,104 +37,123 @@
 </section>
 
 <section class="content-card p-4">
-    <h2 class="h4 mb-3">Refund Queue</h2>
-    {% if refund_requests %}
-        {% for refund_request in refund_requests %}
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <h2 class="h4 mb-0">Complaint Queue</h2>
+        <span class="small text-secondary">Every response becomes part of the permanent audit trail.</span>
+    </div>
+    {% if complaints %}
+        {% for complaint in complaints %}
             <div class="border rounded p-3 mb-3">
-                <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-2">
+                <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-3">
                     <div>
-                        <strong>{{ refund_request.order.order_number }}</strong>
+                        <div class="fw-semibold">{{ complaint.reference_number }} | Order {{ complaint.order.order_number }}</div>
                         <div class="small text-secondary">
-                            {{ refund_request.order.customer.full_name }} | {{ refund_request.get_request_type_display }}
+                            Customer: {{ complaint.order.customer.full_name }} | Category: {{ complaint.get_category_display }}
+                        </div>
+                        <div class="small text-secondary">
+                            Submitted {{ complaint.created_at|date:"M d, Y H:i" }}
                         </div>
                     </div>
-                    <span class="badge text-bg-light">{{ refund_request.get_status_display }}</span>
+                    <span class="badge text-bg-light align-self-start">{{ complaint.get_status_display }}</span>
                 </div>
-                <div class="small mb-2"><strong>Reason:</strong> {{ refund_request.reason|default:"No reason provided." }}</div>
-                <div class="small text-secondary mb-3">
-                    Requested amount: {{ refund_request.requested_amount }}
-                    {% if refund_request.approved_amount %}| Approved amount: {{ refund_request.approved_amount }}{% endif %}
-                    | Method: {{ refund_request.get_payout_method_display }}
+
+                <div class="small mb-3">
+                    <strong>Complaint details:</strong> {{ complaint.description }}
                 </div>
-                {% if refund_request.evidences.all %}
+
+                {% if complaint.evidences.all %}
                     <div class="row g-2 mb-3">
-                        {% for evidence in refund_request.evidences.all %}
-                            <div class="col-4">
-                                <a href="{{ evidence.image.url }}" target="_blank">
-                                    <img src="{{ evidence.image.url }}" alt="Refund evidence" class="img-fluid rounded border">
-                                </a>
+                        {% for evidence in complaint.evidences.all %}
+                            <div class="col-md-4">
+                                <div class="border rounded p-2 h-100">
+                                    {% if evidence.is_image %}
+                                        <a href="{{ evidence.image.url }}" target="_blank" rel="noopener">
+                                            <img src="{{ evidence.image.url }}" alt="Complaint evidence" class="img-fluid rounded border mb-2">
+                                        </a>
+                                    {% endif %}
+                                    <a href="{{ evidence.image.url }}" target="_blank" rel="noopener" class="small text-decoration-none">
+                                        {{ evidence.filename }}
+                                    </a>
+                                </div>
                             </div>
                         {% endfor %}
                     </div>
                 {% endif %}
-                {% if refund_request.status == "pending" %}
-                    <div class="row g-3">
-                        <div class="col-lg-6">
-                            <form method="post" action="{% url 'accounts:agent_approve_refund' refund_request.pk %}" class="row g-2">
-                                {% csrf_token %}
-                                <div class="col-md-4">
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        name="approved_amount"
-                                        class="form-control"
-                                        value="{{ refund_request.requested_amount }}"
-                                        placeholder="Amount"
-                                    >
-                                </div>
-                                <div class="col-md-8">
-                                    <input type="text" name="resolution_note" class="form-control" placeholder="Approval reason" required>
-                                </div>
-                                <div class="col-12">
-                                    <button class="btn btn-primary btn-sm">Approve Refund</button>
-                                </div>
-                            </form>
-                        </div>
-                        <div class="col-lg-6">
-                            <form method="post" action="{% url 'accounts:agent_reject_refund' refund_request.pk %}" class="row g-2">
-                                {% csrf_token %}
-                                <div class="col-12">
-                                    <input type="text" name="resolution_note" class="form-control" placeholder="Rejection reason" required>
-                                </div>
-                                <div class="col-12">
-                                    <button class="btn btn-outline-danger btn-sm">Reject Refund</button>
-                                </div>
-                            </form>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-lg-6">
+                        <div class="rounded border p-3 h-100 bg-light-subtle">
+                            <div class="fw-semibold small text-uppercase text-secondary mb-2">Current Review State</div>
+                            <div class="small mb-1"><strong>Order Total:</strong> {{ complaint.order.total }}</div>
+                            <div class="small mb-1"><strong>Assigned Driver:</strong> {{ complaint.order.assigned_driver.full_name|default:"Not assigned" }}</div>
+                            <div class="small mb-1"><strong>Delivered At:</strong> {{ complaint.order.actual_delivery_time|default:"-" }}</div>
+                            <div class="small"><strong>Linked Refund:</strong> {% if complaint.linked_refund_request %}{{ complaint.linked_refund_request.get_status_display }}{% else %}Not created{% endif %}</div>
                         </div>
                     </div>
-                {% elif refund_request.status == "approved" or refund_request.status == "failed" %}
-                    <div class="row g-3">
-                        <div class="col-lg-6">
-                            <form method="post" action="{% url 'accounts:agent_process_refund' refund_request.pk %}">
-                                {% csrf_token %}
-                                <button class="btn btn-success btn-sm">{% if refund_request.status == "failed" %}Retry Processing{% else %}Mark as Processed{% endif %}</button>
-                            </form>
-                        </div>
-                        <div class="col-lg-6">
-                            <form method="post" action="{% url 'accounts:agent_fail_refund' refund_request.pk %}" class="row g-2">
-                                {% csrf_token %}
-                                <div class="col-12">
-                                    <input type="text" name="failure_reason" class="form-control" placeholder="Why processing failed?" required>
+                    <div class="col-lg-6">
+                        <div class="rounded border p-3 h-100 bg-light-subtle">
+                            <div class="fw-semibold small text-uppercase text-secondary mb-2">Audit Trail</div>
+                            {% if complaint.status_history.all %}
+                                <div class="small d-flex flex-column gap-2">
+                                    {% for history in complaint.status_history.all %}
+                                        <div>
+                                            <strong>{{ history.get_status_display }}</strong>
+                                            <div class="text-secondary">{{ history.changed_at|date:"M d, Y H:i" }} by {{ history.changed_by.full_name|default:"System" }}</div>
+                                            {% if history.note %}<div>{{ history.note }}</div>{% endif %}
+                                        </div>
+                                    {% endfor %}
                                 </div>
-                                <div class="col-12">
-                                    <button class="btn btn-outline-danger btn-sm">Mark Processing Failed</button>
-                                </div>
-                            </form>
+                            {% else %}
+                                <div class="small text-secondary">No status updates recorded yet.</div>
+                            {% endif %}
                         </div>
+                    </div>
+                </div>
+
+                {% if complaint.agent_responded_at %}
+                    <div class="rounded border p-3 bg-light-subtle">
+                        <div class="fw-semibold small text-uppercase text-secondary mb-2">Your Recorded Response</div>
+                        <div class="small mb-1"><strong>Type:</strong> {{ complaint.get_agent_response_type_display }}</div>
+                        <div class="small mb-1"><strong>Submitted By:</strong> {{ complaint.agent_responded_by.full_name|default:"Agent manager" }}</div>
+                        <div class="small mb-1"><strong>Submitted At:</strong> {{ complaint.agent_responded_at|date:"M d, Y H:i" }}</div>
+                        <div class="small"><strong>Note:</strong> {{ complaint.agent_response_note|default:"No note provided." }}</div>
                     </div>
                 {% else %}
-                    <div class="small text-secondary">
-                        Reviewed by {{ refund_request.reviewed_by.full_name|default:"System" }}
-                        {% if refund_request.reviewed_at %}| Reviewed at {{ refund_request.reviewed_at }}{% endif %}
-                        {% if refund_request.resolution_note %}| Note: {{ refund_request.resolution_note }}{% endif %}
-                        {% if refund_request.failure_reason %}| Failure: {{ refund_request.failure_reason }}{% endif %}
-                        {% if refund_request.processed_at %}| Processed at {{ refund_request.processed_at }}{% endif %}
+                    <div class="rounded border p-3">
+                        <div class="fw-semibold mb-2">Respond to Complaint</div>
+                        <p class="small text-secondary mb-3">Choose the response that best reflects your branch position. This does not approve or reject the complaint.</p>
+                        <div class="row g-3">
+                            <div class="col-lg-4">
+                                <form method="post" action="{% url 'accounts:agent_accept_complaint' complaint.pk %}" class="h-100 border rounded p-3">
+                                    {% csrf_token %}
+                                    <div class="fw-semibold mb-2">Accept Responsibility</div>
+                                    <textarea name="agent_response_note" class="form-control mb-2" rows="4" placeholder="Describe what happened and any corrective action taken." required></textarea>
+                                    <button class="btn btn-primary btn-sm">Submit Response</button>
+                                </form>
+                            </div>
+                            <div class="col-lg-4">
+                                <form method="post" action="{% url 'accounts:agent_dispute_complaint' complaint.pk %}" class="h-100 border rounded p-3">
+                                    {% csrf_token %}
+                                    <div class="fw-semibold mb-2">Dispute Complaint</div>
+                                    <textarea name="agent_response_note" class="form-control mb-2" rows="4" placeholder="Explain why the complaint is disputed and reference delivery facts." required></textarea>
+                                    <button class="btn btn-outline-danger btn-sm">Submit Dispute</button>
+                                </form>
+                            </div>
+                            <div class="col-lg-4">
+                                <form method="post" action="{% url 'accounts:agent_additional_complaint_info' complaint.pk %}" class="h-100 border rounded p-3">
+                                    {% csrf_token %}
+                                    <div class="fw-semibold mb-2">Add Information</div>
+                                    <textarea name="agent_response_note" class="form-control mb-2" rows="4" placeholder="Share delivery notes, evidence, or other useful context." required></textarea>
+                                    <button class="btn btn-outline-primary btn-sm">Attach Context</button>
+                                </form>
+                            </div>
+                        </div>
                     </div>
                 {% endif %}
             </div>
         {% endfor %}
     {% else %}
-        <p class="text-secondary mb-0">No refund requests match this view yet.</p>
+        <p class="text-secondary mb-0">No complaints match this view yet.</p>
     {% endif %}
 </section>
 {% endblock %}

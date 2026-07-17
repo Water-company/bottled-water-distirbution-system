@@ -3,12 +3,13 @@ from decimal import Decimal
 from django.conf import settings
 from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import F
 from django.utils import timezone
 
 from core.models import TimeStampedModel
-from accounts.validators import validate_ethiopian_phone_number
+from accounts.validators import normalize_username, validate_ethiopian_phone_number, validate_username
 
 
 class UserRole(models.TextChoices):
@@ -17,6 +18,37 @@ class UserRole(models.TextChoices):
     DRIVER = "driver", "Driver"
     COMPANY_ADMIN = "company_admin", "Company Admin"
     SYSTEM_ADMIN = "system_admin", "System Admin"
+
+
+def _build_unique_username(user):
+    raw_candidates = (
+        user.username,
+        (user.email or "").split("@")[0],
+        ".".join(part for part in (user.first_name, user.last_name) if part),
+        "user",
+    )
+
+    base_username = ""
+    for candidate in raw_candidates:
+        try:
+            base_username = normalize_username(candidate, required=False)
+        except ValidationError:
+            continue
+        if base_username:
+            break
+    if not base_username:
+        base_username = "user"
+
+    candidate = base_username[:150]
+    suffix = 1
+    queryset = user.__class__.objects.all()
+    if user.pk:
+        queryset = queryset.exclude(pk=user.pk)
+    while queryset.filter(username=candidate).exists():
+        suffix_text = f"-{suffix}"
+        candidate = f"{base_username[:150 - len(suffix_text)]}{suffix_text}"
+        suffix += 1
+    return candidate
 
 
 class UserManager(BaseUserManager):
@@ -57,6 +89,7 @@ class UserManager(BaseUserManager):
 class User(TimeStampedModel, AbstractBaseUser, PermissionsMixin):
     first_name = models.CharField(max_length=150)
     last_name = models.CharField(max_length=150)
+    username = models.CharField(max_length=150, unique=True, blank=True, null=True, validators=[validate_username])
     email = models.EmailField(unique=True)
     phone_number = models.CharField(max_length=20, unique=True, validators=[validate_ethiopian_phone_number])
     profile_image = models.ImageField(upload_to="profiles/", blank=True, null=True)
@@ -85,6 +118,15 @@ class User(TimeStampedModel, AbstractBaseUser, PermissionsMixin):
 
     class Meta:
         ordering = ("first_name", "last_name", "email")
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    (models.Q(role=UserRole.COMPANY_ADMIN) & models.Q(managed_company__isnull=False))
+                    | (~models.Q(role=UserRole.COMPANY_ADMIN) & models.Q(managed_company__isnull=True))
+                ),
+                name="user_company_admin_managed_company_consistency",
+            ),
+        ]
 
     def __str__(self):
         return self.full_name or self.email
@@ -92,6 +134,15 @@ class User(TimeStampedModel, AbstractBaseUser, PermissionsMixin):
     def save(self, *args, **kwargs):
         update_fields = kwargs.get("update_fields")
         normalized_update_fields = set(update_fields) if update_fields is not None else None
+
+        self.email = (self.email or "").strip().lower()
+        normalized_username = normalize_username(self.username, required=False)
+        if normalized_username:
+            self.username = normalized_username
+        else:
+            self.username = _build_unique_username(self)
+        if normalized_update_fields is not None:
+            normalized_update_fields.update({"email", "username"})
 
         self.is_customer = self.role == UserRole.CUSTOMER
         if self.role != UserRole.COMPANY_ADMIN:
